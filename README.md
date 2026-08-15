@@ -85,7 +85,7 @@ to sigil's own files must remain MPL-2.0.
 | `ps3` | PlayStation 3 | game folder (recursive) or `.sfo` | `BLUS31426` | folder-prefix | experimental |
 | `psvita` | PS Vita | `.zip` (filename only) | `PCSE12345` | folder-exact | |
 | `switch` | Nintendo Switch | `.nsp`, `.xci` | `0100ABCD12345000` | folder-exact | |
-| `3ds` | Nintendo 3DS | `.3ds`, `.cci`, `.z3ds`, `.zcci` | `0004000000123456` | folder-split | |
+| `3ds` | Nintendo 3DS | `.3ds`, `.cci`, `.cxi`, `.app`, `.z3ds`, `.zcci`, `.zcxi` | `0004000000123456` | folder-split | `.3dsx` / `.z3dsx` / `.elf` / `.axf` are homebrew and carry no title id |
 | `wii` | Wii | `.iso`, `.rvz`, `.wbfs` | `525A5445` (hex of ASCII gameId) | folder-exact | |
 | `wiiu` | Wii U | `.wua` | `10143500` (last 8 of folder name) | folder-exact | |
 | `gamecube` | GameCube | `.iso`, `.rvz`, `.wbfs` | `475A4C45` (hex of ASCII gameId) | file-prefix | |
@@ -228,10 +228,20 @@ named `00050000<8 hex>_v0`. The full 16 hex is the formal title ID;
 the last 8 chars are what the save system keys on. Sigil emits the
 last 8 as `title_id`, the full 16 as `raw_serial`.
 
-**3DS — `0004` retail filter.** NCSD program IDs not starting with
-`0004` are filtered as non-retail (system titles, CIAs, etc.). Set
+**3DS — `0004` retail filter.** Program IDs not starting with `0004`
+are filtered as non-retail (system titles, CIAs, etc.). Set
 `SIGIL_FLAG_3DS_ALLOW_HOMEBREW` in `opts.flags` to disable the gate
 for CIA/homebrew workflows.
+
+**3DS — container shapes.** NCSD images (`.3ds`, `.cci`) hold the
+program id inside partition 0's NCCH; NCCH images (`.cxi`, `.app`)
+hold it at +0x118 of the file itself. The `z`-prefixed extensions are
+an Azahar Z3DS wrapper — a 0x20-byte header, then metadata, then a
+seekable-zstd payload — and the wrapper's `underlying_magic` names the
+inner container, so a mislabelled extension still resolves. `.3dsx`,
+`.z3dsx`, `.elf` and `.axf` are homebrew: they carry no title id and
+sigil reports none rather than inventing one. `.elf` / `.axf` are too
+generic to sniff, so they need an explicit `3ds` hint.
 
 **PSP `.cso` / `.ciso` — experimental.** v1 CSO with raw-deflate
 blocks is decompressed transparently and fed to the standard PSP

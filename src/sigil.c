@@ -102,6 +102,11 @@ static sigil_platform sniff_from_extension(const char *filename) {
     if (strcmp(ext, "cci") == 0)   return SIGIL_PLATFORM_3DS;
     if (strcmp(ext, "z3ds") == 0)  return SIGIL_PLATFORM_3DS;
     if (strcmp(ext, "zcci") == 0)  return SIGIL_PLATFORM_3DS;
+    if (strcmp(ext, "cxi") == 0)   return SIGIL_PLATFORM_3DS;
+    if (strcmp(ext, "zcxi") == 0)  return SIGIL_PLATFORM_3DS;
+    if (strcmp(ext, "app") == 0)   return SIGIL_PLATFORM_3DS;
+    if (strcmp(ext, "3dsx") == 0)  return SIGIL_PLATFORM_3DS;
+    if (strcmp(ext, "z3dsx") == 0) return SIGIL_PLATFORM_3DS;
     if (strcmp(ext, "rvz") == 0)   return SIGIL_PLATFORM_WII;
     if (strcmp(ext, "wbfs") == 0)  return SIGIL_PLATFORM_WII;
     if (strcmp(ext, "cso") == 0)   return SIGIL_PLATFORM_PSP;
@@ -110,7 +115,8 @@ static sigil_platform sniff_from_extension(const char *filename) {
     if (strcmp(ext, "xex") == 0)   return SIGIL_PLATFORM_XBOX360;
 
     /* `.iso`/`.bin`/`.chd` are ambiguous between PSP/PSX/PS2/Wii/GC; refuse
-     * to guess without a hint. */
+     * to guess without a hint. `.elf`/`.axf` are 3DS homebrew to azahar but
+     * generic everywhere else, so they need an explicit platform hint. */
     return SIGIL_PLATFORM_AUTO;
 }
 
