@@ -35,8 +35,9 @@ static void print_usage(void) {
         "Usage: sigil [--platform=<slug>] [--prod-keys=<path>] <rom>\n"
         "\n"
         "Options:\n"
-        "  --platform=<slug>   Force a platform (psp, psx, ps2, switch, 3ds,\n"
-        "                      wii, wiiu, gamecube, psvita). Default: auto-detect.\n"
+        "  --platform=<slug>   Force a platform (psp, psx, ps2, ps3, switch, 3ds,\n"
+        "                      wii, wiiu, gamecube, psvita, xbox360, dreamcast).\n"
+        "                      Default: auto-detect.\n"
         "  --prod-keys=<path>  Switch prod.keys file for NCA decryption.\n"
         "  --help              Show this message.\n",
         sigil_version());

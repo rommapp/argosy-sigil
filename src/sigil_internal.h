@@ -161,6 +161,8 @@ int sigil_extract_wiiu(const sigil_io *io, const char *filename_hint,
                        const sigil_options *opts, sigil_result *out);
 int sigil_extract_psvita(const sigil_io *io, const char *filename_hint,
                          const sigil_options *opts, sigil_result *out);
+int sigil_extract_dreamcast(const sigil_io *io, const char *filename_hint,
+                            const sigil_options *opts, sigil_result *out);
 
 #if SIGIL_WITH_FILENAME
 int sigil_filename_fallback(const char *filename_hint,

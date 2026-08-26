@@ -118,6 +118,7 @@ set(SIGIL_SOURCES
     src/psvita.c
     src/wii.c
     src/xbox360.c
+    src/dreamcast.c
 )
 
 if(SIGIL_WITH_CHD)

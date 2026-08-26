@@ -269,6 +269,13 @@ int sigil_filename_fallback(const char *filename_hint,
     case SIGIL_PLATFORM_GAMECUBE:
         rc = try_gameid_bracket(stem, len, platform, out);
         break;
+    case SIGIL_PLATFORM_DREAMCAST:
+        /* Dreamcast filenames carry no bracketed product number, and the
+         * generic guessers below would hand back a PS2/PSP serial under a
+         * Dreamcast platform. No pattern is better than a wrong one. */
+        out->usage = SIGIL_USAGE_FILE_PREFIX;
+        rc = SIGIL_ERR_NOT_FOUND;
+        break;
     case SIGIL_PLATFORM_AUTO:
     default:
         out->platform = SIGIL_PLATFORM_SWITCH;

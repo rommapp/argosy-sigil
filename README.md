@@ -49,8 +49,8 @@ identifier directly from the disc/cart binary and hands back:
   (high-confidence, lockable) or `filename` if it had to fall back to
   scanning the filename for a community-naming bracket pattern.
 - `experimental` — `1` for extractors that haven't been validated
-  against real-world samples (PS3, Xbox 360, PSP-via-CSO at time of
-  writing). Consumers should surface this to users so a low-confidence
+  against real-world samples (PS3, Xbox 360, Dreamcast, PSP-via-CSO at
+  time of writing). Consumers should surface this to users so a low-confidence
   result can be flagged in UI / logs.
 
 Persist `save_id` and `usage` alongside `title_id` on your game
@@ -100,10 +100,13 @@ to sigil's own files must remain MPL-2.0.
 | `wiiu` | Wii U | `.wua` | `10143500` (last 8 of folder name) | folder-exact | |
 | `gamecube` | GameCube | `.iso`, `.rvz`, `.wbfs` | `475A4C45` (hex of ASCII gameId) | file-prefix | |
 | `xbox360` | Xbox 360 | extracted game folder or `.xex` | `414D07D1` (4-byte XEX title_id, hex) | folder-exact | experimental |
+| `dreamcast` | Dreamcast | `.chd`, `.iso`, data track `.bin` (`.gdi` track 3) | `T-8111N` (IP.BIN product number) | file-prefix | experimental |
 
-The slugs are stable and match argosy's internal platform identifiers.
-The C API uses the `sigil_platform` enum; `sigil_platform_from_slug()`
-converts strings if your binding accepts user input.
+The slugs are stable. Argosy's shorter internal identifiers (`dc`,
+`ngc`, `gc`, `vita`, `n3ds`, `nsw`, `x360`) resolve as aliases of the
+canonical slugs above. The C API uses the `sigil_platform` enum;
+`sigil_platform_from_slug()` converts strings if your binding accepts
+user input.
 
 ## `usage` — what to do with `save_id`
 
@@ -262,6 +265,31 @@ result until validated against a real CSO sample.
 extracted-game-disc folder (sigil walks up to 4 levels looking for
 `PARAM.SFO`) or the SFO file directly. Reads the `TITLE_ID` string
 (e.g. `BLUS31426`). PKG / encrypted-EBOOT inputs are not supported.
+
+**Dreamcast — IP.BIN product number, found by scanning.** The boot
+header IP.BIN starts the data track: `SEGA SEGAKATANA ` at offset 0,
+then a 10-byte ASCII product number at 0x40 (`T-8111N`, `MK-51035`,
+`HDR-0038`) padded with trailing spaces. Flycast trims that padding and
+then truncates at the first NUL, because some discs leave garbage after
+the terminator; sigil reproduces that order exactly, since the result is
+the name flycast gives the per-game VMU file. Composing the filename
+(the `.A1.bin` port suffix) is the consumer's job, and because a game
+can own more than one port's VMU the `usage` is `file-prefix`.
+
+A GD-ROM keeps its data track third and a CHD packs tracks contiguously
+from frame 0, so IP.BIN is neither at offset 0 nor at the physical
+GD-area LBA 45000. Sigil checks offset 0 first, which covers a raw data
+track or a plain ISO, then scans sector boundaries for the magic across
+the first 20000 frames. Tracks 1 and 2 live in the single-density area,
+which spans the first four minutes of the disc (18000 frames), so the
+bound holds for any conformant dump while keeping a miss cheap. A `.gdi`
+is a text index naming its track files rather than a disc image, so pass
+`track03.bin` (or a CHD) for binary extraction. `.bin` is ambiguous
+across platforms and needs an explicit `dreamcast` hint; raw 2352-byte
+MODE1 tracks are cooked to 2048 on the way in. `.gdi` and `.cdi` sniff
+as Dreamcast so the platform resolves without a hint, but neither
+container's own layout is parsed: a `.cdi` only extracts when its
+sectors happen to land on 2048-byte boundaries.
 
 **Xbox 360 — experimental, XEX parse only.** Pass either the
 extracted-game folder (sigil walks looking for `default.xex`) or the

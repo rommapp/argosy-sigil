@@ -31,10 +31,11 @@ static const platform_slug PLATFORM_SLUGS[] = {
     { SIGIL_PLATFORM_GAMECUBE, "gamecube" },
     { SIGIL_PLATFORM_PS3,      "ps3"      },
     { SIGIL_PLATFORM_XBOX360,  "xbox360"  },
+    { SIGIL_PLATFORM_DREAMCAST, "dreamcast" },
 };
 static const size_t PLATFORM_SLUG_COUNT = sizeof(PLATFORM_SLUGS) / sizeof(PLATFORM_SLUGS[0]);
 
-/* Aliases consumers may use (argosy uses "vita"/"ngc" internally). */
+/* Aliases consumers may use (argosy uses "vita"/"ngc"/"dc" internally). */
 static const platform_slug PLATFORM_ALIASES[] = {
     { SIGIL_PLATFORM_PSVITA,   "vita" },
     { SIGIL_PLATFORM_GAMECUBE, "ngc"  },
@@ -42,6 +43,7 @@ static const platform_slug PLATFORM_ALIASES[] = {
     { SIGIL_PLATFORM_3DS,      "n3ds" },
     { SIGIL_PLATFORM_SWITCH,   "nsw"  },
     { SIGIL_PLATFORM_XBOX360,  "x360" },
+    { SIGIL_PLATFORM_DREAMCAST, "dc"   },
 };
 static const size_t PLATFORM_ALIAS_COUNT = sizeof(PLATFORM_ALIASES) / sizeof(PLATFORM_ALIASES[0]);
 
@@ -113,10 +115,12 @@ static sigil_platform sniff_from_extension(const char *filename) {
     if (strcmp(ext, "ciso") == 0)  return SIGIL_PLATFORM_PSP;
     if (strcmp(ext, "sfo") == 0)   return SIGIL_PLATFORM_PS3;
     if (strcmp(ext, "xex") == 0)   return SIGIL_PLATFORM_XBOX360;
+    if (strcmp(ext, "gdi") == 0)   return SIGIL_PLATFORM_DREAMCAST;
+    if (strcmp(ext, "cdi") == 0)   return SIGIL_PLATFORM_DREAMCAST;
 
-    /* `.iso`/`.bin`/`.chd` are ambiguous between PSP/PSX/PS2/Wii/GC; refuse
-     * to guess without a hint. `.elf`/`.axf` are 3DS homebrew to azahar but
-     * generic everywhere else, so they need an explicit platform hint. */
+    /* `.iso`/`.bin`/`.chd` are ambiguous between PSP/PSX/PS2/Wii/GC/Dreamcast;
+     * refuse to guess without a hint. `.elf`/`.axf` are 3DS homebrew to azahar
+     * but generic everywhere else, so they need an explicit platform hint. */
     return SIGIL_PLATFORM_AUTO;
 }
 
@@ -126,7 +130,7 @@ static sigil_io *open_io_for_platform(const char *path, sigil_platform p) {
     sigil_lower_ext(path_basename(path), ext);
 
     bool can_chd = (p == SIGIL_PLATFORM_PSP || p == SIGIL_PLATFORM_PSX
-                    || p == SIGIL_PLATFORM_PS2);
+                    || p == SIGIL_PLATFORM_PS2 || p == SIGIL_PLATFORM_DREAMCAST);
 
 #if SIGIL_WITH_CHD
     if (can_chd && strcmp(ext, "chd") == 0) {
@@ -142,7 +146,11 @@ static sigil_io *open_io_for_platform(const char *path, sigil_platform p) {
         if (io) return io;
     }
 #endif
-    if (p == SIGIL_PLATFORM_PSX && strcmp(ext, "bin") == 0) {
+    /* A Dreamcast data track dumped alongside a .gdi is raw 2352-byte MODE1,
+     * like a PSX .bin; the raw-CD layer cooks it and passes a plain 2048-byte
+     * image through untouched. */
+    if ((p == SIGIL_PLATFORM_PSX || p == SIGIL_PLATFORM_DREAMCAST)
+        && strcmp(ext, "bin") == 0) {
         sigil_io *io = sigil_io_open_raw_cd(path);
         if (io) return io;
     }
@@ -246,6 +254,7 @@ static int dispatch(const sigil_io *io, const char *filename_hint,
     case SIGIL_PLATFORM_PSVITA:   return sigil_extract_psvita(io, filename_hint, opts, out);
     case SIGIL_PLATFORM_PS3:      return sigil_extract_ps3(io, filename_hint, opts, out);
     case SIGIL_PLATFORM_XBOX360:  return sigil_extract_xbox360(io, filename_hint, opts, out);
+    case SIGIL_PLATFORM_DREAMCAST: return sigil_extract_dreamcast(io, filename_hint, opts, out);
     default:                       return SIGIL_ERR_UNKNOWN_PLATFORM;
     }
 }
