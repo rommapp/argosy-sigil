@@ -273,10 +273,7 @@ int sigil_extract_3ds(const sigil_io *io, const char *filename_hint,
      * internal storage is case-sensitive, so an uppercase segment becomes a
      * second directory beside the emulator's own and the saves split. title_id
      * stays uppercase; only the path-shaped value is cased to match. */
-    for (int i = 0; i < 8; i++) out->save_id[i] = sigil_to_lower(tid[i]);
-    out->save_id[8] = '/';
-    for (int i = 0; i < 8; i++) out->save_id[9 + i] = sigil_to_lower(tid[8 + i]);
-    out->save_id[17] = '\0';
+    sigil_hex16_split_lower(tid, out->save_id);
 
     out->source = SIGIL_SOURCE_BINARY;
     return SIGIL_OK;

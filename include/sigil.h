@@ -100,7 +100,9 @@ typedef struct {
     char           title_id[32];
     char           raw_serial[32];
     /* Literal on-disk save folder/file name (e.g. PS2 BASLUS-217311). Empty when unknown.
-     * With usage FOLDER_SPLIT it is a '/'-separated relative path (3DS: 00040000/00033500). */
+     * With usage FOLDER_SPLIT it is a '/'-separated relative path (3DS: 00040000/00033500),
+     * and it is left empty rather than falling back to title_id when the path cannot be
+     * resolved, because a flat id is not a valid location on those platforms. */
     char           save_id[32];
     sigil_platform platform;
     sigil_source   source;

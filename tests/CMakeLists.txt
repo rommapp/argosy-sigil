@@ -48,6 +48,7 @@ endif()
 # fallback assertions only compile when that scanner is in the build.
 if(SIGIL_WITH_FILENAME)
     target_compile_definitions(unit_wii_wbfs PRIVATE SIGIL_TEST_FILENAME_FALLBACK=1)
+    target_compile_definitions(unit_3ds PRIVATE SIGIL_TEST_FILENAME_FALLBACK=1)
     if(SIGIL_WITH_WIIU)
         target_compile_definitions(unit_wiiu PRIVATE SIGIL_TEST_FILENAME_FALLBACK=1)
     endif()

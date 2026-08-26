@@ -112,6 +112,46 @@ static void expect_no_serial(const char *label, const uint8_t *buf, size_t len, 
     printf("ok  %s (%s)\n", label, sigil_strerror(rc));
 }
 
+#ifdef SIGIL_TEST_FILENAME_FALLBACK
+/* Fed a container it cannot parse, so only the filename scanner can answer.
+ * The 16-hex bracket must agree with the binary path exactly; an 8-hex bracket
+ * holds the low half alone and must resolve no save location at all. */
+static void expect_fallback(const char *label, const char *name,
+                            const char *want_tid, const char *want_save) {
+    uint8_t stub[0x100];
+    memset(stub, 0, sizeof(stub));
+
+    sigil_result r;
+    int rc = run(stub, sizeof(stub), name, NULL, &r);
+    if (rc != SIGIL_OK) {
+        fprintf(stderr, "FAIL %s: rc=%d (%s)\n", label, rc, sigil_strerror(rc));
+        failures++;
+        return;
+    }
+    if (r.source != SIGIL_SOURCE_FILENAME) {
+        fprintf(stderr, "FAIL %s: source=%d (want filename)\n", label, (int)r.source);
+        failures++;
+        return;
+    }
+    if (strcmp(r.title_id, want_tid) != 0) {
+        fprintf(stderr, "FAIL %s: title_id='%s' (want '%s')\n", label, r.title_id, want_tid);
+        failures++;
+        return;
+    }
+    if (strcmp(r.save_id, want_save) != 0) {
+        fprintf(stderr, "FAIL %s: save_id='%s' (want '%s')\n", label, r.save_id, want_save);
+        failures++;
+        return;
+    }
+    if (r.usage != SIGIL_USAGE_FOLDER_SPLIT) {
+        fprintf(stderr, "FAIL %s: usage=%d (want folder-split)\n", label, (int)r.usage);
+        failures++;
+        return;
+    }
+    printf("ok  %s\n", label);
+}
+#endif
+
 static void wrapped(const char *label, const uint8_t *inner, size_t inner_len,
                     const char magic[4], const uint8_t *meta, size_t meta_len,
                     size_t frame_size, const char *name, bool expect_ok) {
@@ -197,6 +237,15 @@ int main(void) {
         expect_no_serial("corrupt wrapper magic falls through to raw", z, zlen, "game.z3ds");
         free(z);
     }
+
+#ifdef SIGIL_TEST_FILENAME_FALLBACK
+    expect_fallback("fallback 16-hex bracket matches the binary path",
+                    "Kirby [0004000E0011C500].3ds", ALPHA_TID, ALPHA_SAVE);
+    expect_fallback("fallback 8-hex bracket resolves no save location",
+                    "Kirby [0011C500].3ds", "0011C500", "");
+    expect_fallback("fallback 8-hex parens resolve no save location",
+                    "Kirby (0011C500).3ds", "0011C500", "");
+#endif
 
     free(ncsd_stock);
     free(ncsd_tab);

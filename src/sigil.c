@@ -284,8 +284,12 @@ int sigil_extract_from_io(const sigil_io *io,
         }
     }
 
-    /* Default save_id to title_id when no platform-specific value was set. */
-    if (rc == SIGIL_OK && out->save_id[0] == '\0') {
+    /* Default save_id to title_id when no platform-specific value was set.
+     * A folder-split platform is excluded: its save location is a nested path
+     * and a flat title id is not one, so backfilling would turn "no save
+     * location was resolved" into a wrong directory name. There save_id stays
+     * empty, which the header documents as unknown. */
+    if (rc == SIGIL_OK && out->save_id[0] == '\0' && out->usage != SIGIL_USAGE_FOLDER_SPLIT) {
         size_t len = strlen(out->title_id);
         if (len < sizeof(out->save_id)) {
             memcpy(out->save_id, out->title_id, len + 1);

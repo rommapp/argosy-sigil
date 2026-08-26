@@ -32,6 +32,10 @@ identifier directly from the disc/cart binary and hands back:
   directory, `sdmc/Nintendo 3DS`, the `title/` root, per-install id
   folders) is the emulator's prefix and the consumer's to supply,
   because the same title differs per emulator.
+  When only a filename is available and it carries the low half of a 3DS
+  id alone (`[0011C500]`), no path can be formed and `save_id` stays
+  empty; the high half is `0004xxxx`, not a fixed `00040000`, so it is
+  never assumed.
   Wii and Wii U diverge the same way and for the same reason: Dolphin
   writes `Wii/title/00010000/525a4445` and Cemu writes
   `mlc01/usr/save/00050000/1010ec00`, both with `{:08x}`, so `save_id` is

@@ -136,6 +136,18 @@ static int try_hex16(const char *stem, size_t len, sigil_result *out, bool requi
     return SIGIL_ERR_NOT_FOUND;
 }
 
+/* Only the 16-hex bracket carries both halves of the title id, so only it can
+ * emit the save location threeds.c does for the same ROM: the '/'-split,
+ * lowercase path azahar creates ("{:08x}", am.cpp:1324).
+ *
+ * An 8-hex bracket is the low half alone. It identifies the game, but it
+ * addresses no save directory, and the high half cannot be inferred from it -
+ * retail titles are 0004xxxx, not a fixed 00040000, so updates (0004000E) and
+ * demos (00040002) would land in the wrong tree. Those branches therefore
+ * leave save_id empty, the documented "unknown" value, rather than a flat id a
+ * consumer would build a wrong directory from. `usage` describes the
+ * platform's save layout, not how complete one filename is, so it stays
+ * folder-split on every branch. */
 static int try_3ds(const char *stem, size_t len, sigil_result *out) {
     char id16[17];
     for (size_t i = 0; i + 18 <= len; i++) {
@@ -143,6 +155,7 @@ static int try_3ds(const char *stem, size_t len, sigil_result *out) {
             if (id16[0] == '0' && id16[1] == '0' && id16[2] == '0' && id16[3] == '4') {
                 memcpy(out->title_id, id16, 17);
                 memcpy(out->raw_serial, id16, 17);
+                sigil_hex16_split_lower(id16, out->save_id);
                 return SIGIL_OK;
             }
         }
@@ -258,7 +271,7 @@ int sigil_filename_fallback(const char *filename_hint,
         rc = try_hex16(stem, len, out, true);
         break;
     case SIGIL_PLATFORM_3DS:
-        out->usage = SIGIL_USAGE_FOLDER_EXACT;
+        out->usage = SIGIL_USAGE_FOLDER_SPLIT;
         rc = try_3ds(stem, len, out);
         break;
     case SIGIL_PLATFORM_WIIU:

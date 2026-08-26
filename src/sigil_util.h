@@ -36,6 +36,17 @@ static inline void sigil_lower_copy(const char *src, char *out, size_t out_size)
     out[i] = '\0';
 }
 
+/* Split a 16-char hex id into the '/'-separated lowercase path an emulator
+ * creates for it (0004000E0011C500 -> 0004000e/0011c500). `out` needs 18
+ * bytes. Shared so the binary extractor and the filename scanner cannot drift
+ * into emitting different paths for the same title. */
+static inline void sigil_hex16_split_lower(const char *id16, char *out) {
+    for (int i = 0; i < 8; i++) out[i] = sigil_to_lower(id16[i]);
+    out[8] = '/';
+    for (int i = 0; i < 8; i++) out[9 + i] = sigil_to_lower(id16[8 + i]);
+    out[17] = '\0';
+}
+
 /* Hex-encode 8 bytes -> 16-char uppercase string + NUL.
  * If reverse is true, encodes src8[7..0]; otherwise src8[0..7]. */
 static inline void sigil_hex_encode_8(const uint8_t *src8, char out[17], bool reverse) {
