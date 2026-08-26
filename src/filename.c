@@ -173,6 +173,7 @@ static int try_wiiu(const char *stem, size_t len, sigil_result *out) {
             if (id16[0] == '0' && id16[1] == '0' && id16[2] == '0' && id16[3] == '5') {
                 memcpy(out->raw_serial, id16, 17);
                 memcpy(out->title_id, id16 + 8, 9);
+                sigil_lower_copy(out->title_id, out->save_id, sizeof(out->save_id));
                 return SIGIL_OK;
             }
         }
@@ -182,6 +183,7 @@ static int try_wiiu(const char *stem, size_t len, sigil_result *out) {
         if (stem[i] == '[' && match_hex_run(stem, len, i + 1, 8, id8) && stem[i + 9] == ']') {
             memcpy(out->title_id, id8, 9);
             memcpy(out->raw_serial, id8, 9);
+            sigil_lower_copy(out->title_id, out->save_id, sizeof(out->save_id));
             return SIGIL_OK;
         }
     }
@@ -189,6 +191,7 @@ static int try_wiiu(const char *stem, size_t len, sigil_result *out) {
         if (stem[i] == '(' && match_hex_run(stem, len, i + 1, 8, id8) && stem[i + 9] == ')') {
             memcpy(out->title_id, id8, 9);
             memcpy(out->raw_serial, id8, 9);
+            sigil_lower_copy(out->title_id, out->save_id, sizeof(out->save_id));
             return SIGIL_OK;
         }
     }
@@ -210,6 +213,9 @@ static int try_gameid_bracket(const char *stem, size_t len,
         memcpy(out->raw_serial, stem + i + 1, 4);
         out->raw_serial[4] = '\0';
         sigil_hex_encode_4((const uint8_t *)(stem + i + 1), out->title_id);
+        if (platform == SIGIL_PLATFORM_WII) {
+            sigil_lower_copy(out->title_id, out->save_id, sizeof(out->save_id));
+        }
         return SIGIL_OK;
     }
     return SIGIL_ERR_NOT_FOUND;

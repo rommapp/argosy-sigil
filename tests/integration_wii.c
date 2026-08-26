@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "integration_helpers.h"
 
+/* Dolphin names the NAND save directory with "{:08x}", so save_id must be
+ * title_id lowercased; an uppercase copy is a second directory on
+ * case-sensitive storage and the saves split across the two. */
 static int check(const char *path, const char *name) {
     sigil_result r;
     int rc = sigil_extract_from_path(path, SIGIL_PLATFORM_WII, NULL, &r);
@@ -14,7 +17,21 @@ static int check(const char *path, const char *name) {
                 name, r.title_id, r.raw_serial);
         return -1;
     }
-    fprintf(stdout, "  ok  %s -> %s (raw=%s)\n", name, r.title_id, r.raw_serial);
+    if (strlen(r.save_id) != 8) {
+        fprintf(stderr, "  FAIL %s: save_id=%s\n", name, r.save_id);
+        return -1;
+    }
+    for (int i = 0; i < 8; i++) {
+        char want = r.title_id[i];
+        if (want >= 'A' && want <= 'Z') want = (char)(want + 32);
+        if (r.save_id[i] != want) {
+            fprintf(stderr, "  FAIL %s: save_id=%s title_id=%s\n",
+                    name, r.save_id, r.title_id);
+            return -1;
+        }
+    }
+    fprintf(stdout, "  ok  %s -> %s (raw=%s save=%s)\n",
+            name, r.title_id, r.raw_serial, r.save_id);
     return 0;
 }
 

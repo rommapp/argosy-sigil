@@ -5,7 +5,11 @@
  * carry the canonical 16-hex title id in brackets (e.g.
  * "Angry Birds Trilogy [0005000010138A00].wua"), and sigil reads the
  * SAME value from the WUA archive footer. The two MUST agree, or one of
- * them is wrong. */
+ * them is wrong.
+ *
+ * Cemu names the save directory with "{:08x}", so save_id must be title_id
+ * lowercased; an uppercase copy is a second directory on case-sensitive
+ * storage and the saves split across the two. */
 
 static int extract_bracket_id(const char *name, char out[17]) {
     size_t len = strlen(name);
@@ -48,7 +52,21 @@ static int check(const char *path, const char *name) {
             return -1;
         }
     }
-    fprintf(stdout, "  ok  %s -> %s (raw=%s)\n", name, r.title_id, r.raw_serial);
+    if (strlen(r.save_id) != strlen(r.title_id)) {
+        fprintf(stderr, "  FAIL %s: save_id=%s title_id=%s\n", name, r.save_id, r.title_id);
+        return -1;
+    }
+    for (size_t i = 0; r.title_id[i]; i++) {
+        char want = r.title_id[i];
+        if (want >= 'A' && want <= 'Z') want = (char)(want + 32);
+        if (r.save_id[i] != want) {
+            fprintf(stderr, "  FAIL %s: save_id=%s title_id=%s\n",
+                    name, r.save_id, r.title_id);
+            return -1;
+        }
+    }
+    fprintf(stdout, "  ok  %s -> %s (raw=%s save=%s)\n",
+            name, r.title_id, r.raw_serial, r.save_id);
     return 0;
 }
 

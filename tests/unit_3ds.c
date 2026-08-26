@@ -15,16 +15,27 @@ static const uint8_t PROGRAM_ID[8] = { 0x00, 0x35, 0x03, 0x00, 0x00, 0x00, 0x04,
 static const char    EXPECT_TID[]  = "0004000000033500";
 static const char    EXPECT_SAVE[] = "00040000/00033500";
 
+/* An id with hex letters in both halves; reversed it reads "0004000E0011C500".
+ * title_id keeps them uppercase, save_id must not: azahar writes the on-disk
+ * directories with "{:08x}" and case-sensitive storage keeps the two apart. */
+static const uint8_t PROGRAM_ID_ALPHA[8] = { 0x00, 0xC5, 0x11, 0x00, 0x0E, 0x00, 0x04, 0x00 };
+static const char    ALPHA_TID[]         = "0004000E0011C500";
+static const char    ALPHA_SAVE[]        = "0004000e/0011c500";
+
 static int failures = 0;
 
 
-static uint8_t *make_ncch(size_t *len, bool with_magic) {
+static uint8_t *make_ncch_with_id(size_t *len, bool with_magic, const uint8_t pid[8]) {
     size_t n = NCCH_PROGRAM_ID_OFFSET + 8 + 0x100;
     uint8_t *b = (uint8_t *)calloc(1, n);
     if (with_magic) memcpy(b + NCSD_MAGIC_OFFSET, "NCCH", 4);
-    memcpy(b + NCCH_PROGRAM_ID_OFFSET, PROGRAM_ID, 8);
+    memcpy(b + NCCH_PROGRAM_ID_OFFSET, pid, 8);
     *len = n;
     return b;
+}
+
+static uint8_t *make_ncch(size_t *len, bool with_magic) {
+    return make_ncch_with_id(len, with_magic, PROGRAM_ID);
 }
 
 /* `partition0` of 0 leaves the NCSD header out entirely, reproducing the
@@ -58,7 +69,8 @@ static int run(const uint8_t *buf, size_t len, const char *name,
     return sigil_extract_from_io(&io, name, SIGIL_PLATFORM_3DS, opts, out);
 }
 
-static void expect_title(const char *label, const uint8_t *buf, size_t len, const char *name) {
+static void expect_ids(const char *label, const uint8_t *buf, size_t len, const char *name,
+                       const char *want_tid, const char *want_save) {
     sigil_result r;
     int rc = run(buf, len, name, NULL, &r);
     if (rc != SIGIL_OK) {
@@ -66,13 +78,13 @@ static void expect_title(const char *label, const uint8_t *buf, size_t len, cons
         failures++;
         return;
     }
-    if (strcmp(r.title_id, EXPECT_TID) != 0) {
-        fprintf(stderr, "FAIL %s: title_id='%s'\n", label, r.title_id);
+    if (strcmp(r.title_id, want_tid) != 0) {
+        fprintf(stderr, "FAIL %s: title_id='%s' (want '%s')\n", label, r.title_id, want_tid);
         failures++;
         return;
     }
-    if (strcmp(r.save_id, EXPECT_SAVE) != 0) {
-        fprintf(stderr, "FAIL %s: save_id='%s'\n", label, r.save_id);
+    if (strcmp(r.save_id, want_save) != 0) {
+        fprintf(stderr, "FAIL %s: save_id='%s' (want '%s')\n", label, r.save_id, want_save);
         failures++;
         return;
     }
@@ -82,6 +94,10 @@ static void expect_title(const char *label, const uint8_t *buf, size_t len, cons
         return;
     }
     printf("ok  %s\n", label);
+}
+
+static void expect_title(const char *label, const uint8_t *buf, size_t len, const char *name) {
+    expect_ids(label, buf, len, name, EXPECT_TID, EXPECT_SAVE);
 }
 
 static void expect_no_serial(const char *label, const uint8_t *buf, size_t len, const char *name) {
@@ -129,6 +145,25 @@ int main(void) {
     expect_title("ncch magic (.cxi)", ncch, ncch_len, "game.cxi");
     expect_title("ncch magic (.app)", ncch, ncch_len, "00000000.app");
 
+    uint8_t *ncch_alpha = make_ncch_with_id(&len, true, PROGRAM_ID_ALPHA);
+    size_t   ncch_alpha_len = len;
+    expect_ids("hex letters lowercase in save_id only", ncch_alpha, ncch_alpha_len,
+               "game.cxi", ALPHA_TID, ALPHA_SAVE);
+    {
+        sigil_result r;
+        int arc = run(ncch_alpha, ncch_alpha_len, "game.cxi", NULL, &r);
+        if (arc != SIGIL_OK) {
+            fprintf(stderr, "FAIL hex letters: rc=%d (%s)\n", arc, sigil_strerror(arc));
+            failures++;
+        } else if (strcmp(r.raw_serial, ALPHA_TID) != 0) {
+            fprintf(stderr, "FAIL hex letters: raw_serial='%s' (want '%s')\n",
+                    r.raw_serial, ALPHA_TID);
+            failures++;
+        } else {
+            printf("ok  hex letters leave raw_serial uppercase\n");
+        }
+    }
+
     uint8_t *ncch_bare = make_ncch(&len, false);
     size_t   ncch_bare_len = len;
     expect_title("ncch by extension (.cxi)", ncch_bare, ncch_bare_len, "game.cxi");
@@ -166,6 +201,7 @@ int main(void) {
     free(ncsd_stock);
     free(ncsd_tab);
     free(ncch);
+    free(ncch_alpha);
     free(ncch_bare);
     free(hb);
 

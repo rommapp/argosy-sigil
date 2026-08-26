@@ -266,10 +266,16 @@ int sigil_extract_3ds(const sigil_io *io, const char *filename_hint,
     /* save_id is the on-disk save location, not the flat id: the 3DS nests it
      * as title/<high 8>/<low 8>/, so emit 00040000/00033500 and the consumer
      * places it without knowing the split. usage=folder-split marks it as a
-     * '/'-separated path; the sdmc/.../title/ root above is the emulator's. */
-    memcpy(out->save_id, tid, 8);
+     * '/'-separated path; the sdmc/.../title/ root above is the emulator's.
+     *
+     * Lowercase is upstream-exact, not cosmetic: azahar writes the two segments
+     * with fmt "{:08x}" (src/core/hle/service/am/am.cpp:1324), and Android
+     * internal storage is case-sensitive, so an uppercase segment becomes a
+     * second directory beside the emulator's own and the saves split. title_id
+     * stays uppercase; only the path-shaped value is cased to match. */
+    for (int i = 0; i < 8; i++) out->save_id[i] = sigil_to_lower(tid[i]);
     out->save_id[8] = '/';
-    memcpy(out->save_id + 9, tid + 8, 8);
+    for (int i = 0; i < 8; i++) out->save_id[9 + i] = sigil_to_lower(tid[8 + i]);
     out->save_id[17] = '\0';
 
     out->source = SIGIL_SOURCE_BINARY;

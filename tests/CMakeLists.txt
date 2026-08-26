@@ -31,9 +31,22 @@ sigil_add_test(unit_3ds)
 sigil_add_test(unit_switch_nca)
 sigil_add_test(unit_wii_wbfs)
 
+if(SIGIL_WITH_WIIU)
+    sigil_add_test(unit_wiiu)
+endif()
+
 # The CNMT fixture builds encrypted NCA sections, so it needs tiny-AES's ECB
 # helpers directly (in addition to sigil's exported CTR/XTS wrappers).
 if(SIGIL_WITH_SWITCH)
     sigil_add_test(unit_switch_cnmt)
     target_link_libraries(unit_switch_cnmt PRIVATE sigil_aes)
+endif()
+
+# save_id case is emitted by the extractors AND by the filename fallback; the
+# fallback assertions only compile when that scanner is in the build.
+if(SIGIL_WITH_FILENAME)
+    target_compile_definitions(unit_wii_wbfs PRIVATE SIGIL_TEST_FILENAME_FALLBACK=1)
+    if(SIGIL_WITH_WIIU)
+        target_compile_definitions(unit_wiiu PRIVATE SIGIL_TEST_FILENAME_FALLBACK=1)
+    endif()
 endif()

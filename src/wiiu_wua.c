@@ -57,8 +57,15 @@ static size_t read_name(const uint8_t *names, size_t names_len,
 }
 
 /* Match `00050000<8 hex>` at start of `name`; emit canonical (last 8) +
- * raw (full 16) uppercase. */
-static bool match_wiiu_title_dir(const char *name, char canonical[9], char raw[17]) {
+ * raw (full 16) uppercase, plus the lowercase on-disk form of the canonical.
+ *
+ * Cemu builds the save directory with fmt "{:08x}"
+ * (src/Cafe/TitleList/SaveInfo.cpp:16), so mlc01/usr/save/00050000/1010ec00 is
+ * the path it creates. On case-sensitive storage an uppercase leaf becomes a
+ * second directory beside it and the saves split, so only save_id is cased to
+ * match; title_id and raw_serial stay uppercase. */
+static bool match_wiiu_title_dir(const char *name, char canonical[9], char raw[17],
+                                 char save[9]) {
     if (strlen(name) < 16) return false;
     if (memcmp(name, "00050000", 8) != 0) return false;
     for (int i = 0; i < 8; i++) {
@@ -68,6 +75,7 @@ static bool match_wiiu_title_dir(const char *name, char canonical[9], char raw[1
     canonical[8] = '\0';
     for (int i = 0; i < 16; i++) raw[i] = sigil_to_upper(name[i]);
     raw[16] = '\0';
+    sigil_lower_copy(canonical, save, 9);
     return true;
 }
 
@@ -131,10 +139,11 @@ int sigil_extract_wiiu(const sigil_io *io, const char *filename_hint,
         char name[256];
         if (read_name(names, (size_t)ft.names_size, name_off, name, sizeof(name)) == 0) continue;
 
-        char canonical[9], raw[17];
-        if (match_wiiu_title_dir(name, canonical, raw)) {
+        char canonical[9], raw[17], save[9];
+        if (match_wiiu_title_dir(name, canonical, raw, save)) {
             memcpy(out->title_id,   canonical, 9);
             memcpy(out->raw_serial, raw,       17);
+            memcpy(out->save_id,    save,      9);
             out->source = SIGIL_SOURCE_BINARY;
             rc = SIGIL_OK;
             break;

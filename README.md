@@ -25,10 +25,20 @@ identifier directly from the disc/cart binary and hands back:
   `save_id` is itself a `/`-separated path (`00040000/00033500`, the
   16-hex title id split into two 32-bit halves) and `usage` is
   `folder-split` to flag that: the consumer creates the nested folders
-  and never has to know where to split. Everything above it (a user
+  and never has to know where to split. Both 3DS segments are lowercase
+  hex because that is the case Azahar writes them in, and storage that
+  distinguishes case would otherwise hold two of every directory;
+  `title_id` and `raw_serial` stay uppercase. Everything above it (a user
   directory, `sdmc/Nintendo 3DS`, the `title/` root, per-install id
   folders) is the emulator's prefix and the consumer's to supply,
   because the same title differs per emulator.
+  Wii and Wii U diverge the same way and for the same reason: Dolphin
+  writes `Wii/title/00010000/525a4445` and Cemu writes
+  `mlc01/usr/save/00050000/1010ec00`, both with `{:08x}`, so `save_id` is
+  the lowercase form of `title_id` on those two platforms
+  (`title_id=525A4445`, `save_id=525a4445`). GameCube keeps the uppercase
+  form because its artifacts are `.gci` files matched by prefix, not a
+  NAND directory.
 - `raw_serial` — the ID exactly as it appears in the binary, before
   any normalization (`ULUS-10064`, `SLUS_123.45`, `RZTE`). Mostly
   useful for logging.
@@ -301,7 +311,8 @@ enum numbering keep these straightforward.
 cmake --build build && ctest --test-dir build
 
 # Real-ROM integration tests — point at a directory with platform
-# subdirs (psp/, psx/, ps2/, switch/, 3ds/, wii/, wiiu/, ngc/, psvita/).
+# subdirs (psp/, psx/, ps2/, switch/, 3ds/, wii/, wiiu/, ngc/, psvita/,
+# dc/).
 SIGIL_ROM_DIR=/path/to/roms ctest --test-dir build -R integration
 
 # Switch tests additionally need a prod.keys file

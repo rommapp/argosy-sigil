@@ -38,7 +38,8 @@ static void build_wbfs(uint8_t *buf, size_t len, const char *game_id, bool with_
 }
 
 static int expect_id(const uint8_t *buf, size_t len, const char *filename,
-                     const char *want_id, const char *want_raw, const char *label) {
+                     const char *want_id, const char *want_raw,
+                     const char *want_save, const char *label) {
     mem_ctx ctx = { buf, len };
     sigil_io io = { mem_read, mem_size, NULL, &ctx };
     sigil_result r;
@@ -49,6 +50,10 @@ static int expect_id(const uint8_t *buf, size_t len, const char *filename,
     }
     if (strcmp(r.title_id, want_id) != 0 || strcmp(r.raw_serial, want_raw) != 0) {
         fprintf(stderr, "FAIL %s: got title_id='%s' raw='%s'\n", label, r.title_id, r.raw_serial);
+        return 1;
+    }
+    if (strcmp(r.save_id, want_save) != 0) {
+        fprintf(stderr, "FAIL %s: got save_id='%s' (want '%s')\n", label, r.save_id, want_save);
         return 1;
     }
     if (r.usage != SIGIL_USAGE_FOLDER_EXACT) {
@@ -64,7 +69,7 @@ int main(void) {
     /* Tales of Symphonia: Dawn of the New World, the WBFS conversion we
      * validated on-device. RT4E -> 52543445, matching its RVZ dump. */
     build_wbfs(buf, sizeof(buf), "RT4E", true);
-    if (expect_id(buf, sizeof(buf), "game.wbfs", "52543445", "RT4E", "wbfs")) return 1;
+    if (expect_id(buf, sizeof(buf), "game.wbfs", "52543445", "RT4E", "52543445", "wbfs")) return 1;
 
     /* Without the Wii magic there is no disc header to trust. Reading offset 0
      * anyway would yield the container's own "WBFS" as a game id. */
@@ -84,12 +89,72 @@ int main(void) {
     memset(buf, 0, sizeof(buf));
     memcpy(buf, "RT4E", 4);
     write_be32(buf + 0x18, 0x5D1C9EA3u);
-    if (expect_id(buf, sizeof(buf), "game.iso", "52543445", "RT4E", "iso")) return 1;
+    if (expect_id(buf, sizeof(buf), "game.iso", "52543445", "RT4E", "52543445", "iso")) return 1;
 
     memset(buf, 0, sizeof(buf));
     memcpy(buf, "RVZ\x01", 4);
     memcpy(buf + 0x58, "RT4E", 4);
-    if (expect_id(buf, sizeof(buf), "game.rvz", "52543445", "RT4E", "rvz")) return 1;
+    if (expect_id(buf, sizeof(buf), "game.rvz", "52543445", "RT4E", "52543445", "rvz")) return 1;
+
+    /* RT4E hexes to digits only, so it cannot catch a case bug. Twilight
+     * Princess (RZDE) hexes to 525A4445: Dolphin creates Wii/title/00010000/
+     * 525a4445, and title_id must stay uppercase while save_id follows it. */
+    memset(buf, 0, sizeof(buf));
+    memcpy(buf, "RZDE", 4);
+    write_be32(buf + 0x18, 0x5D1C9EA3u);
+    if (expect_id(buf, sizeof(buf), "game.iso", "525A4445", "RZDE", "525a4445", "hex letters")) {
+        return 1;
+    }
+
+    build_wbfs(buf, sizeof(buf), "RZDE", true);
+    if (expect_id(buf, sizeof(buf), "game.wbfs", "525A4445", "RZDE", "525a4445",
+                  "hex letters (wbfs)")) {
+        return 1;
+    }
+
+    /* GameCube shares the extractor but not the NAND layout: its artifacts are
+     * .gci files matched by prefix, so it keeps the uppercase default. */
+    memset(buf, 0, sizeof(buf));
+    memcpy(buf, "GZLE", 4);
+    write_be32(buf + 0x1C, 0xC2339F3Du);
+    {
+        mem_ctx ctx = { buf, sizeof(buf) };
+        sigil_io io = { mem_read, mem_size, NULL, &ctx };
+        sigil_result r;
+        int rc = sigil_extract_from_io(&io, "game.iso", SIGIL_PLATFORM_GAMECUBE, NULL, &r);
+        if (rc != SIGIL_OK) {
+            fprintf(stderr, "FAIL gamecube: rc=%d\n", rc);
+            return 1;
+        }
+        if (strcmp(r.title_id, "475A4C45") != 0 || strcmp(r.save_id, "475A4C45") != 0) {
+            fprintf(stderr, "FAIL gamecube: title_id='%s' save_id='%s'\n",
+                    r.title_id, r.save_id);
+            return 1;
+        }
+    }
+
+#ifdef SIGIL_TEST_FILENAME_FALLBACK
+    /* The filename fallback reaches the same field, so a container sigil cannot
+     * parse must still yield the lowercase directory name. */
+    memset(buf, 0, sizeof(buf));
+    {
+        mem_ctx ctx = { buf, sizeof(buf) };
+        sigil_io io = { mem_read, mem_size, NULL, &ctx };
+        sigil_result r;
+        int rc = sigil_extract_from_io(&io, "Twilight Princess [RZDE].iso",
+                                       SIGIL_PLATFORM_WII, NULL, &r);
+        if (rc != SIGIL_OK) {
+            fprintf(stderr, "FAIL filename fallback: rc=%d\n", rc);
+            return 1;
+        }
+        if (strcmp(r.title_id, "525A4445") != 0 || strcmp(r.save_id, "525a4445") != 0
+            || r.source != SIGIL_SOURCE_FILENAME) {
+            fprintf(stderr, "FAIL filename fallback: title_id='%s' save_id='%s' source=%d\n",
+                    r.title_id, r.save_id, (int)r.source);
+            return 1;
+        }
+    }
+#endif
 
     printf("ok unit_wii_wbfs\n");
     return 0;

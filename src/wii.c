@@ -68,6 +68,17 @@ static int wbfs_disc_header_off(const sigil_io *io, uint64_t *out) {
     return SIGIL_OK;
 }
 
+/* Dolphin builds the Wii NAND save directory with fmt "{:08x}"
+ * (Source/Core/Common/NandPaths.cpp:65 GetTitleDataPath), so the on-disk name
+ * of RZDE is 525a4445, not 525A4445. On case-sensitive storage the uppercase
+ * form is a second directory beside the emulator's own and the saves split, so
+ * save_id carries the lowercase path form while title_id and raw_serial keep
+ * the canonical uppercase one. GameCube is excluded: its artifacts are .gci
+ * files matched by prefix, not a NAND directory. */
+static void wii_save_id(const char title_id[32], char out_save_id[32]) {
+    sigil_lower_copy(title_id, out_save_id, 32);
+}
+
 static int extract_wii_or_gc(const sigil_io *io, sigil_platform platform,
                               sigil_result *out) {
     sigil_result_init(out);
@@ -93,6 +104,8 @@ static int extract_wii_or_gc(const sigil_io *io, sigil_platform platform,
 
     rc = extract_gameid(io, id_off, out->raw_serial, out->title_id);
     if (rc != SIGIL_OK) return rc;
+
+    if (platform == SIGIL_PLATFORM_WII) wii_save_id(out->title_id, out->save_id);
 
     out->source = SIGIL_SOURCE_BINARY;
     return SIGIL_OK;
