@@ -42,7 +42,12 @@ identifier directly from the disc/cart binary and hands back:
   the lowercase form of `title_id` on those two platforms
   (`title_id=525A4445`, `save_id=525a4445`). GameCube keeps the uppercase
   form because its artifacts are `.gci` files matched by prefix, not a
-  NAND directory.
+  NAND directory. The original Xbox diverges for the opposite reason:
+  there the id is a 32-bit number and the two fields are two renderings
+  of it. `save_id` is the raw hex the console names its directory after
+  (`E:\UDATA\4D530064`), while `title_id` is the serial everything else
+  prints, two publisher letters and the low half in decimal
+  (`title_id=MS-100`, `save_id=4D530064`).
 - `raw_serial` — the ID exactly as it appears in the binary, before
   any normalization (`ULUS-10064`, `SLUS_123.45`, `RZTE`). Mostly
   useful for logging.
@@ -53,7 +58,7 @@ identifier directly from the disc/cart binary and hands back:
   (high-confidence, lockable) or `filename` if it had to fall back to
   scanning the filename for a community-naming bracket pattern.
 - `experimental` — `1` for extractors that haven't been validated
-  against real-world samples (PS3, Xbox 360, Dreamcast, PSP-via-CSO at
+  against real-world samples (PS3, Xbox, Xbox 360, Dreamcast, PSP-via-CSO at
   time of writing). Consumers should surface this to users so a low-confidence
   result can be flagged in UI / logs.
 
@@ -96,21 +101,31 @@ to sigil's own files must remain MPL-2.0.
 | `psp` | PSP | `.iso`, `.chd`, `.cso` / `.ciso` | `ULUS10064` | folder-prefix | `.cso` experimental |
 | `psx` | PlayStation | `.iso`, `.bin`, `.chd` | `SLUS-12345` | file-prefix | |
 | `ps2` | PlayStation 2 | `.iso`, `.chd` | `SLUS-20675` | folder-prefix | |
-| `ps3` | PlayStation 3 | game folder (recursive) or `.sfo` | `BLUS31426` | folder-prefix | experimental |
-| `psvita` | PS Vita | `.zip` (filename only) | `PCSE12345` | folder-exact | |
+| `ps3` | PlayStation 3 | `.iso` (needs hint), game folder (recursive) or `.sfo` | `BLUS31426` (TITLE_ID from PARAM.SFO) | folder-prefix | experimental |
+| `psvita` | PS Vita | `.zip` dump, extracted folder, or `param.sfo` | `PCSE12345` (TITLE_ID from `sce_sys/param.sfo`) | folder-exact | filename fallback when no `param.sfo` is reachable |
 | `switch` | Nintendo Switch | `.nsp`, `.xci` | `0100ABCD12345000` | folder-exact | |
 | `3ds` | Nintendo 3DS | `.3ds`, `.cci`, `.cxi`, `.app`, `.z3ds`, `.zcci`, `.zcxi` | `0004000000123456` | folder-split | `.3dsx` / `.z3dsx` / `.elf` / `.axf` are homebrew and carry no title id |
 | `wii` | Wii | `.iso`, `.rvz`, `.wbfs` | `525A5445` (hex of ASCII gameId) | folder-exact | |
 | `wiiu` | Wii U | `.wua` | `10143500` (last 8 of folder name) | folder-exact | |
 | `gamecube` | GameCube | `.iso`, `.rvz`, `.wbfs` | `475A4C45` (hex of ASCII gameId) | file-prefix | |
-| `xbox360` | Xbox 360 | extracted game folder or `.xex` | `414D07D1` (4-byte XEX title_id, hex) | folder-exact | experimental |
+| `xbox` | Xbox | `.xiso`, `.xiso.iso`, `.iso` (needs hint), extracted game folder or `.xbe` | `TT-027` (XBE certificate title id) | folder-exact | experimental |
+| `xbox360` | Xbox 360 | `.zar`, `.iso` (needs hint), extracted game folder or `.xex` | `4D5307DC` (4-byte XEX title_id, hex) | folder-exact | experimental |
 | `dreamcast` | Dreamcast | `.chd`, `.iso`, data track `.bin` (`.gdi` track 3) | `T-8111N` (IP.BIN product number) | file-prefix | experimental |
 
 The slugs are stable. Argosy's shorter internal identifiers (`dc`,
-`ngc`, `gc`, `vita`, `n3ds`, `nsw`, `x360`) resolve as aliases of the
-canonical slugs above. The C API uses the `sigil_platform` enum;
-`sigil_platform_from_slug()` converts strings if your binding accepts
-user input.
+`ngc`, `gc`, `vita`, `n3ds`, `nsw`, `x360`, `xbx`) resolve as aliases of
+the canonical slugs above.
+
+A `.zip` holding any of the formats above is read in place, with no
+extraction step: sigil opens the archive's member, resolves the platform
+from it, and runs the normal extractor against it. Pass a platform hint
+when the inner name is itself ambiguous (a bare `.iso`), exactly as you
+would for a loose file. `.wua` and `.zar` are both ZArchive and are read
+the same way. See [Container notes](#container-notes) for what each costs
+and how the member is chosen.
+
+The C API uses the `sigil_platform` enum; `sigil_platform_from_slug()`
+converts strings if your binding accepts user input.
 
 ## `usage` — what to do with `save_id`
 
@@ -161,9 +176,23 @@ platform=switch title_id=0100ABCD12345000 raw_serial=0100ABCD12345000 save_id=01
 
 $ sigil "/path/to/Ace Combat 04 (USA).chd" --platform=ps2
 platform=ps2 title_id=SLUS-20152 raw_serial=SLUS_201.52 save_id=BASLUS-20152 usage=folder-prefix source=binary
+
+# Read straight out of an archive, no extraction step
+$ sigil "/path/to/Robotech - Invasion (USA).zip" --platform=xbox
+platform=xbox title_id=TT-027 raw_serial=5454001B save_id=5454001B usage=folder-exact source=binary
+
+# A Vita dump resolves by content, so it needs no hint
+$ sigil "/path/to/Actual Sunlight [PCSE00695] [USA] [NoNpDrm].zip"
+platform=psvita title_id=PCSE00695 raw_serial=PCSE00695 save_id=PCSE00695 usage=folder-exact source=binary
 ```
 
 Pass `--platform=auto` (the default) to sniff from the file extension.
+Extensions that name a container rather than a console (`.zip`, a bare
+`.iso`) still need a hint unless the contents identify the platform on
+their own, which is why the Vita example above does not take one. Check
+`source` on the result: `binary` means the id came from file content,
+`filename` means every binary path failed and a naming pattern was
+scanned instead.
 
 ## Switch keys
 
@@ -265,10 +294,45 @@ blocks is decompressed transparently and fed to the standard PSP
 extractor. v2 (LZ4) is not supported. Flagged `experimental=1` on the
 result until validated against a real CSO sample.
 
-**PS3 — experimental, PARAM.SFO scan.** Pass either the
-extracted-game-disc folder (sigil walks up to 4 levels looking for
-`PARAM.SFO`) or the SFO file directly. Reads the `TITLE_ID` string
-(e.g. `BLUS31426`). PKG / encrypted-EBOOT inputs are not supported.
+**PS3 — experimental, PARAM.SFO.** Reads the `TITLE_ID` string
+(`BLUS31426`) from PARAM.SFO, which is reached three ways: the SFO file
+directly, an extracted-game folder (sigil walks up to 4 levels looking
+for it), or a disc image. Which shape it is gets decided from the `\0PSF`
+magic rather than assumed, so a disc image is never parsed as though its
+first sector were an SFO.
+
+On a disc the file sits at `PS3_GAME/PARAM.SFO`, with a copy at the root
+on some releases; sigil checks both, the same two locations aPS3e looks
+in. PS3 discs carry a plain ISO9660 descriptor for their directory
+structure, so no UDF reader is involved. `.iso` is ambiguous across half
+a dozen platforms and needs an explicit `ps3` hint.
+
+Saves land in `dev_hdd0/home/<user>/savedata` under directories that
+start with the title id and carry a per-artifact suffix
+(`BCUS99086GAMEDATA`), so `usage` is `folder-prefix` and consumers
+enumerate by prefix. PKG and encrypted-EBOOT inputs are not supported.
+
+**PS Vita — param.sfo, not the filename.** The identifier is `TITLE_ID`
+in `sce_sys/param.sfo`, the same file Vita3K reads to identify installed
+content. Dumps in circulation keep it at `app/<TITLEID>/sce_sys/param.sfo`
+inside a zip, so sigil addresses that member by path suffix rather than
+by the largest-member rule the generic archive branch uses.
+
+Finding that member is also what identifies the dump as Vita at all. A
+`.zip` names no platform, and the bracketed-serial convention in these
+filenames is shared with PSP, so a name-based guess resolves the wrong
+platform. Detection is by content and needs no hint.
+
+Two ordering details matter. A dump can carry a second `param.sfo` under
+`savedata/`, which describes a save rather than the title and has no
+`TITLE_ID`; sigil prefers the shallowest match, because a title's own
+metadata always sits above anything subordinate to it. And the filename
+scanner still runs, but only when no `param.sfo` can be reached, so it is
+a fallback rather than the primary path — `source` tells you which one
+answered.
+
+Saves are one exact directory per title at
+`ux0:user/00/savedata/<TITLEID>`, hence `folder-exact`.
 
 **Dreamcast — IP.BIN product number, found by scanning.** The boot
 header IP.BIN starts the data track: `SEGA SEGAKATANA ` at offset 0,
@@ -295,11 +359,87 @@ as Dreamcast so the platform resolves without a hint, but neither
 container's own layout is parsed: a `.cdi` only extracts when its
 sectors happen to land on 2048-byte boundaries.
 
-**Xbox 360 — experimental, XEX parse only.** Pass either the
-extracted-game folder (sigil walks looking for `default.xex`) or the
-XEX file directly. The 4-byte XEX execution-info title ID is returned
-as 8-char uppercase hex (e.g. `414D07D1`). Raw GDFX ISO parsing is not
-implemented yet — extract the disc contents first.
+**Xbox — experimental, XBE certificate.** The certificate in the XBE
+holds a 32-bit title id, and two forms of it matter. The console names
+its save directory after the raw hex (`E:\UDATA\4D530064`), while the
+serial every tool prints is two publisher letters, a hyphen, and the low
+half in decimal (`MS-100`). So `title_id` is the formatted serial and
+`save_id` is the hex, diverging the way PS2 and 3DS do. Ids whose prefix
+bytes are not `A-Z` — the dashboard, XDK samples — fall back to plain
+8-digit hex in both fields, which is what Cxbx-Reloaded's
+`FormatTitleId()` does.
+
+The certificate is addressed by the virtual address the image loads at,
+so its file offset is that address minus the image base. Pass a bare
+`default.xbe`, an extracted game folder, or a disc image.
+
+**Xbox / Xbox 360 — one filesystem, XDVDFS.** Both consoles use the same
+filesystem, so one walker serves `default.xbe` and `default.xex` alike.
+What differs is where the game partition starts, and that is probed
+rather than assumed: 0 for a trimmed image, then the XGD3, XGD2 and XGD1
+bases in ascending order. Ascending matters because an archive-backed IO
+seeks forward cheaply and rewinds expensively. Both copies of the
+`MICROSOFT*XBOX*MEDIA` magic are checked, the one at the start of the
+volume descriptor and the one at `+0x7EC`, so a stray copy of that string
+inside game data cannot pass as a partition header.
+
+Directory entries form a binary search tree rather than a flat list, so
+the ISO9660 helpers do not carry over. Three details bite: subtree
+offsets are in 4-byte units, the absent-child sentinel is `0` or `0xff`
+despite the field being 16 bits wide, and names are WINDOWS-1252 compared
+case-insensitively. `.xiso` and the compound `.xiso.iso` resolve without
+a hint; a bare `.iso` is ambiguous and needs one.
+
+**Xbox 360 — experimental, XEX title id.** The 4-byte execution-info
+title ID is returned as 8-char uppercase hex (`4D5307DC`), which is what
+the console, Xenia and XenDroid all use, so `title_id` and `save_id` are
+the same string. Optional header values are offsets from the XEX start
+rather than from the file, so a XEX embedded in a disc image has its base
+added back to each one.
+
+Reachable four ways: a bare `default.xex`, an extracted game folder, a
+disc image through the XDVDFS walker, or a `.zar`. GoD containers and
+STFS packages are not implemented.
+
+## Container notes
+
+**ZArchive (`.wua`, `.zar`) — cheap random access.** One container under
+two names: Cemu writes it for Wii U, Xenia writes it for Xbox 360, and
+both vendor the same library, so the metadata parsing is shared. Contents
+sit in fixed 64 KiB blocks with an offset record for every sixteen, where
+each record holds a full 64-bit base offset and the compressed size of
+each block minus one. Reaching an arbitrary byte therefore costs one
+record read, one block read and one zstd call regardless of how deep it
+sits. Identifying a title out of a multi-gigabyte archive takes a couple
+of blocks, not a decompression pass.
+
+**Zip — streaming, with an emulated seek.** `sigil_io` is a random-access
+contract and deflate is a forward-only stream, so the shim inflates and
+discards to reach a forward offset and restarts the decoder to reach a
+backward one. The disc walkers touch a handful of ascending offsets, so a
+restart is rare and never more than one per extraction. Cost scales with
+how far into the member the identifier sits rather than with the member's
+size, which is why a trimmed image in a zip is far cheaper than a full
+redump in one. Stored (uncompressed) members skip all of it and read
+through directly.
+
+ZIP64 is handled, and required rather than optional: a redump exceeds
+every 32-bit field in the classic records, so the real sizes and offsets
+live only in the ZIP64 extra field.
+
+Members are chosen one of two ways. By default the largest non-directory
+member wins, which picks the disc image out of an archive that also holds
+a readme. A caller can instead ask for a member by path suffix, which is
+how a metadata file under a directory named for the title is reached; the
+shallowest match wins there, so a nested copy of the same filename cannot
+shadow the real one.
+
+`.7z` is recognised as an archive but has no reader. Adding one means
+vendoring the LZMA SDK's container sources (`7zArcIn.c`, `7zDec.c`,
+`Lzma2Dec.c` and friends); `third_party` currently carries only the
+`LzmaDec.c` libchdr needs. Until then a `.7z` falls through to the
+filename scanner. Note that LZMA offers no offset table and 7z is solid
+by default, so it could never be as cheap to seek into as ZArchive is.
 
 ## Building
 
@@ -315,6 +455,8 @@ consumers:
 |---|---|
 | `-DSIGIL_WITH_CHD=OFF` | libchdr + lzma + zstd (zlib stays if CSO is on) |
 | `-DSIGIL_WITH_CSO=OFF` | zlib-based PSP `.cso` / `.ciso` IO layer |
+| `-DSIGIL_WITH_ZIP=OFF` | zlib-based `.zip` member IO (archives stop resolving) |
+| `-DSIGIL_WITH_ZARCHIVE=OFF` | zstd-based `.zar` member IO (Xbox 360 keeps ISO/XEX) |
 | `-DSIGIL_WITH_SWITCH=OFF` | AES-XTS + tiny-AES + Switch NSP/XCI/NCA |
 | `-DSIGIL_WITH_WIIU=OFF` | WUA reader |
 | `-DSIGIL_WITH_3DS=OFF` | 3DS NCSD + zstd-streaming variant |
@@ -343,8 +485,8 @@ enum numbering keep these straightforward.
 cmake --build build && ctest --test-dir build
 
 # Real-ROM integration tests — point at a directory with platform
-# subdirs (psp/, psx/, ps2/, switch/, 3ds/, wii/, wiiu/, ngc/, psvita/,
-# dc/).
+# subdirs (psp/, psx/, ps2/, ps3/, switch/, 3ds/, wii/, wiiu/, ngc/,
+# psvita/, dc/, xbox/, xbox360/).
 SIGIL_ROM_DIR=/path/to/roms ctest --test-dir build -R integration
 
 # Switch tests additionally need a prod.keys file
