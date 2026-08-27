@@ -141,6 +141,42 @@ Treating a `prefix` platform as `exact` silently misses every save for
 that platform — sigil emits this classification so dispatch is correct
 without you re-deriving it.
 
+## Where saves land on Android
+
+`save_id` names one component of a path. Everything above it belongs to
+the emulator and differs per app, so a consumer needs both halves before
+it can find a file. The roots below all sit under
+`/storage/emulated/0/Android/data/<package>/files/`.
+
+**PS Vita — Vita3K** (`org.vita3k.emulator`).
+`vita/ux0/user/00/savedata/<save_id>/`, one directory per title, matching
+`folder-exact`. The user id is fixed at `00`: `io.cpp` redirects
+`savedata0:` to `ux0:user/00/savedata/<title_id>`.
+
+**PS3 — aPS3e** (`aenu.aps3e`).
+`aps3e/config/dev_hdd0/home/00000001/savedata/`. Directories begin with
+`save_id` and carry a per-artifact suffix, so enumerate by prefix as
+`folder-prefix` says. The user is hardcoded to `00000001`, unlike desktop
+RPCS3 where several can exist.
+
+**Xbox 360 — XenDroid** (`xendroid.compose`).
+`compose/content/<XUID>/<save_id>/00000001/<package>/`. Content is keyed
+by profile first and title second, so `save_id` is the *second* component
+and the 16-hex XUID directories above it have to be enumerated.
+`00000001` is the saved-game content type, against `00000002` for DLC and
+`000B0000` for title updates. Non-profile content lives under the machine
+XUID `0000000000000000`, so a tree containing only that XUID holds no
+saves. The layout is Xenia's, from `ResolvePackageRoot()`.
+
+**Xbox — X1 BOX** (`com.izzy2lost.x1box`). No host path exists. Saves are
+written to `E:\UDATA\<save_id>\` inside a FATX filesystem within the
+`.qcow2` or `.img` hard-disk image, and the user supplies that image
+through the setup wizard rather than the app placing it anywhere fixed.
+Reaching a save means reading FATX out of that image; X1 BOX's own FATX
+code only imports a dashboard and exports nothing. Treat `save_id` on
+this platform as an identifier for matching, not as a locator. Desktop
+xemu has the same property for the same reason.
+
 ## Quick example (C)
 
 ```c
@@ -367,7 +403,10 @@ half in decimal (`MS-100`). So `title_id` is the formatted serial and
 `save_id` is the hex, diverging the way PS2 and 3DS do. Ids whose prefix
 bytes are not `A-Z` — the dashboard, XDK samples — fall back to plain
 8-digit hex in both fields, which is what Cxbx-Reloaded's
-`FormatTitleId()` does.
+`FormatTitleId()` does. That directory lives inside a FATX disk image
+rather than on the host filesystem, so `save_id` identifies a save here
+without locating one; see
+[Where saves land on Android](#where-saves-land-on-android).
 
 The certificate is addressed by the virtual address the image loads at,
 so its file offset is that address minus the image base. Pass a bare
