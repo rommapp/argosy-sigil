@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "sigil_internal.h"
 
-#if SIGIL_WITH_3DS
-
 #include <stdlib.h>
 #include <zstd.h>
 
@@ -278,5 +276,3 @@ int sigil_extract_3ds(const sigil_io *io, const char *filename_hint,
     out->source = SIGIL_SOURCE_BINARY;
     return SIGIL_OK;
 }
-
-#endif

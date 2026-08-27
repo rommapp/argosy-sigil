@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "sigil_internal.h"
 
-#if SIGIL_WITH_CHD
-
 #include <libchdr/chd.h>
 #include <stdlib.h>
 #include <string.h>
@@ -135,12 +133,3 @@ sigil_io *sigil_io_open_chd(const char *path) {
     io->ctx = ctx;
     return io;
 }
-
-#else
-
-sigil_io *sigil_io_open_chd(const char *path) {
-    (void)path;
-    return NULL;
-}
-
-#endif

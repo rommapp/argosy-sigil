@@ -168,20 +168,14 @@ static sigil_io *open_io_for_platform(const char *path, sigil_platform p) {
     bool can_chd = (p == SIGIL_PLATFORM_PSP || p == SIGIL_PLATFORM_PSX
                     || p == SIGIL_PLATFORM_PS2 || p == SIGIL_PLATFORM_DREAMCAST);
 
-#if SIGIL_WITH_CHD
     if (can_chd && strcmp(ext, "chd") == 0) {
         sigil_io *io = sigil_io_open_chd(path);
         if (io) return io;
     }
-#else
-    (void)can_chd;
-#endif
-#if SIGIL_WITH_CSO
     if (p == SIGIL_PLATFORM_PSP && (strcmp(ext, "cso") == 0 || strcmp(ext, "ciso") == 0)) {
         sigil_io *io = sigil_io_open_cso(path);
         if (io) return io;
     }
-#endif
     /* A .zar holds the extracted disc filesystem rather than a disc image, so
      * the boot executable is a member and the walker never runs. */
     if (p == SIGIL_PLATFORM_XBOX360 && strcmp(ext, "zar") == 0) {

@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "sigil_internal.h"
 
-#if SIGIL_WITH_SWITCH
-
 #include <stdlib.h>
 
 #define HFS0_ROOT_OFFSET 0xF000
@@ -204,5 +202,3 @@ int sigil_extract_xci(const sigil_io *io, const sigil_options *opts,
     sigil_apply_switch_title(out, &t);
     return SIGIL_OK;
 }
-
-#endif

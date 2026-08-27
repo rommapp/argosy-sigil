@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "sigil_internal.h"
 
-#if SIGIL_WITH_ZIP
-
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -438,17 +436,3 @@ sigil_io *sigil_io_open_zip_member(const char *path, const char *suffix) {
     if (!suffix) return NULL;
     return zip_open_impl(path, suffix, NULL, 0);
 }
-
-#else
-
-sigil_io *sigil_io_open_zip(const char *path, char *out_name, size_t name_cap) {
-    (void)path; (void)out_name; (void)name_cap;
-    return NULL;
-}
-
-sigil_io *sigil_io_open_zip_member(const char *path, const char *suffix) {
-    (void)path; (void)suffix;
-    return NULL;
-}
-
-#endif

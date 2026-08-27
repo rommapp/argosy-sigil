@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "sigil_internal.h"
 
-#if SIGIL_WITH_CSO
-
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -180,12 +178,3 @@ sigil_io *sigil_io_open_cso(const char *path) {
     io->ctx   = ctx;
     return io;
 }
-
-#else
-
-sigil_io *sigil_io_open_cso(const char *path) {
-    (void)path;
-    return NULL;
-}
-
-#endif

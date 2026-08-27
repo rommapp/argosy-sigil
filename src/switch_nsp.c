@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "sigil_internal.h"
 
-#if SIGIL_WITH_SWITCH
-
 #include <stdlib.h>
 
 #define MAX_SWITCH_FILE_COUNT  4096
@@ -219,5 +217,3 @@ int sigil_extract_switch(const sigil_io *io, const char *filename_hint,
 
     return sigil_extract_xci(io, opts, out);
 }
-
-#endif

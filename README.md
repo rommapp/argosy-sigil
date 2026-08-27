@@ -448,19 +448,16 @@ cmake -B build -S .
 cmake --build build
 ```
 
-Default build includes every platform. Feature flags for slim
-consumers:
+Every platform and container reader is always compiled. There is no
+build-time toggle for what sigil can read, deliberately: sigil is
+embedded by larger applications, and a consumer expects a format to work
+rather than to find out at integration time that a flag dropped it.
 
-| Flag | Drops |
+The options that remain choose what gets produced, not what sigil
+understands:
+
+| Option | Effect |
 |---|---|
-| `-DSIGIL_WITH_CHD=OFF` | libchdr + lzma + zstd (zlib stays if CSO is on) |
-| `-DSIGIL_WITH_CSO=OFF` | zlib-based PSP `.cso` / `.ciso` IO layer |
-| `-DSIGIL_WITH_ZIP=OFF` | zlib-based `.zip` member IO (archives stop resolving) |
-| `-DSIGIL_WITH_ZARCHIVE=OFF` | zstd-based `.zar` member IO (Xbox 360 keeps ISO/XEX) |
-| `-DSIGIL_WITH_SWITCH=OFF` | AES-XTS + tiny-AES + Switch NSP/XCI/NCA |
-| `-DSIGIL_WITH_WIIU=OFF` | WUA reader |
-| `-DSIGIL_WITH_3DS=OFF` | 3DS NCSD + zstd-streaming variant |
-| `-DSIGIL_WITH_FILENAME=OFF` | Per-platform filename pattern scanners |
 | `-DSIGIL_BUILD_SHARED=ON` | Build `libsigil.so` instead of `.a` |
 | `-DSIGIL_BUILD_CLI=OFF` | Skip the `sigil(1)` reference CLI |
 | `-DSIGIL_BUILD_TESTS=OFF` | Skip tests |

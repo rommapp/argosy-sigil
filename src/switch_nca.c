@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "sigil_internal.h"
 
-#if SIGIL_WITH_SWITCH
-
 #define NCA_MAGIC_OFFSET      0x200
 #define NCA_PROGRAM_ID_OFFSET 0x210
 #define NCA_RIGHTS_ID_OFFSET  0x230
@@ -86,5 +84,3 @@ int sigil_nca_decrypt_header(const uint8_t *raw_header,
                                    SIGIL_NCA_HEADER_SIZE);
     return nca_has_magic(out) ? SIGIL_OK : SIGIL_ERR_NOT_FOUND;
 }
-
-#endif

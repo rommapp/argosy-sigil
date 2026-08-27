@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "sigil_internal.h"
 
-#if SIGIL_WITH_SWITCH
-
 #include "aes.h"
 
 /* Nintendo XTS variant: tweak input has bytes 0-7 zero, bytes 8-15 holding
@@ -109,5 +107,3 @@ void sigil_aes_xts_encrypt_nintendo(const uint8_t key[32],
         }
     }
 }
-
-#endif

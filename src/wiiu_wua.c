@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "sigil_internal.h"
 
-#if SIGIL_WITH_WIIU
-
 #include <stdlib.h>
 
 /* A .wua is a ZArchive, the same container Xenia writes as .zar for Xbox 360,
@@ -112,5 +110,3 @@ int sigil_extract_wiiu(const sigil_io *io, const char *filename_hint,
     free(tree);
     return rc;
 }
-
-#endif

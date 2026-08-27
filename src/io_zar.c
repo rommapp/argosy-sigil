@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "sigil_internal.h"
 
-#if SIGIL_WITH_ZARCHIVE
-
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -223,12 +221,3 @@ sigil_io *sigil_io_open_zar(const char *path, const char *member) {
     io->ctx   = c;
     return io;
 }
-
-#else
-
-sigil_io *sigil_io_open_zar(const char *path, const char *member) {
-    (void)path; (void)member;
-    return NULL;
-}
-
-#endif

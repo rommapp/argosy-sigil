@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "sigil_internal.h"
 
-#if SIGIL_WITH_SWITCH
-
 #include "aes.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -178,5 +176,3 @@ int sigil_cnmt_from_meta_nca(const sigil_io *io, uint64_t nca_offset,
     free(buf);
     return rc;
 }
-
-#endif
