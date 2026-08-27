@@ -65,7 +65,8 @@ typedef enum {
     SIGIL_PLATFORM_GAMECUBE,
     SIGIL_PLATFORM_PS3,
     SIGIL_PLATFORM_XBOX360,
-    SIGIL_PLATFORM_DREAMCAST
+    SIGIL_PLATFORM_DREAMCAST,
+    SIGIL_PLATFORM_XBOX
 } sigil_platform;
 
 typedef enum {
@@ -173,6 +174,22 @@ SIGIL_API sigil_io *sigil_io_open_file(const char *path);
 SIGIL_API sigil_io *sigil_io_open_chd(const char *path);     /* requires SIGIL_WITH_CHD */
 SIGIL_API sigil_io *sigil_io_open_cso(const char *path);     /* requires SIGIL_WITH_CSO; .cso/.ciso v1 only */
 SIGIL_API sigil_io *sigil_io_open_raw_cd(const char *path);
+/* Presents the archive's largest member as a stream (requires SIGIL_WITH_ZIP).
+ * `out_name` receives that member's name so the caller can resolve the
+ * platform from it; pass NULL to ignore. Seeking backwards restarts the
+ * decoder, so callers should read ascending offsets where they can. */
+SIGIL_API sigil_io *sigil_io_open_zip(const char *path, char *out_name, size_t name_cap);
+/* Opens the first member whose path ends with `suffix`, matched
+ * case-insensitively with `\` treated as `/`. Use when the wanted file sits
+ * under a directory whose name varies per title, such as a Vita dump's
+ * app/<TITLEID>/sce_sys/param.sfo. */
+SIGIL_API sigil_io *sigil_io_open_zip_member(const char *path, const char *suffix);
+/* Presents one file from inside a ZArchive (.zar / .wua) as a stream
+ * (requires SIGIL_WITH_ZARCHIVE). Contents are stored in fixed 64 KiB blocks
+ * with an offset record for every sixteen, so unlike the zip backend this is
+ * true random access and a read costs one block decompression regardless of
+ * how far into the archive it lands. */
+SIGIL_API sigil_io *sigil_io_open_zar(const char *path, const char *member);
 SIGIL_API void      sigil_io_close(sigil_io *io);
 
 SIGIL_API int sigil_load_header_key_from_prod_keys(const char *path, uint8_t out[32]);

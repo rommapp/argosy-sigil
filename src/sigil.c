@@ -12,6 +12,9 @@
 
 #define SIGIL_VERSION_STRING "0.1.0-dev"
 #define SIGIL_DIR_SCAN_MAX_DEPTH 4
+/* Matched as a path suffix so the variable app/<TITLEID>/ prefix in a dump
+ * does not have to be known ahead of time. */
+#define VITA_SFO_MEMBER "sce_sys/param.sfo"
 
 typedef struct {
     sigil_platform p;
@@ -32,6 +35,7 @@ static const platform_slug PLATFORM_SLUGS[] = {
     { SIGIL_PLATFORM_PS3,      "ps3"      },
     { SIGIL_PLATFORM_XBOX360,  "xbox360"  },
     { SIGIL_PLATFORM_DREAMCAST, "dreamcast" },
+    { SIGIL_PLATFORM_XBOX,     "xbox"     },
 };
 static const size_t PLATFORM_SLUG_COUNT = sizeof(PLATFORM_SLUGS) / sizeof(PLATFORM_SLUGS[0]);
 
@@ -44,6 +48,7 @@ static const platform_slug PLATFORM_ALIASES[] = {
     { SIGIL_PLATFORM_SWITCH,   "nsw"  },
     { SIGIL_PLATFORM_XBOX360,  "x360" },
     { SIGIL_PLATFORM_DREAMCAST, "dc"   },
+    { SIGIL_PLATFORM_XBOX,      "xbx"  },
 };
 static const size_t PLATFORM_ALIAS_COUNT = sizeof(PLATFORM_ALIASES) / sizeof(PLATFORM_ALIASES[0]);
 
@@ -92,6 +97,28 @@ static const char *path_basename(const char *path) {
     return slash ? slash + 1 : path;
 }
 
+static bool name_has_suffix(const char *name, const char *suffix) {
+    if (!name) return false;
+    size_t n = strlen(name), s = strlen(suffix);
+    if (n < s) return false;
+    const char *tail = name + (n - s);
+    for (size_t i = 0; i < s; i++) {
+        if (sigil_to_lower(tail[i]) != sigil_to_lower(suffix[i])) return false;
+    }
+    return true;
+}
+
+/* `.7z` is listed as the hook point for a reader that does not exist yet, so
+ * today it simply fails to open and falls through to the filename scanner.
+ * Adding one means vendoring the LZMA SDK's container sources (7zArcIn.c,
+ * 7zDec.c, Lzma2Dec.c and friends); third_party currently carries only the
+ * LzmaDec.c that libchdr needs. */
+static bool path_is_archive(const char *filename) {
+    char ext[16];
+    sigil_lower_ext(filename, ext);
+    return strcmp(ext, "zip") == 0 || strcmp(ext, "7z") == 0;
+}
+
 static sigil_platform sniff_from_extension(const char *filename) {
     char ext[16];
     sigil_lower_ext(filename, ext);
@@ -115,10 +142,19 @@ static sigil_platform sniff_from_extension(const char *filename) {
     if (strcmp(ext, "ciso") == 0)  return SIGIL_PLATFORM_PSP;
     if (strcmp(ext, "sfo") == 0)   return SIGIL_PLATFORM_PS3;
     if (strcmp(ext, "xex") == 0)   return SIGIL_PLATFORM_XBOX360;
+    if (strcmp(ext, "xbe") == 0)   return SIGIL_PLATFORM_XBOX;
+    if (strcmp(ext, "xiso") == 0)  return SIGIL_PLATFORM_XBOX;
+    /* ZArchive under two names: Cemu writes .wua for Wii U, Xenia writes .zar
+     * for the 360, so the extension is what separates them. */
+    if (strcmp(ext, "zar") == 0)   return SIGIL_PLATFORM_XBOX360;
     if (strcmp(ext, "gdi") == 0)   return SIGIL_PLATFORM_DREAMCAST;
     if (strcmp(ext, "cdi") == 0)   return SIGIL_PLATFORM_DREAMCAST;
 
-    /* `.iso`/`.bin`/`.chd` are ambiguous between PSP/PSX/PS2/Wii/GC/Dreamcast;
+    /* `Game.xiso.iso` is a real convention in Xbox sets, and the trailing
+     * `.iso` alone would throw away what the name already states. */
+    if (name_has_suffix(filename, ".xiso.iso")) return SIGIL_PLATFORM_XBOX;
+
+    /* `.iso`/`.bin`/`.chd` are ambiguous between PSP/PSX/PS2/Wii/GC/Dreamcast/Xbox;
      * refuse to guess without a hint. `.elf`/`.axf` are 3DS homebrew to azahar
      * but generic everywhere else, so they need an explicit platform hint. */
     return SIGIL_PLATFORM_AUTO;
@@ -146,6 +182,12 @@ static sigil_io *open_io_for_platform(const char *path, sigil_platform p) {
         if (io) return io;
     }
 #endif
+    /* A .zar holds the extracted disc filesystem rather than a disc image, so
+     * the boot executable is a member and the walker never runs. */
+    if (p == SIGIL_PLATFORM_XBOX360 && strcmp(ext, "zar") == 0) {
+        sigil_io *io = sigil_io_open_zar(path, "default.xex");
+        if (io) return io;
+    }
     /* A Dreamcast data track dumped alongside a .gdi is raw 2352-byte MODE1,
      * like a PSX .bin; the raw-CD layer cooks it and passes a plain 2048-byte
      * image through untouched. */
@@ -235,6 +277,7 @@ static const char *directory_target_for_platform(sigil_platform p) {
     switch (p) {
     case SIGIL_PLATFORM_PS3:     return "PARAM.SFO";
     case SIGIL_PLATFORM_XBOX360: return "default.xex";
+    case SIGIL_PLATFORM_XBOX:    return "default.xbe";
     default:                      return NULL;
     }
 }
@@ -255,6 +298,7 @@ static int dispatch(const sigil_io *io, const char *filename_hint,
     case SIGIL_PLATFORM_PS3:      return sigil_extract_ps3(io, filename_hint, opts, out);
     case SIGIL_PLATFORM_XBOX360:  return sigil_extract_xbox360(io, filename_hint, opts, out);
     case SIGIL_PLATFORM_DREAMCAST: return sigil_extract_dreamcast(io, filename_hint, opts, out);
+    case SIGIL_PLATFORM_XBOX:     return sigil_extract_xbox(io, filename_hint, opts, out);
     default:                       return SIGIL_ERR_UNKNOWN_PLATFORM;
     }
 }
@@ -316,8 +360,71 @@ int sigil_extract_from_path(const char *path, sigil_platform hint,
         resolved = sniff_from_extension(path_basename(path));
     }
 
-    if (resolved == SIGIL_PLATFORM_PSVITA) {
-        return sigil_extract_psvita(NULL, path_basename(path), opts, out);
+    /* An archive extension names the container, never the console, so the
+     * platform has to be resolved a second time from the member inside it.
+     * That also makes this branch platform-agnostic: a zipped .nsp or .wbfs
+     * takes the same route as a zipped Xbox image.
+     *
+     * PS Vita is excluded because its id comes from the archive's own file
+     * name and the contents are never opened, so routing it through the
+     * container reader would look inside for something that is not there.
+     * Every other failure falls through rather than returning, leaving the
+     * filename scanner its chance at an archive sigil cannot read. */
+    if (resolved != SIGIL_PLATFORM_PSVITA && path_is_archive(path_basename(path))) {
+        char inner[512];
+        inner[0] = '\0';
+        sigil_io *aio = sigil_io_open_zip(path, inner, sizeof(inner));
+        if (aio) {
+            sigil_platform inner_p = (hint != SIGIL_PLATFORM_AUTO)
+                                   ? hint : sniff_from_extension(inner);
+            if (inner_p != SIGIL_PLATFORM_AUTO) {
+                int arc = sigil_extract_from_io(aio, inner, inner_p, opts, out);
+                sigil_io_close(aio);
+                if (arc == SIGIL_OK) return arc;
+            } else {
+                sigil_io_close(aio);
+            }
+        }
+    }
+
+    /* Vita dumps keep their identifier in sce_sys/param.sfo under a directory
+     * named for the title, so the member is addressed by path suffix rather
+     * than by the largest-member rule the generic archive branch uses.
+     *
+     * The probe also runs without a hint, because a .zip names no platform and
+     * the filename scanner would otherwise claim a Vita serial for PSP: both
+     * use the same bracket pattern. Finding that member is what identifies the
+     * dump, so detection is by content rather than by name. */
+    if (resolved == SIGIL_PLATFORM_PSVITA || resolved == SIGIL_PLATFORM_AUTO) {
+        sigil_io *vio = NULL;
+        if (path_is_archive(path_basename(path))) {
+            vio = sigil_io_open_zip_member(path, VITA_SFO_MEMBER);
+        } else if (resolved == SIGIL_PLATFORM_PSVITA) {
+            char found[1024];
+            if (path_is_directory(path)) {
+                if (find_file_in_dir(path, "param.sfo", found, sizeof(found), 0) == SIGIL_OK) {
+                    vio = sigil_io_open_file(found);
+                }
+            } else {
+                vio = sigil_io_open_file(path);
+            }
+        }
+
+        if (vio) {
+            sigil_result vr;
+            int vrc = sigil_extract_psvita(vio, path_basename(path), opts, &vr);
+            sigil_io_close(vio);
+            /* Only a binary hit settles it here. A filename-sourced result
+             * would be the very guess this path exists to avoid, and with no
+             * hint it could belong to another platform entirely. */
+            if (vrc == SIGIL_OK && vr.source == SIGIL_SOURCE_BINARY) {
+                *out = vr;
+                return SIGIL_OK;
+            }
+        }
+        if (resolved == SIGIL_PLATFORM_PSVITA) {
+            return sigil_extract_psvita(NULL, path_basename(path), opts, out);
+        }
     }
 
     if (resolved == SIGIL_PLATFORM_AUTO) {

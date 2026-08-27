@@ -32,6 +32,24 @@ sigil_add_test(unit_3ds)
 sigil_add_test(unit_switch_nca)
 sigil_add_test(unit_wii_wbfs)
 sigil_add_test(unit_dreamcast)
+sigil_add_test(unit_xbox)
+sigil_add_test(unit_ps3_iso)
+
+# The zip fixture is deflated at test time, so it needs zlib's headers. The
+# archive itself arrives transitively through sigil, so linking it again here
+# would only put the same static library on the command line twice.
+if(SIGIL_WITH_ZIP)
+    sigil_add_test(unit_zip)
+    target_include_directories(unit_zip PRIVATE
+        $<TARGET_PROPERTY:sigil_zlib,INTERFACE_INCLUDE_DIRECTORIES>)
+endif()
+
+# Same arrangement for the ZArchive fixture, which zstd-compresses its blocks
+# at test time.
+if(SIGIL_WITH_ZARCHIVE)
+    sigil_add_test(unit_zar)
+    target_link_libraries(unit_zar PRIVATE sigil_zstd_compress)
+endif()
 
 if(SIGIL_WITH_WIIU)
     sigil_add_test(unit_wiiu)

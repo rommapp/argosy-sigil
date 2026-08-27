@@ -36,7 +36,8 @@ static void print_usage(void) {
         "\n"
         "Options:\n"
         "  --platform=<slug>   Force a platform (psp, psx, ps2, ps3, switch, 3ds,\n"
-        "                      wii, wiiu, gamecube, psvita, xbox360, dreamcast).\n"
+        "                      wii, wiiu, gamecube, psvita, xbox, xbox360,\n"
+        "                      dreamcast).\n"
         "                      Default: auto-detect.\n"
         "  --prod-keys=<path>  Switch prod.keys file for NCA decryption.\n"
         "  --help              Show this message.\n",

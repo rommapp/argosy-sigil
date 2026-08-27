@@ -20,6 +20,8 @@ endif()
 # ---- Feature flags -----------------------------------------------------------
 option(SIGIL_WITH_CHD       "Build CHD support (libchdr + zlib/lzma/zstd)" ON)
 option(SIGIL_WITH_CSO       "Build PSP .cso/.ciso v1 IO (zlib raw deflate)" ON)
+option(SIGIL_WITH_ZIP       "Build .zip member IO (zlib raw deflate)"      ON)
+option(SIGIL_WITH_ZARCHIVE  "Build ZArchive .wua/.zar readers (zstd)"      ON)
 option(SIGIL_WITH_SWITCH    "Build Switch NSP/XCI/NCA + AES-XTS"           ON)
 option(SIGIL_WITH_WIIU      "Build Wii U WUA reader"                       ON)
 option(SIGIL_WITH_3DS       "Build 3DS NCSD + .z3ds/.zcci zstd"            ON)
@@ -29,14 +31,14 @@ option(SIGIL_BUILD_TESTS    "Build tests"                                  ON)
 option(SIGIL_BUILD_SHARED   "Build libsigil as a shared library"           OFF)
 
 set(SIGIL_NEEDS_ZLIB OFF)
-if(SIGIL_WITH_CHD OR SIGIL_WITH_CSO)
+if(SIGIL_WITH_CHD OR SIGIL_WITH_CSO OR SIGIL_WITH_ZIP)
     set(SIGIL_NEEDS_ZLIB ON)
 endif()
 
 # zstd is shared between libchdr's needs (CHD codecs) and sigil's own
 # decompression for Wii U WUA + 3DS .z3ds/.zcci.
 set(SIGIL_NEEDS_ZSTD OFF)
-if(SIGIL_WITH_CHD OR SIGIL_WITH_WIIU OR SIGIL_WITH_3DS)
+if(SIGIL_WITH_CHD OR SIGIL_WITH_WIIU OR SIGIL_WITH_3DS OR SIGIL_WITH_ZARCHIVE)
     set(SIGIL_NEEDS_ZSTD ON)
 endif()
 
@@ -49,6 +51,15 @@ if(SIGIL_NEEDS_ZSTD)
     file(GLOB ZSTD_DECOMPRESS_SOURCES ${ZSTD_DIR}/decompress/*.c)
     add_library(sigil_zstd STATIC ${ZSTD_COMMON_SOURCES} ${ZSTD_DECOMPRESS_SOURCES})
     target_include_directories(sigil_zstd PUBLIC ${ZSTD_DIR} ${ZSTD_DIR}/common)
+
+    # sigil only ever decompresses, so the compressor is built for tests alone,
+    # where fixtures have to be produced in the same format they will be read.
+    if(SIGIL_BUILD_TESTS)
+        file(GLOB ZSTD_COMPRESS_SOURCES ${ZSTD_DIR}/compress/*.c)
+        add_library(sigil_zstd_compress STATIC ${ZSTD_COMPRESS_SOURCES})
+        target_include_directories(sigil_zstd_compress PUBLIC ${ZSTD_DIR} ${ZSTD_DIR}/common)
+        target_link_libraries(sigil_zstd_compress PUBLIC sigil_zstd)
+    endif()
 endif()
 
 if(SIGIL_NEEDS_ZLIB)
@@ -119,6 +130,8 @@ set(SIGIL_SOURCES
     src/wii.c
     src/xbox360.c
     src/dreamcast.c
+    src/xbox.c
+    src/xdvdfs.c
 )
 
 if(SIGIL_WITH_CHD)
@@ -126,6 +139,16 @@ if(SIGIL_WITH_CHD)
 endif()
 if(SIGIL_WITH_CSO)
     list(APPEND SIGIL_SOURCES src/io_cso.c)
+endif()
+# These two are always compiled. Their bodies are behind the feature guard and
+# compile away to a stub returning NULL, which is what keeps the call sites in
+# sigil.c free of preprocessor branches.
+list(APPEND SIGIL_SOURCES src/io_zip.c src/io_zar.c)
+
+# The shared ZArchive metadata parser is needed by Wii U's .wua reader as well
+# as the Xbox 360 .zar backend, so it follows either option.
+if(SIGIL_WITH_ZARCHIVE OR SIGIL_WITH_WIIU)
+    list(APPEND SIGIL_SOURCES src/zarchive.c)
 endif()
 if(SIGIL_WITH_SWITCH)
     list(APPEND SIGIL_SOURCES
@@ -166,6 +189,14 @@ endif()
 if(SIGIL_WITH_CSO)
     target_compile_definitions(sigil PRIVATE SIGIL_WITH_CSO=1)
     target_link_libraries(sigil PRIVATE sigil_zlib)
+endif()
+if(SIGIL_WITH_ZIP)
+    target_compile_definitions(sigil PRIVATE SIGIL_WITH_ZIP=1)
+    target_link_libraries(sigil PRIVATE sigil_zlib)
+endif()
+if(SIGIL_WITH_ZARCHIVE)
+    target_compile_definitions(sigil PRIVATE SIGIL_WITH_ZARCHIVE=1)
+    target_link_libraries(sigil PRIVATE sigil_zstd)
 endif()
 if(SIGIL_WITH_SWITCH)
     target_compile_definitions(sigil PRIVATE SIGIL_WITH_SWITCH=1)

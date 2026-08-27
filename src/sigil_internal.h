@@ -163,6 +163,39 @@ int sigil_extract_psvita(const sigil_io *io, const char *filename_hint,
                          const sigil_options *opts, sigil_result *out);
 int sigil_extract_dreamcast(const sigil_io *io, const char *filename_hint,
                             const sigil_options *opts, sigil_result *out);
+int sigil_extract_xbox(const sigil_io *io, const char *filename_hint,
+                       const sigil_options *opts, sigil_result *out);
+
+/* Locates `name` in the root directory of an XDVDFS image, probing the known
+ * partition bases so trimmed and full disc images both resolve. Shared by both
+ * Xbox generations, which use the same filesystem. */
+int sigil_xdvdfs_find_root_file(const sigil_io *io, const char *name,
+                                uint64_t *out_off, uint32_t *out_size);
+
+/* ZArchive is one container behind two extensions: Cemu's .wua for Wii U and
+ * Xenia's .zar for Xbox 360. The declarations stay unconditional so either
+ * platform can be built without the other. */
+#define SIGIL_ZAR_MAGIC        0x169F52D6u
+#define SIGIL_ZAR_VERSION_1    0x61BF3A01u
+#define SIGIL_ZAR_FOOTER_SIZE  144
+#define SIGIL_ZAR_TREE_ENTRY   16
+/* Contents are stored in fixed 64 KiB blocks with an offset record every 16,
+ * which is what makes random access into a compressed archive cheap. */
+#define SIGIL_ZAR_BLOCK_SIZE   (64u * 1024u)
+#define SIGIL_ZAR_BLOCKS_PER_RECORD 16
+#define SIGIL_ZAR_RECORD_SIZE  (8 + 2 * SIGIL_ZAR_BLOCKS_PER_RECORD)
+#define SIGIL_ZAR_MAX_METADATA (16 * 1024 * 1024)
+
+typedef struct {
+    uint64_t compressed_off,     compressed_size;
+    uint64_t offset_records_off, offset_records_size;
+    uint64_t names_off,          names_size;
+    uint64_t file_tree_off,      file_tree_size;
+} sigil_zar_footer;
+
+int sigil_zar_read_footer(const sigil_io *io, sigil_zar_footer *out);
+size_t sigil_zar_read_name(const uint8_t *names, size_t names_len,
+                           uint32_t offset, char *out, size_t out_size);
 
 #if SIGIL_WITH_FILENAME
 int sigil_filename_fallback(const char *filename_hint,

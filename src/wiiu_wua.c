@@ -5,56 +5,13 @@
 
 #include <stdlib.h>
 
-/* WUA / zArchive metadata layout (big-endian throughout). The footer at
- * end of file points to uncompressed names + file_tree sections; only
- * file *contents* go through zstd, which we don't read.
- *
- *   0x20 names_offset      0x28 names_size
- *   0x30 file_tree_offset  0x38 file_tree_size
- *   0x88 version (u32)     0x8C magic (u32)
- */
+/* A .wua is a ZArchive, the same container Xenia writes as .zar for Xbox 360,
+ * so the footer and name-table parsing live in src/zarchive.c and are shared.
+ * Wii U only needs the directory listing: the title id is the name of a
+ * top-level directory, so file contents are never decompressed here. */
 
-#define WUA_MAGIC         0x169F52D6u
-#define WUA_VERSION_1     0x61BF3A01u
-#define WUA_FOOTER_SIZE   144
-#define WUA_FILE_ENTRY    16
-#define WUA_MAX_METADATA  (16 * 1024 * 1024)
-
-typedef struct {
-    uint64_t names_offset, names_size;
-    uint64_t file_tree_offset, file_tree_size;
-} wua_footer;
-
-static int read_footer(const sigil_io *io, wua_footer *out) {
-    int64_t total = io->size(io->ctx);
-    if (total < WUA_FOOTER_SIZE) return SIGIL_ERR_NOT_FOUND;
-
-    uint8_t buf[WUA_FOOTER_SIZE];
-    int rc = sigil_io_read_exact(io, (uint64_t)(total - WUA_FOOTER_SIZE),
-                                  buf, WUA_FOOTER_SIZE);
-    if (rc != SIGIL_OK) return rc;
-
-    uint32_t version = sigil_read_be32(buf + 0x88);
-    uint32_t magic   = sigil_read_be32(buf + 0x8C);
-    if (magic != WUA_MAGIC || version != WUA_VERSION_1) return SIGIL_ERR_NOT_FOUND;
-
-    out->names_offset     = sigil_read_be64(buf + 0x20);
-    out->names_size       = sigil_read_be64(buf + 0x28);
-    out->file_tree_offset = sigil_read_be64(buf + 0x30);
-    out->file_tree_size   = sigil_read_be64(buf + 0x38);
-    return SIGIL_OK;
-}
-
-static size_t read_name(const uint8_t *names, size_t names_len,
-                        uint32_t offset, char *out, size_t out_size) {
-    if (offset >= names_len) return 0;
-    size_t len = names[offset];
-    if (offset + 1 + len > names_len) return 0;
-    if (len + 1 > out_size) return 0;
-    memcpy(out, names + offset + 1, len);
-    out[len] = '\0';
-    return len;
-}
+#define WUA_FILE_ENTRY    SIGIL_ZAR_TREE_ENTRY
+#define WUA_MAX_METADATA  SIGIL_ZAR_MAX_METADATA
 
 /* Match `00050000<8 hex>` at start of `name`; emit canonical (last 8) +
  * raw (full 16) uppercase, plus the lowercase on-disk form of the canonical.
@@ -89,8 +46,8 @@ int sigil_extract_wiiu(const sigil_io *io, const char *filename_hint,
     out->platform = SIGIL_PLATFORM_WIIU;
     out->usage = SIGIL_USAGE_FOLDER_EXACT;
 
-    wua_footer ft;
-    int rc = read_footer(io, &ft);
+    sigil_zar_footer ft;
+    int rc = sigil_zar_read_footer(io, &ft);
     if (rc != SIGIL_OK) return rc;
 
     if (ft.names_size > WUA_MAX_METADATA || ft.file_tree_size > WUA_MAX_METADATA) {
@@ -99,12 +56,12 @@ int sigil_extract_wiiu(const sigil_io *io, const char *filename_hint,
 
     uint8_t *names = (uint8_t *)malloc(ft.names_size);
     if (!names) return SIGIL_ERR_OOM;
-    rc = sigil_io_read_exact(io, ft.names_offset, names, (size_t)ft.names_size);
+    rc = sigil_io_read_exact(io, ft.names_off, names, (size_t)ft.names_size);
     if (rc != SIGIL_OK) { free(names); return rc; }
 
     uint8_t *tree = (uint8_t *)malloc(ft.file_tree_size);
     if (!tree) { free(names); return SIGIL_ERR_OOM; }
-    rc = sigil_io_read_exact(io, ft.file_tree_offset, tree, (size_t)ft.file_tree_size);
+    rc = sigil_io_read_exact(io, ft.file_tree_off, tree, (size_t)ft.file_tree_size);
     if (rc != SIGIL_OK) { free(names); free(tree); return rc; }
 
     if (ft.file_tree_size < WUA_FILE_ENTRY) {
@@ -137,7 +94,8 @@ int sigil_extract_wiiu(const sigil_io *io, const char *filename_hint,
 
         uint32_t name_off = nf & 0x7FFFFFFFu;
         char name[256];
-        if (read_name(names, (size_t)ft.names_size, name_off, name, sizeof(name)) == 0) continue;
+        if (sigil_zar_read_name(names, (size_t)ft.names_size, name_off,
+                                name, sizeof(name)) == 0) continue;
 
         char canonical[9], raw[17], save[9];
         if (match_wiiu_title_dir(name, canonical, raw, save)) {
