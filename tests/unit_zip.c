@@ -279,9 +279,11 @@ static int test_backward_seek(const uint8_t *img) {
     return bad;
 }
 
+#if SIGIL_TEST_FILENAME_FALLBACK
 /* A PS Vita release is a .zip whose identifier lives in the archive's own file
  * name, and whose members name no console. The container reader must not
- * swallow it and report that nothing inside looks like a game. */
+ * swallow it and report that nothing inside looks like a game. Only meaningful
+ * when the filename scanner is in the build. */
 static int test_vita_zip_still_resolves_by_name(const uint8_t *img) {
     char dir[400], path[512];
     snprintf(dir, sizeof(dir), "%s", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
@@ -313,6 +315,7 @@ static int test_vita_zip_still_resolves_by_name(const uint8_t *img) {
     }
     return 0;
 }
+#endif
 
 /* Addressing a member by path suffix is what reaches a file buried under a
  * directory whose name varies per title, and it must not be fooled into
@@ -403,7 +406,9 @@ int main(void) {
     bad |= run_case("deflate", 8, img);
     bad |= run_case("store", 0, img);
     bad |= test_backward_seek(img);
+#if SIGIL_TEST_FILENAME_FALLBACK
     bad |= test_vita_zip_still_resolves_by_name(img);
+#endif
     bad |= test_member_by_suffix();
     bad |= test_shallowest_match_wins();
     free(img);

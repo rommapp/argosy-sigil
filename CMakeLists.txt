@@ -135,7 +135,7 @@ set(SIGIL_SOURCES
 )
 
 if(SIGIL_WITH_CHD)
-    list(APPEND SIGIL_SOURCES src/io_chd.c src/io_raw_cd.c)
+    list(APPEND SIGIL_SOURCES src/io_chd.c)
 endif()
 if(SIGIL_WITH_CSO)
     list(APPEND SIGIL_SOURCES src/io_cso.c)
@@ -144,6 +144,10 @@ endif()
 # compile away to a stub returning NULL, which is what keeps the call sites in
 # sigil.c free of preprocessor branches.
 list(APPEND SIGIL_SOURCES src/io_zip.c src/io_zar.c)
+
+# Raw 2352-byte CD sectors are cooked to 2048 for PSX and Dreamcast .bin
+# tracks, which has nothing to do with CHD; it was only ever grouped with it.
+list(APPEND SIGIL_SOURCES src/io_raw_cd.c)
 
 # The shared ZArchive metadata parser is needed by Wii U's .wua reader as well
 # as the Xbox 360 .zar backend, so it follows either option.

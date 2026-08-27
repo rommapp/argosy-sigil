@@ -153,12 +153,37 @@ int sigil_extract_wii(const sigil_io *io, const char *filename_hint,
                       const sigil_options *opts, sigil_result *out);
 int sigil_extract_gamecube(const sigil_io *io, const char *filename_hint,
                            const sigil_options *opts, sigil_result *out);
+/* Extractors whose sources are dropped by a feature flag still get called from
+ * the dispatch switch, so each needs a stub to link against when its flag is
+ * off. Reporting an unknown platform is accurate: this build genuinely does
+ * not know that one. Same arrangement as sigil_filename_fallback below. */
+#define SIGIL_EXTRACTOR_STUB(name)                                       \
+    static inline int name(const sigil_io *io, const char *filename_hint, \
+                           const sigil_options *opts, sigil_result *out) { \
+        (void)io; (void)filename_hint; (void)opts; (void)out;            \
+        return SIGIL_ERR_UNKNOWN_PLATFORM;                               \
+    }
+
+#if SIGIL_WITH_3DS
 int sigil_extract_3ds(const sigil_io *io, const char *filename_hint,
                       const sigil_options *opts, sigil_result *out);
+#else
+SIGIL_EXTRACTOR_STUB(sigil_extract_3ds)
+#endif
+
+#if SIGIL_WITH_SWITCH
 int sigil_extract_switch(const sigil_io *io, const char *filename_hint,
                          const sigil_options *opts, sigil_result *out);
+#else
+SIGIL_EXTRACTOR_STUB(sigil_extract_switch)
+#endif
+
+#if SIGIL_WITH_WIIU
 int sigil_extract_wiiu(const sigil_io *io, const char *filename_hint,
                        const sigil_options *opts, sigil_result *out);
+#else
+SIGIL_EXTRACTOR_STUB(sigil_extract_wiiu)
+#endif
 int sigil_extract_psvita(const sigil_io *io, const char *filename_hint,
                          const sigil_options *opts, sigil_result *out);
 int sigil_extract_dreamcast(const sigil_io *io, const char *filename_hint,
