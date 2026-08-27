@@ -506,9 +506,7 @@ understands:
 - [`bindings/android/`](bindings/android/) — Gradle library module
   wrapping the C ABI for Kotlin/Java consumers via JNI. Used by
   argosy-launcher.
-- [`bindings/go/`](bindings/go/) — cgo wrapper for Go consumers
-  (Grout). `go test` against `/tmp/roms/roms/` passes for all 9
-  platforms including encrypted Switch XCIs.
+- [`bindings/go/`](bindings/go/) — cgo wrapper for Go consumers (Grout).
 
 Additional bindings (Rust via bindgen, Python via cffi, etc.) can be
 added under `bindings/<lang>/` — sigil's small public API and stable
