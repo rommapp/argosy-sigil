@@ -20,10 +20,10 @@ android {
         }
 
         ndk {
-            // Match argosy-launcher's ABI conventions: arm64-v8a default;
-            // armv7a in CI / when the consumer asks for it.
+            // Match argosy-launcher's ABI conventions: arm64-v8a default; the rest in CI /
+            // when the consumer asks for it. x86 covers Android-x86 and emulator hosts.
             if (project.hasProperty("allAbis") || project.hasProperty("ciOnly")) {
-                abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+                abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
             } else {
                 abiFilters += "arm64-v8a"
             }
