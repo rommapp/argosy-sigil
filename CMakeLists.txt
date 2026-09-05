@@ -34,6 +34,10 @@ file(GLOB ZSTD_COMMON_SOURCES ${ZSTD_DIR}/common/*.c)
 file(GLOB ZSTD_DECOMPRESS_SOURCES ${ZSTD_DIR}/decompress/*.c)
 add_library(sigil_zstd STATIC ${ZSTD_COMMON_SOURCES} ${ZSTD_DECOMPRESS_SOURCES})
 target_include_directories(sigil_zstd PUBLIC ${ZSTD_DIR} ${ZSTD_DIR}/common)
+# The sources are globbed as C, which leaves zstd's amd64 huffman assembly out of the build
+# while the C still calls into it. Decompressing without it is the portable half of zstd and
+# the only half sigil uses.
+target_compile_definitions(sigil_zstd PRIVATE ZSTD_DISABLE_ASM=1)
 
 # sigil only ever decompresses, so the compressor is built for tests alone,
 # where fixtures have to be produced in the same format they will be read.
