@@ -273,7 +273,7 @@ typedef struct {
     int                shape;               /* sigil_save_shape */
     sigil_save_member *members;             /* present, in archive order */
     size_t             member_count;
-    sigil_save_member *expected;            /* absent, but the layout and cart say they should exist */
+    sigil_save_member *expected;            /* absent: every applicable primary, and the rtc member when the cart has a clock */
     size_t             expected_count;
     char             (*unkeyed)[SIGIL_SAVE_PATH_MAX]; /* shared files seen in the root; never bundled */
     size_t             unkeyed_count;

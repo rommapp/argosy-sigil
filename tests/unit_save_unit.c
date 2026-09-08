@@ -158,19 +158,35 @@ static void test_default_layout(void) {
 
     u = resolve("gb no rtc cart", "mgba", "gb", "Tetris.gb", 0, NULL, 0, listing2, 1, NULL);
     if (!u) return;
-    if (u->member_count != 0 || u->shape != SIGIL_SAVE_SHAPE_NONE || u->expected_count != 0) {
-        fail("gb no rtc cart", "Tetris has no members in this listing and nothing expected");
+    if (u->member_count != 0 || u->shape != SIGIL_SAVE_SHAPE_NONE) {
+        fail("gb no rtc cart", "Tetris has no members in this listing");
+    }
+    if (u->expected_count != 1 || strcmp(u->expected[0].path, "Tetris.srm") != 0
+        || u->expected[0].role != SIGIL_SAVE_ROLE_PRIMARY) {
+        fail("gb no rtc cart", "only the primary Tetris.srm should be expected");
     }
     sigil_save_unit_free(u);
 
     u = resolve("gpsp ignores rtc flag", "gpsp", "gba", "Emerald.gba", SIGIL_FEATURE_RTC, NULL, 0, listing2, 1, NULL);
     if (!u) return;
-    if (u->expected_count != 0) fail("gpsp ignores rtc flag", "no rtc region, nothing expected");
+    for (size_t i = 0; i < u->expected_count; i++) {
+        if (u->expected[i].role == SIGIL_SAVE_ROLE_RTC) fail("gpsp ignores rtc flag", "no rtc region, none expected");
+    }
     sigil_save_unit_free(u);
 
     u = resolve("unknown core takes default", "some_new_core", "snes", "Game.sfc", SIGIL_FEATURE_RTC, NULL, 0, listing2, 1, NULL);
     if (!u) return;
-    if (u->expected_count != 1) fail("unknown core takes default", "default row expects rtc");
+    if (u->expected_count != 2 || u->expected[1].role != SIGIL_SAVE_ROLE_RTC) {
+        fail("unknown core takes default", "default row expects Game.srm and Game.rtc");
+    }
+    sigil_save_unit_free(u);
+
+    const char *empty_listing[] = { NULL };
+    u = resolve("dosbox expected primary", "dosbox_pure", "dos", "Doom.zip", 0, NULL, 0, empty_listing, 0, NULL);
+    if (!u) return;
+    if (u->expected_count != 1 || strcmp(u->expected[0].path, "Doom.pure.zip") != 0) {
+        fail("dosbox expected primary", "an empty root still names Doom.pure.zip");
+    }
     sigil_save_unit_free(u);
 }
 

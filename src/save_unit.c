@@ -203,6 +203,8 @@ static int collect(const sigil_layout *layout, const sigil_save_request *req,
         file_entry_name(path, entry, sizeof(entry));
         if (listing_has(req, path)) {
             add_member(b, path, entry, lm->role, 1);
+        } else if (lm->role == SIGIL_SAVE_ROLE_PRIMARY) {
+            add_member(b, path, entry, lm->role, 0);
         } else if (lm->role == SIGIL_SAVE_ROLE_RTC && (features & SIGIL_FEATURE_RTC)) {
             add_member(b, path, entry, lm->role, 0);
         }
