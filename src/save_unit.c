@@ -297,27 +297,37 @@ static int on_zip_entry(void *ctx, const char *name, const char *md5_hex) {
     return entry_list_add((entry_list *)ctx, name, md5_hex);
 }
 
+static int hash_single(const sigil_save_request *req, const sigil_save_member *member, char out_hex[33]) {
+    sigil_io *io = req->open(req->open_ctx, member->path);
+    if (!io) return SIGIL_ERR_IO;
+    int rc;
+    if (sigil_io_is_zip(io)) {
+        entry_list l = { NULL, 0, 0 };
+        rc = sigil_zip_hash_entries(io, on_zip_entry, &l);
+        if (rc == SIGIL_OK) combined_hash(&l, out_hex);
+        free(l.entries);
+    } else {
+        rc = md5_stream(io, out_hex);
+    }
+    sigil_io_close(io);
+    return rc;
+}
+
 static int hash_unit(const sigil_save_request *req, sigil_save_unit *unit) {
     unit->content_hash[0] = '\0';
+    unit->identity_hash[0] = '\0';
     if (!req->open || unit->member_count == 0) return SIGIL_OK;
 
     if (unit->shape == SIGIL_SAVE_SHAPE_SINGLE) {
-        sigil_io *io = req->open(req->open_ctx, unit->members[0].path);
-        if (!io) return SIGIL_ERR_IO;
-        int rc;
-        if (sigil_io_is_zip(io)) {
-            entry_list l = { NULL, 0, 0 };
-            rc = sigil_zip_hash_entries(io, on_zip_entry, &l);
-            if (rc == SIGIL_OK) combined_hash(&l, unit->content_hash);
-            free(l.entries);
-        } else {
-            rc = md5_stream(io, unit->content_hash);
-        }
-        sigil_io_close(io);
+        int rc = hash_single(req, &unit->members[0], unit->content_hash);
+        if (rc == SIGIL_OK) memcpy(unit->identity_hash, unit->content_hash, 33);
         return rc;
     }
 
-    entry_list l = { NULL, 0, 0 };
+    entry_list all = { NULL, 0, 0 };
+    entry_list state = { NULL, 0, 0 };
+    size_t state_count = 0;
+    const sigil_save_member *state_member = NULL;
     int rc = SIGIL_OK;
     for (size_t i = 0; i < unit->member_count && rc == SIGIL_OK; i++) {
         sigil_io *io = req->open(req->open_ctx, unit->members[i].path);
@@ -325,10 +335,21 @@ static int hash_unit(const sigil_save_request *req, sigil_save_unit *unit) {
         char hex[33];
         rc = md5_stream(io, hex);
         sigil_io_close(io);
-        if (rc == SIGIL_OK) rc = entry_list_add(&l, unit->members[i].entry, hex);
+        if (rc != SIGIL_OK) break;
+        rc = entry_list_add(&all, unit->members[i].entry, hex);
+        if (rc == SIGIL_OK && unit->members[i].role != SIGIL_SAVE_ROLE_RTC) {
+            rc = entry_list_add(&state, unit->members[i].entry, hex);
+            state_count++;
+            state_member = &unit->members[i];
+        }
     }
-    if (rc == SIGIL_OK) combined_hash(&l, unit->content_hash);
-    free(l.entries);
+    if (rc == SIGIL_OK) {
+        combined_hash(&all, unit->content_hash);
+        if (state_count == 1) rc = hash_single(req, state_member, unit->identity_hash);
+        else combined_hash(&state, unit->identity_hash);
+    }
+    free(all.entries);
+    free(state.entries);
     return rc;
 }
 

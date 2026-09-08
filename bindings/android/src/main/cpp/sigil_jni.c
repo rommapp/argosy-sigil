@@ -38,9 +38,9 @@ static void load_unit_classes(JNIEnv *env) {
     /* SigilSaveMember(path, entry, roleCode, present) */
     g_member_ctor = (*env)->GetMethodID(env, g_member_class, "<init>",
         "(Ljava/lang/String;Ljava/lang/String;IZ)V");
-    /* SigilSaveUnit(key, shapeCode, members, expected, unkeyed, artifact, contentHash) */
+    /* SigilSaveUnit(key, shapeCode, members, expected, unkeyed, artifact, contentHash, identityHash) */
     g_unit_ctor = (*env)->GetMethodID(env, g_unit_class, "<init>",
-        "(Ljava/lang/String;ILjava/util/List;Ljava/util/List;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;)V");
+        "(Ljava/lang/String;ILjava/util/List;Ljava/util/List;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
     g_array_list_ctor = (*env)->GetMethodID(env, g_array_list_class, "<init>", "()V");
     g_array_list_add  = (*env)->GetMethodID(env, g_array_list_class, "add", "(Ljava/lang/Object;)Z");
 }
@@ -266,13 +266,14 @@ Java_com_nendo_sigil_Sigil_nativeResolveSaveUnit(JNIEnv *env, jclass clazz,
             jstring jkey      = (*env)->NewStringUTF(env, unit->key);
             jstring jartifact = (*env)->NewStringUTF(env, unit->artifact);
             jstring jhash     = (*env)->NewStringUTF(env, unit->content_hash);
+            jstring jidentity = (*env)->NewStringUTF(env, unit->identity_hash);
             jobject members   = member_list(env, unit->members, unit->member_count);
             jobject expected  = member_list(env, unit->expected, unit->expected_count);
             jobject unkeyed   = string_list(env, unit->unkeyed, unit->unkeyed_count);
             if (members && expected && unkeyed) {
                 out = (*env)->NewObject(env, g_unit_class, g_unit_ctor,
                                         jkey, (jint)unit->shape, members, expected, unkeyed,
-                                        jartifact, jhash);
+                                        jartifact, jhash, jidentity);
             }
         }
     }

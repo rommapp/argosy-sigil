@@ -279,6 +279,7 @@ typedef struct {
     size_t             unkeyed_count;
     char               artifact[SIGIL_SAVE_ENTRY_MAX]; /* file name the unit travels under */
     char               content_hash[33];    /* RomM content_hash of the artifact; empty when not hashed */
+    char               identity_hash[33];   /* content_hash over the non-rtc members */
 } sigil_save_unit;
 
 SIGIL_API int  sigil_save_resolve(const sigil_save_request *req, sigil_save_unit **out);

@@ -73,7 +73,8 @@ data class SigilSaveUnit(
     val expected: List<SigilSaveMember>,
     val unkeyed: List<String>,
     val artifact: String,
-    val contentHash: String
+    val contentHash: String,
+    val identityHash: String
 ) {
     val shape: Shape get() = Shape.fromCode(shapeCode)
 

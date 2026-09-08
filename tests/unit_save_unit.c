@@ -385,6 +385,15 @@ static void test_hashes(void) {
     sigil_save_unit *u = resolve("multi hash", "mgba", "gbc", "Crystal.gbc", SIGIL_FEATURE_RTC, NULL, 0, multi, 2, &root);
     if (u) {
         expect_str("multi hash", u->content_hash, MULTI_CRYSTAL_HASH, "hash");
+        expect_str("multi identity", u->identity_hash, "098890dde069e9abad63f19a0d9e1f32", "identity");
+        sigil_save_unit_free(u);
+    }
+
+    const char *srm_only[] = { "Crystal.srm" };
+    u = resolve("single identity", "mgba", "gbc", "Crystal.gbc", SIGIL_FEATURE_RTC, NULL, 0, srm_only, 1, &root);
+    if (u) {
+        expect_str("single identity", u->identity_hash, u->content_hash, "identity");
+        expect_str("single identity", u->identity_hash, "098890dde069e9abad63f19a0d9e1f32", "identity");
         sigil_save_unit_free(u);
     }
 
