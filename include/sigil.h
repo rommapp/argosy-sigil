@@ -30,6 +30,9 @@ extern "C" {
 
 #define SIGIL_RESULT_V1   1u
 #define SIGIL_RESULT_V2   2u
+#define SIGIL_RESULT_V3   3u
+#define SIGIL_SAVE_REQUEST_V1 1u
+#define SIGIL_SAVE_UNIT_V1    1u
 #define SIGIL_SUPPORT_V1  1u
 #define SIGIL_OPTIONS_V1  1u
 
@@ -66,8 +69,21 @@ typedef enum {
     SIGIL_PLATFORM_PS3,
     SIGIL_PLATFORM_XBOX360,
     SIGIL_PLATFORM_DREAMCAST,
-    SIGIL_PLATFORM_XBOX
+    SIGIL_PLATFORM_XBOX,
+    /* Cartridge platforms whose saves key on the content file's stem rather
+     * than an id inside the ROM. Extraction reads the cart header only for
+     * SIGIL_FEATURE_* facts; title_id and save_id stay empty. */
+    SIGIL_PLATFORM_GB,
+    SIGIL_PLATFORM_GBC,
+    SIGIL_PLATFORM_SNES
 } sigil_platform;
+
+/* Cart facts read from the ROM header that change what a save unit holds.
+ * RTC: the cart carries a real-time clock, so a libretro core exposes
+ * RETRO_MEMORY_RTC and the frontend persists it beside the SRAM (RetroArch
+ * writes `<stem>.rtc`). GB: header byte 0x147 in {0x0F, 0x10, 0xFD, 0xFE}.
+ * SNES: (ROMType << 8 | ROMSpeed) is 0x5535 (S-RTC) or 0xF93A (SPC7110 RTC). */
+#define SIGIL_FEATURE_RTC  (1u << 0)
 
 typedef enum {
     SIGIL_SOURCE_BINARY = 0,
@@ -115,6 +131,8 @@ typedef struct {
     int            switch_content_type;
     /* Switch only, per-content version from CNMT; 0 when unavailable. */
     uint32_t       title_version;
+    /* SIGIL_FEATURE_* bits (struct_version >= SIGIL_RESULT_V3). */
+    uint32_t       features;
 } sigil_result;
 
 typedef struct sigil_io sigil_io;
@@ -192,6 +210,88 @@ SIGIL_API sigil_io *sigil_io_open_zar(const char *path, const char *member);
 SIGIL_API void      sigil_io_close(sigil_io *io);
 
 SIGIL_API int sigil_load_header_key_from_prod_keys(const char *path, uint8_t out[32]);
+
+/* ---- Save units --------------------------------------------------------------
+ *
+ * A save unit is every file under an emulator's save root that belongs to one
+ * game, named so a client can archive it and hash it the way the RomM server
+ * will. Three wire shapes exist: one member travels raw, two or more travel as
+ * a flat zip with each member at the root, and a folder-keyed platform travels
+ * as a zip of the `save_id` folder. Entry names are part of the hash.
+ *
+ * Sigil never touches the filesystem here. The caller lists the root (plus the
+ * subfolders `sigil_save_layout_subdirs` names) and, when it wants a hash,
+ * opens members on request. */
+
+typedef enum {
+    SIGIL_SAVE_SHAPE_NONE = 0,   /* nothing present */
+    SIGIL_SAVE_SHAPE_SINGLE,     /* raw file */
+    SIGIL_SAVE_SHAPE_MULTI,      /* flat zip, members at root */
+    SIGIL_SAVE_SHAPE_FOLDER      /* zip of the save_id folder(s) */
+} sigil_save_shape;
+
+typedef enum {
+    SIGIL_SAVE_ROLE_PRIMARY = 0, /* the member that names the unit */
+    SIGIL_SAVE_ROLE_SIDECAR,     /* core-owned companion file */
+    SIGIL_SAVE_ROLE_RTC          /* RETRO_MEMORY_RTC, expected only with SIGIL_FEATURE_RTC */
+} sigil_save_role;
+
+#define SIGIL_SAVE_PATH_MAX  512
+#define SIGIL_SAVE_ENTRY_MAX 256
+
+typedef struct {
+    char path[SIGIL_SAVE_PATH_MAX];   /* relative to the save root, '/' separated */
+    char entry[SIGIL_SAVE_ENTRY_MAX]; /* archive entry name */
+    int  role;                        /* sigil_save_role */
+    int  present;                     /* 1 when the listing held it */
+} sigil_save_member;
+
+typedef struct {
+    const char *key;   /* core option key, e.g. "genesis_plus_gx_system_bram" */
+    const char *value;
+} sigil_save_option;
+
+typedef struct {
+    uint32_t                  struct_version;   /* SIGIL_SAVE_REQUEST_V1 */
+    const char               *layout;           /* core or emulator id; unknown ids use the libretro default */
+    const char               *platform;         /* platform slug, may be NULL */
+    const char               *content_name;     /* name the emulator loaded: rom, m3u, cue, chd, or archive#entry */
+    const sigil_result       *result;           /* may be NULL when the platform has no title id */
+    uint32_t                  features;         /* SIGIL_FEATURE_* when result is NULL (persisted earlier) */
+    const sigil_save_option  *options;
+    size_t                    option_count;
+    const char *const        *listing;          /* relative paths under the root */
+    size_t                    listing_count;
+    /* Returns a stream for one member, or NULL. NULL `open` skips hashing. */
+    sigil_io               *(*open)(void *ctx, const char *relative_path);
+    void                     *open_ctx;
+} sigil_save_request;
+
+typedef struct {
+    uint32_t           struct_version;      /* SIGIL_SAVE_UNIT_V1 */
+    char               key[SIGIL_SAVE_ENTRY_MAX]; /* stem, or save_id for folder layouts */
+    int                shape;               /* sigil_save_shape */
+    sigil_save_member *members;             /* present, in archive order */
+    size_t             member_count;
+    sigil_save_member *expected;            /* absent, but the layout and cart say they should exist */
+    size_t             expected_count;
+    char             (*unkeyed)[SIGIL_SAVE_PATH_MAX]; /* shared files seen in the root; never bundled */
+    size_t             unkeyed_count;
+    char               artifact[SIGIL_SAVE_ENTRY_MAX]; /* file name the unit travels under */
+    char               content_hash[33];    /* RomM content_hash of the artifact; empty when not hashed */
+} sigil_save_unit;
+
+SIGIL_API int  sigil_save_resolve(const sigil_save_request *req, sigil_save_unit **out);
+SIGIL_API void sigil_save_unit_free(sigil_save_unit *unit);
+
+/* Subfolders under the save root a layout writes into, so the caller knows
+ * what to list. Returns the count written to `out` (at most `cap`). */
+SIGIL_API size_t sigil_save_layout_subdirs(const char *layout, const char **out, size_t cap);
+
+/* The base name RetroArch derives for save files (runloop_path_set_basename):
+ * the loaded path's file name without its extension, taking the member name
+ * for `archive.zip#member.ext`. Returns `out`. */
+SIGIL_API const char *sigil_content_stem(const char *content_name, char *out, size_t cap);
 
 SIGIL_API const char *sigil_strerror(int code);
 SIGIL_API const char *sigil_version(void);

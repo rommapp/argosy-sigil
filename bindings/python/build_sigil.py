@@ -20,6 +20,8 @@ ffibuilder.cdef(
     """
 #define SIGIL_RESULT_V1 ...
 #define SIGIL_RESULT_V2 ...
+#define SIGIL_RESULT_V3 ...
+#define SIGIL_FEATURE_RTC ...
 #define SIGIL_SUPPORT_V1 ...
 #define SIGIL_OPTIONS_V1 ...
 
@@ -49,6 +51,11 @@ typedef enum {
     SIGIL_PLATFORM_GAMECUBE,
     SIGIL_PLATFORM_PS3,
     SIGIL_PLATFORM_XBOX360,
+    SIGIL_PLATFORM_DREAMCAST,
+    SIGIL_PLATFORM_XBOX,
+    SIGIL_PLATFORM_GB,
+    SIGIL_PLATFORM_GBC,
+    SIGIL_PLATFORM_SNES,
     ...
 } sigil_platform;
 
@@ -86,6 +93,7 @@ typedef struct {
     int            experimental;
     int            switch_content_type;
     uint32_t       title_version;
+    uint32_t       features;
 } sigil_result;
 
 typedef struct {

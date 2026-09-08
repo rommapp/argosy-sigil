@@ -36,6 +36,9 @@ static const platform_slug PLATFORM_SLUGS[] = {
     { SIGIL_PLATFORM_XBOX360,  "xbox360"  },
     { SIGIL_PLATFORM_DREAMCAST, "dreamcast" },
     { SIGIL_PLATFORM_XBOX,     "xbox"     },
+    { SIGIL_PLATFORM_GB,       "gb"       },
+    { SIGIL_PLATFORM_GBC,      "gbc"      },
+    { SIGIL_PLATFORM_SNES,     "snes"     },
 };
 static const size_t PLATFORM_SLUG_COUNT = sizeof(PLATFORM_SLUGS) / sizeof(PLATFORM_SLUGS[0]);
 
@@ -49,6 +52,8 @@ static const platform_slug PLATFORM_ALIASES[] = {
     { SIGIL_PLATFORM_XBOX360,  "x360" },
     { SIGIL_PLATFORM_DREAMCAST, "dc"   },
     { SIGIL_PLATFORM_XBOX,      "xbx"  },
+    { SIGIL_PLATFORM_SNES,      "sfc"  },
+    { SIGIL_PLATFORM_SNES,      "sfam" },
 };
 static const size_t PLATFORM_ALIAS_COUNT = sizeof(PLATFORM_ALIASES) / sizeof(PLATFORM_ALIASES[0]);
 
@@ -149,6 +154,11 @@ static sigil_platform sniff_from_extension(const char *filename) {
     if (strcmp(ext, "zar") == 0)   return SIGIL_PLATFORM_XBOX360;
     if (strcmp(ext, "gdi") == 0)   return SIGIL_PLATFORM_DREAMCAST;
     if (strcmp(ext, "cdi") == 0)   return SIGIL_PLATFORM_DREAMCAST;
+    if (strcmp(ext, "gb") == 0)    return SIGIL_PLATFORM_GB;
+    if (strcmp(ext, "sgb") == 0)   return SIGIL_PLATFORM_GB;
+    if (strcmp(ext, "gbc") == 0)   return SIGIL_PLATFORM_GBC;
+    if (strcmp(ext, "sfc") == 0)   return SIGIL_PLATFORM_SNES;
+    if (strcmp(ext, "smc") == 0)   return SIGIL_PLATFORM_SNES;
 
     /* `Game.xiso.iso` is a real convention in Xbox sets, and the trailing
      * `.iso` alone would throw away what the name already states. */
@@ -293,6 +303,13 @@ static int dispatch(const sigil_io *io, const char *filename_hint,
     case SIGIL_PLATFORM_XBOX360:  return sigil_extract_xbox360(io, filename_hint, opts, out);
     case SIGIL_PLATFORM_DREAMCAST: return sigil_extract_dreamcast(io, filename_hint, opts, out);
     case SIGIL_PLATFORM_XBOX:     return sigil_extract_xbox(io, filename_hint, opts, out);
+    case SIGIL_PLATFORM_GB:       return sigil_extract_gb(io, filename_hint, opts, out);
+    case SIGIL_PLATFORM_GBC: {
+        int rc = sigil_extract_gb(io, filename_hint, opts, out);
+        if (rc == SIGIL_OK) out->platform = SIGIL_PLATFORM_GBC;
+        return rc;
+    }
+    case SIGIL_PLATFORM_SNES:     return sigil_extract_snes(io, filename_hint, opts, out);
     default:                       return SIGIL_ERR_UNKNOWN_PLATFORM;
     }
 }

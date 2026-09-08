@@ -116,6 +116,12 @@ class SigilResult:
     experimental: bool
     switch_content_type: Literal["unknown", "application", "patch", "addon"]
     title_version: int
+    features: int = 0
+
+    @property
+    def has_rtc(self) -> bool:
+        """The cart carries a real-time clock; a libretro frontend persists it as ``<stem>.rtc``."""
+        return bool(self.features & lib.SIGIL_FEATURE_RTC)
 
 
 def _raise_error(code: int) -> None:
@@ -203,7 +209,7 @@ def extract(
         opts.support = support
 
     result = ffi.new("sigil_result *")
-    result.struct_version = lib.SIGIL_RESULT_V2
+    result.struct_version = lib.SIGIL_RESULT_V3
 
     rc = lib.sigil_extract_from_path(
         os.fsencode(path), platform_from_slug(platform), opts, result
@@ -221,4 +227,5 @@ def extract(
         experimental=bool(result.experimental),
         switch_content_type=_SWITCH_CONTENT_NAMES.get(result.switch_content_type, "unknown"),
         title_version=int(result.title_version),
+        features=int(result.features),
     )

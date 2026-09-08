@@ -90,10 +90,11 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    printf("platform=%s title_id=%s raw_serial=%s save_id=%s usage=%s source=%s experimental=%d content_type=%s title_version=%u\n",
+    printf("platform=%s title_id=%s raw_serial=%s save_id=%s usage=%s source=%s experimental=%d content_type=%s title_version=%u features=%s\n",
            sigil_platform_to_slug(r.platform),
            r.title_id, r.raw_serial, r.save_id,
            usage_to_str(r.usage), source_to_str(r.source), r.experimental,
-           content_type_to_str(r.switch_content_type), r.title_version);
+           content_type_to_str(r.switch_content_type), r.title_version,
+           (r.features & SIGIL_FEATURE_RTC) ? "rtc" : "-");
     return 0;
 }

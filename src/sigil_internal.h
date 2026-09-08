@@ -163,6 +163,31 @@ int sigil_extract_dreamcast(const sigil_io *io, const char *filename_hint,
                             const sigil_options *opts, sigil_result *out);
 int sigil_extract_xbox(const sigil_io *io, const char *filename_hint,
                        const sigil_options *opts, sigil_result *out);
+int sigil_extract_gb(const sigil_io *io, const char *filename_hint,
+                     const sigil_options *opts, sigil_result *out);
+int sigil_extract_snes(const sigil_io *io, const char *filename_hint,
+                       const sigil_options *opts, sigil_result *out);
+
+typedef struct {
+    uint32_t state[4];
+    uint64_t length;
+    uint8_t  buffer[64];
+    size_t   buffered;
+} sigil_md5;
+
+void sigil_md5_init(sigil_md5 *m);
+void sigil_md5_update(sigil_md5 *m, const void *data, size_t len);
+void sigil_md5_final(sigil_md5 *m, uint8_t digest[16]);
+void sigil_md5_hex(const uint8_t digest[16], char out[33]);
+
+/* Feeds every file entry of a zip presented as a stream to `on_entry`, in
+ * central-directory order. The callback receives the entry name and the md5
+ * hex of its uncompressed bytes. SIGIL_ERR_UNSUPPORTED_FORMAT when the stream
+ * is not a zip. */
+int sigil_zip_hash_entries(const sigil_io *io,
+                           int (*on_entry)(void *ctx, const char *name, const char *md5_hex),
+                           void *ctx);
+bool sigil_io_is_zip(const sigil_io *io);
 
 /* Locates `name` in the root directory of an XDVDFS image, probing the known
  * partition bases so trimmed and full disc images both resolve. Shared by both
@@ -201,7 +226,7 @@ int sigil_filename_fallback(const char *filename_hint,
 
 static inline void sigil_result_init(sigil_result *r) {
     memset(r, 0, sizeof(*r));
-    r->struct_version = SIGIL_RESULT_V2;
+    r->struct_version = SIGIL_RESULT_V3;
 }
 
 #endif

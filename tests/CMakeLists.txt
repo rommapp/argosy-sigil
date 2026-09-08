@@ -38,6 +38,9 @@ sigil_add_test(unit_zip)
 sigil_add_test(unit_zar)
 sigil_add_test(unit_switch_nca)
 sigil_add_test(unit_switch_cnmt)
+sigil_add_test(unit_gb)
+sigil_add_test(unit_snes)
+sigil_add_test(unit_save_unit)
 
 # Fixtures have to produce what the extractors read, so these link the
 # compression and crypto helpers directly rather than relying on reaching them

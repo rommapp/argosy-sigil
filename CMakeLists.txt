@@ -129,6 +129,12 @@ set(SIGIL_SOURCES
     src/io_zip.c
     src/io_zar.c
     src/io_raw_cd.c
+    src/gb.c
+    src/snes.c
+    src/md5.c
+    src/zip_entries.c
+    src/save_layout.c
+    src/save_unit.c
 )
 list(REMOVE_DUPLICATES SIGIL_SOURCES)
 
