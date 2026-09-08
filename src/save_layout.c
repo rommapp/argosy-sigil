@@ -67,6 +67,15 @@ static const sigil_layout_shared BEETLE_SATURN_SHARED[] = {
     S_OPT("mednafen_saturn_libretro_shared.bcr", "beetle_saturn_shared_ext", "enabled", false),
 };
 
+/* PCSX ReARMed: card 1 is SAVE_RAM; card 2 defaults to one shared file,
+ * seen on device as pcsx-card2.mcd in the save root. */
+static const sigil_layout_member PCSX_REARMED_MEMBERS[] = {
+    M("{stem}.srm", PRIMARY),
+};
+static const sigil_layout_shared PCSX_REARMED_SHARED[] = {
+    S_OPT("pcsx-card2.mcd", "pcsx_rearmed_memcard2", "shared", true),
+};
+
 /* Beetle NeoPop, mednafen/ngp/system.c system_io_flash_write. */
 static const sigil_layout_member BEETLE_NGP_MEMBERS[] = {
     M("{stem}.flash", PRIMARY),
@@ -159,6 +168,7 @@ static const sigil_layout LAYOUTS[] = {
     ROW("bsnes", "snes", BSNES_SNES_MEMBERS),
     ROW_SHARED("genesis_plus_gx", "segacd", GPGX_SEGACD_MEMBERS, GPGX_SEGACD_SHARED),
     ROW_SHARED("mednafen_psx_hw", NULL, BEETLE_PSX_MEMBERS, BEETLE_PSX_SHARED),
+    ROW_SHARED("pcsx_rearmed", NULL, PCSX_REARMED_MEMBERS, PCSX_REARMED_SHARED),
     ROW_SHARED("mednafen_saturn", NULL, BEETLE_SATURN_MEMBERS, BEETLE_SATURN_SHARED),
     ROW("mednafen_ngp", NULL, BEETLE_NGP_MEMBERS),
     ROW_FULL("opera", NULL, OPERA_MEMBERS, OPERA_SHARED, OPERA_SUBDIRS),
