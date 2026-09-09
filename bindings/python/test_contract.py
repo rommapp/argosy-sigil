@@ -92,6 +92,7 @@ _UNIT_FIELDS = {
 }
 
 GO = ROOT / "bindings" / "go" / "sigil.go"
+KEEP_RULES = ROOT / "bindings" / "android" / "consumer-rules.pro"
 
 
 def _canonical_string(enum_name: str) -> str:
@@ -177,11 +178,11 @@ def _kotlin_ctor_descriptor(class_name: str) -> str:
 
 def _jni_ctor_descriptor(global_class: str) -> str:
     match = re.search(
-        rf'GetMethodID\(env,\s*{global_class},\s*"<init>",\s*"([^"]+)"',
+        rf'(?:GetMethodID|find_method)\(env,\s*{global_class},\s*"<init>",\s*"([^"]+)"',
         JNI.read_text(),
         re.DOTALL,
     )
-    assert match, f"GetMethodID <init> for {global_class} not found in sigil_jni.c"
+    assert match, f"<init> lookup for {global_class} not found in sigil_jni.c"
     return match.group(1)
 
 
@@ -243,6 +244,46 @@ def test_every_binding_returns_every_result_field():
 
 def test_every_binding_returns_every_save_unit_field():
     _assert_each_binding_has(_UNIT_FIELDS, "save unit field")
+
+
+def _keep_rule_patterns() -> list[re.Pattern[str]]:
+    patterns = []
+    for name in re.findall(r"^-keep\s+class\s+([\w.$*]+)", KEEP_RULES.read_text(), re.MULTILINE):
+        regex = re.escape(name).replace(r"\*\*", r"[\w.$]+").replace(r"\*", r"[\w$]+")
+        patterns.append(re.compile(rf"^{regex}$"))
+    return patterns
+
+
+def _jni_looked_up_classes() -> set[str]:
+    names = re.findall(r'(?:FindClass|global_class)\(env,\s*"(com/nendo/sigil/[\w$/]+)"', JNI.read_text())
+    return {n.replace("/", ".") for n in names}
+
+
+def _kotlin_binding_classes() -> set[str]:
+    text = KOTLIN.read_text()
+    names = set(re.findall(r"^(?:data |enum )?class (\w+)", text, re.MULTILINE))
+    names |= set(re.findall(r"^object (\w+)", text, re.MULTILINE))
+    return {f"com.nendo.sigil.{n}" for n in names}
+
+
+def test_keep_rules_cover_every_class_the_jni_looks_up():
+    """v2.15.0 shipped without a keep rule for SigilSaveMember; R8 renamed it,
+    FindClass failed, and the app crash-looped on every start (#429)."""
+    patterns = _keep_rule_patterns()
+    assert patterns, "no -keep class rules in consumer-rules.pro"
+    for name in sorted(_jni_looked_up_classes() | _kotlin_binding_classes()):
+        assert any(p.match(name) for p in patterns), f"consumer-rules.pro does not keep {name}"
+
+
+def test_jni_never_stacks_a_lookup_on_a_pending_exception():
+    """The second FindClass after a failed one is what turns a missing class into
+    a SIGABRT; every lookup goes through the clearing helpers."""
+    text = JNI.read_text()
+    raw = re.findall(r"\(\*env\)->FindClass\(env,\s*\"([^\"]+)\"", text)
+    assert all(n in ("java/lang/IllegalStateException", "java/lang/String") for n in raw), (
+        f"direct FindClass on {raw}; use global_class/find_class"
+    )
+    assert "ExceptionClear" in text
 
 
 def test_every_binding_reports_the_c_error_code():

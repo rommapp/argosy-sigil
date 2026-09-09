@@ -11,32 +11,69 @@ static jmethodID g_result_ctor = NULL;
 static jclass g_exception_class = NULL;
 static jmethodID g_exception_ctor = NULL;
 
+/* A class R8 renamed or dropped leaves ClassNotFoundException pending, and the
+ * next JNI call on top of it aborts the process; clear it and report NULL. */
+static jclass find_class(JNIEnv *env, const char *name) {
+    jclass cls = (*env)->FindClass(env, name);
+    if (!cls) (*env)->ExceptionClear(env);
+    return cls;
+}
+
+static jmethodID find_method(JNIEnv *env, jclass cls, const char *name, const char *sig) {
+    jmethodID id = (*env)->GetMethodID(env, cls, name, sig);
+    if (!id) (*env)->ExceptionClear(env);
+    return id;
+}
+
+static jclass global_class(JNIEnv *env, const char *name) {
+    jclass cls = find_class(env, name);
+    if (!cls) return NULL;
+    jclass global = (jclass)(*env)->NewGlobalRef(env, cls);
+    (*env)->DeleteLocalRef(env, cls);
+    return global;
+}
+
 static void load_result_class(JNIEnv *env) {
     if (g_result_class) return;
-    jclass cls = (*env)->FindClass(env, "com/nendo/sigil/SigilResult");
-    if (!cls) return;
-    g_result_class = (jclass)(*env)->NewGlobalRef(env, cls);
+    g_result_class = global_class(env, "com/nendo/sigil/SigilResult");
+    if (!g_result_class) return;
     /* SigilResult(titleId, rawSerial, saveId, platformSlug, source, usage, experimental, features, switchContentType, titleVersion) */
-    g_result_ctor = (*env)->GetMethodID(env, g_result_class, "<init>",
+    g_result_ctor = find_method(env, g_result_class, "<init>",
         "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;IIZIIJ)V");
 }
 
 static void load_exception_class(JNIEnv *env) {
     if (g_exception_class) return;
-    jclass cls = (*env)->FindClass(env, "com/nendo/sigil/SigilException");
-    if (!cls) return;
-    g_exception_class = (jclass)(*env)->NewGlobalRef(env, cls);
+    g_exception_class = global_class(env, "com/nendo/sigil/SigilException");
+    if (!g_exception_class) return;
     /* SigilException(code, message) */
-    g_exception_ctor = (*env)->GetMethodID(env, g_exception_class, "<init>", "(ILjava/lang/String;)V");
+    g_exception_ctor = find_method(env, g_exception_class, "<init>", "(ILjava/lang/String;)V");
 }
 
 static void throw_sigil(JNIEnv *env, int code) {
+    if ((*env)->ExceptionCheck(env)) return;
     load_exception_class(env);
-    if (!g_exception_class || !g_exception_ctor) return;
-    jstring jmessage = (*env)->NewStringUTF(env, sigil_strerror(code));
-    jobject ex = (*env)->NewObject(env, g_exception_class, g_exception_ctor, (jint)code, jmessage);
-    if (ex) (*env)->Throw(env, (jthrowable)ex);
-    (*env)->DeleteLocalRef(env, jmessage);
+    if (g_exception_class && g_exception_ctor) {
+        jstring jmessage = (*env)->NewStringUTF(env, sigil_strerror(code));
+        jobject ex = (*env)->NewObject(env, g_exception_class, g_exception_ctor, (jint)code, jmessage);
+        if (ex) {
+            (*env)->Throw(env, (jthrowable)ex);
+            (*env)->DeleteLocalRef(env, jmessage);
+            return;
+        }
+        (*env)->ExceptionClear(env);
+        (*env)->DeleteLocalRef(env, jmessage);
+    }
+    jclass fallback = find_class(env, "java/lang/IllegalStateException");
+    if (fallback) (*env)->ThrowNew(env, fallback, sigil_strerror(code));
+}
+
+static void throw_binding_broken(JNIEnv *env, const char *what) {
+    if ((*env)->ExceptionCheck(env)) return;
+    char message[160];
+    snprintf(message, sizeof(message), "sigil binding: %s is missing from the apk; check the keep rules", what);
+    jclass cls = find_class(env, "java/lang/IllegalStateException");
+    if (cls) (*env)->ThrowNew(env, cls, message);
 }
 
 static jclass g_member_class = NULL;
@@ -47,23 +84,25 @@ static jclass g_array_list_class = NULL;
 static jmethodID g_array_list_ctor = NULL;
 static jmethodID g_array_list_add = NULL;
 
+static bool unit_classes_ready(void) {
+    return g_member_class && g_member_ctor && g_unit_class && g_unit_ctor
+        && g_array_list_class && g_array_list_ctor && g_array_list_add;
+}
+
 static void load_unit_classes(JNIEnv *env) {
-    if (g_unit_class) return;
-    jclass member = (*env)->FindClass(env, "com/nendo/sigil/SigilSaveMember");
-    jclass unit   = (*env)->FindClass(env, "com/nendo/sigil/SigilSaveUnit");
-    jclass list   = (*env)->FindClass(env, "java/util/ArrayList");
-    if (!member || !unit || !list) return;
-    g_member_class = (jclass)(*env)->NewGlobalRef(env, member);
-    g_unit_class   = (jclass)(*env)->NewGlobalRef(env, unit);
-    g_array_list_class = (jclass)(*env)->NewGlobalRef(env, list);
+    if (unit_classes_ready()) return;
+    if (!g_member_class) g_member_class = global_class(env, "com/nendo/sigil/SigilSaveMember");
+    if (!g_unit_class) g_unit_class = global_class(env, "com/nendo/sigil/SigilSaveUnit");
+    if (!g_array_list_class) g_array_list_class = global_class(env, "java/util/ArrayList");
+    if (!g_member_class || !g_unit_class || !g_array_list_class) return;
     /* SigilSaveMember(path, entry, roleCode, present) */
-    g_member_ctor = (*env)->GetMethodID(env, g_member_class, "<init>",
+    g_member_ctor = find_method(env, g_member_class, "<init>",
         "(Ljava/lang/String;Ljava/lang/String;IZ)V");
     /* SigilSaveUnit(key, shapeCode, members, expected, unkeyed, artifact, contentHash, identityHash) */
-    g_unit_ctor = (*env)->GetMethodID(env, g_unit_class, "<init>",
+    g_unit_ctor = find_method(env, g_unit_class, "<init>",
         "(Ljava/lang/String;ILjava/util/List;Ljava/util/List;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
-    g_array_list_ctor = (*env)->GetMethodID(env, g_array_list_class, "<init>", "()V");
-    g_array_list_add  = (*env)->GetMethodID(env, g_array_list_class, "add", "(Ljava/lang/Object;)Z");
+    g_array_list_ctor = find_method(env, g_array_list_class, "<init>", "()V");
+    g_array_list_add  = find_method(env, g_array_list_class, "add", "(Ljava/lang/Object;)Z");
 }
 
 JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
@@ -80,18 +119,16 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
         g_exception_class = NULL;
         g_exception_ctor = NULL;
     }
-    if (g_unit_class) {
-        (*env)->DeleteGlobalRef(env, g_member_class);
-        (*env)->DeleteGlobalRef(env, g_unit_class);
-        (*env)->DeleteGlobalRef(env, g_array_list_class);
-        g_member_class = NULL;
-        g_unit_class = NULL;
-        g_array_list_class = NULL;
-        g_member_ctor = NULL;
-        g_unit_ctor = NULL;
-        g_array_list_ctor = NULL;
-        g_array_list_add = NULL;
-    }
+    if (g_member_class) (*env)->DeleteGlobalRef(env, g_member_class);
+    if (g_unit_class) (*env)->DeleteGlobalRef(env, g_unit_class);
+    if (g_array_list_class) (*env)->DeleteGlobalRef(env, g_array_list_class);
+    g_member_class = NULL;
+    g_unit_class = NULL;
+    g_array_list_class = NULL;
+    g_member_ctor = NULL;
+    g_unit_ctor = NULL;
+    g_array_list_ctor = NULL;
+    g_array_list_add = NULL;
 }
 
 JNIEXPORT jstring JNICALL
@@ -182,7 +219,7 @@ Java_com_nendo_sigil_Sigil_nativeExtract(JNIEnv *env, jclass clazz,
     if (rc != SIGIL_OK) { throw_sigil(env, rc); return NULL; }
 
     load_result_class(env);
-    if (!g_result_class || !g_result_ctor) return NULL;
+    if (!g_result_class || !g_result_ctor) { throw_binding_broken(env, "SigilResult"); return NULL; }
 
     jstring jtitle   = (*env)->NewStringUTF(env, r.title_id);
     jstring jraw     = (*env)->NewStringUTF(env, r.raw_serial);
@@ -326,9 +363,11 @@ Java_com_nendo_sigil_Sigil_nativeLocateSaves(JNIEnv *env, jclass clazz,
     int rc = sigil_save_resolve(&req, &unit);
 
     jobject out = NULL;
+    bool binding_broken = false;
     if (rc == SIGIL_OK && unit) {
         load_unit_classes(env);
-        if (g_unit_class && g_unit_ctor && g_member_ctor && g_array_list_ctor) {
+        binding_broken = !unit_classes_ready();
+        if (!binding_broken) {
             jstring jkey      = (*env)->NewStringUTF(env, unit->key);
             jstring jartifact = (*env)->NewStringUTF(env, unit->artifact);
             jstring jhash     = (*env)->NewStringUTF(env, unit->content_hash);
@@ -356,6 +395,7 @@ Java_com_nendo_sigil_Sigil_nativeLocateSaves(JNIEnv *env, jclass clazz,
     if (save_id)  (*env)->ReleaseStringUTFChars(env, jsave_id, save_id);
 
     if (rc != SIGIL_OK) throw_sigil(env, rc);
+    else if (binding_broken) throw_binding_broken(env, "SigilSaveMember or SigilSaveUnit");
     else if (!out && !(*env)->ExceptionCheck(env)) throw_sigil(env, SIGIL_ERR_OOM);
     return out;
 }

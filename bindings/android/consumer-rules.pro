@@ -1,6 +1,4 @@
-# Sigil Kotlin facade is a thin wrapper around JNI; no public surface
-# beyond com.nendo.sigil.Sigil and SigilResult.
--keep class com.nendo.sigil.Sigil { *; }
--keep class com.nendo.sigil.SigilResult { *; }
--keep class com.nendo.sigil.SigilResult$Source { *; }
--keep class com.nendo.sigil.SigilResult$Usage { *; }
+# Every class in the binding is looked up by name from sigil_jni.c, and its
+# constructors by exact signature. Shrinking or renaming any of them aborts
+# the process at the first FindClass. Keep the whole package.
+-keep class com.nendo.sigil.** { *; }
