@@ -4,7 +4,14 @@ A native C helper library that derives the game-native serial / title ID
 from a ROM file. Designed for applications that want per-game save and
 state files instead of per-platform — pair a local save to the right
 upstream game record by reading the platform's own ID out of the ROM,
-not by guessing from filenames.
+not by guessing from filenames. It also resolves the set of files an
+emulator keeps for one game so a client can archive and hash them the
+way the RomM server does ([Save units](#save-units)).
+
+Integrating is three calls: identify the game, locate its saves, hash
+them. One page per language walks them with what each call requires,
+takes optionally, and returns: [Kotlin](docs/kotlin.md),
+[Python](docs/python.md), [Go](docs/go.md), [C](docs/c.md).
 
 ## What it does
 
@@ -111,10 +118,18 @@ to sigil's own files must remain MPL-2.0.
 | `xbox` | Xbox | `.xiso`, `.xiso.iso`, `.iso` (needs hint), extracted game folder or `.xbe` | `TT-027` (XBE certificate title id) | folder-exact | experimental |
 | `xbox360` | Xbox 360 | `.zar`, `.iso` (needs hint), extracted game folder or `.xex` | `4D5307DC` (4-byte XEX title_id, hex) | folder-exact | experimental |
 | `dreamcast` | Dreamcast | `.chd`, `.iso`, data track `.bin` (`.gdi` track 3) | `T-8111N` (IP.BIN product number) | file-prefix | experimental |
+| `gb` | Game Boy | `.gb`, `.sgb` | none; sets `features` | file-prefix | |
+| `gbc` | Game Boy Color | `.gbc` | none; sets `features` | file-prefix | |
+| `snes` | Super Nintendo | `.sfc`, `.smc` | none; sets `features` | file-prefix | |
+
+Game Boy and SNES carts carry no title id. Sigil validates the header
+and reports what the cart holds in `features` (see
+[Save units](#save-units)); `title_id` and `save_id` stay empty and
+the emulator names the save after the content file.
 
 The slugs are stable. Argosy's shorter internal identifiers (`dc`,
-`ngc`, `gc`, `vita`, `n3ds`, `nsw`, `x360`, `xbx`) resolve as aliases of
-the canonical slugs above.
+`ngc`, `gc`, `vita`, `n3ds`, `nsw`, `x360`, `xbx`, `sfc`, `sfam`)
+resolve as aliases of the canonical slugs above.
 
 A `.zip` holding any of the formats above is read in place, with no
 extraction step: sigil opens the archive's member, resolves the platform
@@ -176,6 +191,146 @@ Reaching a save means reading FATX out of that image; X1 BOX's own FATX
 code only imports a dashboard and exports nothing. Treat `save_id` on
 this platform as an identifier for matching, not as a locator. Desktop
 xemu has the same property for the same reason.
+
+## Save units
+
+A save unit is every file under an emulator's save root that belongs to
+one game, named so a client can archive it and hash it the way the RomM
+server will. `sigil_save_resolve()` takes a `sigil_save_request` and
+returns a `sigil_save_unit`. Sigil never touches the filesystem: the
+caller lists the root (plus the subfolders `sigil_save_layout_subdirs()`
+names for the layout) and passes the relative paths in; hashing opens
+members through the request's `open` callback and is skipped when it is
+`NULL`.
+
+### Request
+
+| Field | Meaning |
+|---|---|
+| `layout` | libretro core id (`genesis_plus_gx`, `melonds`) or emulator id. An id with no row uses the libretro default row. |
+| `platform` | platform slug, or `NULL`. Rows limited to one platform match through the aliases below. |
+| `content_name` | the name the emulator loaded: rom, `.m3u`, `.cue`, `.chd`, or `archive.zip#member.ext` |
+| `result` / `features` | the `sigil_result` for the content, or `NULL` with `features` carried from an earlier extraction |
+| `options` | core option key/value pairs; only the keys the layout row names matter |
+| `listing` | relative paths under the root, `/` separated |
+
+### Unit
+
+| Field | Meaning |
+|---|---|
+| `key` | the stem for file layouts, `save_id` for folder layouts |
+| `shape` | `SINGLE` one member travels raw; `MULTI` two or more travel as a flat zip with every member at the root; `FOLDER` a zip of the `save_id` folder. `NONE` when nothing is present. |
+| `members` | present members in archive order, each with its root-relative path, archive entry name and role |
+| `expected` | absent members the layout says this game should have: every applicable primary, plus the rtc member when `features` has `SIGIL_FEATURE_RTC` |
+| `unkeyed` | shared files seen in the root that belong to every game at once; reported, never bundled |
+| `artifact` | the file name the unit travels under: the member's own name for `SINGLE`, the first member's name plus `.zip` for `MULTI`, `<key>.zip` for `FOLDER` |
+| `content_hash` | RomM `content_hash` of the artifact |
+| `identity_hash` | the same hash over the non-rtc members, so a clock tick alone does not read as a new save |
+
+Roles: `PRIMARY` is the member that names the unit, `SIDECAR` is a
+core-owned companion file, `RTC` is `RETRO_MEMORY_RTC`.
+
+### Stem
+
+`sigil_content_stem()` applies RetroArch's `runloop_path_set_basename`
+rule: the loaded path's file name without its extension. For
+`archive.zip#member.ext` the member name is the stem, so a rom loaded
+from inside a zip saves under the entry name, not the archive name. An
+`.m3u` saves under the playlist name.
+
+### Hash
+
+The server hashes with MD5 (RomM `assets_handler.compute_content_hash`).
+A raw file hashes as its bytes. A zip hashes as the MD5 of the lines
+`<entry name>:<entry md5>`, one per file entry sorted by byte order,
+joined with `\n` and no trailing newline, directories excluded
+(`_compute_zip_hash`). Whether a
+file is a zip is decided the way Python's `zipfile.is_zipfile` decides
+it: an end-of-central-directory record inside the comment window at the
+tail. Entry names are part of the hash, which is why the archive shape
+is fixed per layout. A `.pure.zip` is one raw member and hashes as a
+zip because the server does the same.
+
+`identity_hash` is `content_hash` computed as if the rtc members were
+absent. With one non-rtc member left it is that member's raw hash.
+
+### Features
+
+`sigil_result.features` (struct version 3) is a bitfield read from the
+cart header.
+
+`SIGIL_FEATURE_RTC` on `gb` / `gbc`: header byte `0x147` is `0x0F`
+(MBC3+TIMER+BATTERY), `0x10` (MBC3+TIMER+RAM+BATTERY), `0xFD` (TAMA5) or
+`0xFE` (HuC3). The header checksum over `0x134..0x14C` has to match byte
+`0x14D` first; the boot ROM refuses a cart that fails it, so a mismatch
+means the bytes are not a Game Boy header. gambatte
+(`cartridge_libretro.cpp` `hasRtc`), mGBA (`GB_MBC3_RTC`) and VBA-M
+(`gbRTCPresent`) key their `RETRO_MEMORY_RTC` region on the same values.
+
+`SIGIL_FEATURE_RTC` on `snes`: the internal header sits at `0x7FC0`
+(LoROM), `0xFFC0` (HiROM) or `0x40FFC0` (ExHiROM), plus a 512-byte skew
+when the file size leaves that remainder (copier header). The header's
+checksum and complement pair has to xor to `0xFFFF`; bases are tried
+deepest first because an ExHiROM image also carries plausible bytes at
+the HiROM base. `(ROMType << 8) | ROMSpeed` from bytes `0x16` and `0x15`
+equal to `0x5535` (S-RTC) or `0xF93A` (SPC7110 with RTC) sets the flag,
+which is what snes9x `memmap.cpp` `InitROM` enables its clock chips on.
+
+RetroArch writes `RETRO_MEMORY_SAVE_RAM` as `<stem>.srm` and
+`RETRO_MEMORY_RTC` as `<stem>.rtc` (`save.c`,
+`path_init_savefile_rtc`). Clock sizes: mGBA GB 48 bytes, gambatte 8,
+snes9x 20.
+
+### Layout table
+
+Each row names one core (`layout`), optionally one platform, its member
+templates, the shared files it may write, and the subfolders it writes
+into. Template variables: `{stem}`, `{romset}` (same as the stem),
+`{title_id}`, `{save_id}`, `{cart_size}`, `{nvram_version}`,
+`{left_index}`, `{right_index}`. A template ending in `/` names a folder
+whose whole subtree is the member. A template with an option key applies
+only while that core option holds the given value; the row's default
+flag says whether an absent option counts as holding it, so a caller
+sends only the options it has changed. Expansion fails, and the member
+is skipped, when a variable has no value.
+
+`{cart_size}` comes from `genesis_plus_gx_cart_size` in the core's own
+spelling: `128k` to `128Kbit`, `256k` to `256Kbit`, `512k` to `512Kbit`,
+`1meg` to `1Mbit`, `2meg` to `2Mbit`, `4meg` to `4Mbit`, absent to
+`4Mbit`. `{nvram_version}` is `opera_nvram_version` (default `0`).
+`{left_index}` and `{right_index}` are `beetle_psx_hw_memcard_left_index`
+(default `0`) and `beetle_psx_hw_memcard_right_index` (default `1`).
+
+Every row was read from the core's source or its libretro docs page; the
+names are the core's literals.
+
+| Layout | Platform | Members (role, option) | Shared | Source |
+|---|---|---|---|---|
+| default | any | `{stem}.srm` primary; `{stem}.rtc` rtc | | RetroArch `save.c` |
+| `vba_next`, `gpsp` | any | `{stem}.srm` primary | | no RTC region (`libretro.c` memory maps) |
+| `bsnes` | `snes` | `{stem}.srm` primary | | `program.cpp`: `.rtc` only for Game Boy carts; SNES clock chips persist nothing |
+| `genesis_plus_gx` | `segacd` | `{stem}.srm` primary; `{stem}.brm` sidecar when `genesis_plus_gx_system_bram` = `per game`; `{stem}_{cart_size}_cart.brm` sidecar when `genesis_plus_gx_cart_bram` = `per game` | `scd_E.brm`, `scd_U.brm`, `scd_J.brm` when `system_bram` = `per bios` (default); `{cart_size}_cart.brm` when `cart_bram` = `per cart` (default) | `libretro/libretro.c` `check_variables`, `bram_save` |
+| `mednafen_psx_hw` | any | `{stem}.srm` primary when `beetle_psx_hw_use_mednafen_memcard0_method` = `libretro` (default); `{stem}.{left_index}.mcr` primary when `mednafen`; `{stem}.{right_index}.mcr` sidecar when `beetle_psx_hw_enable_memcard1` = `enabled` | `mednafen_psx_libretro_shared.0.mcr`, `.1.mcr` when `beetle_psx_hw_shared_memory_cards` = `enabled` | commit `707d1be`; docs.libretro.com/library/beetle_psx_hw |
+| `pcsx_rearmed` | any | `{stem}.srm` primary | `pcsx-card2.mcd` when `pcsx_rearmed_memcard2` = `shared` (default) | observed on device |
+| `mednafen_saturn` | any | `{stem}.srm` primary when `beetle_saturn_save_method` = `libretro` (default); `{stem}.bkr` primary when `mednafen`; `{stem}.bcr` sidecar; `{stem}.smpc` sidecar | `mednafen_saturn_libretro_shared.bkr`, `.smpc` when `beetle_saturn_shared_int` = `enabled`; `.bcr` when `beetle_saturn_shared_ext` = `enabled` | `mednafen/ss/ss.c` |
+| `mednafen_ngp` | any | `{stem}.flash` primary | | `mednafen/ngp/system.c` `system_io_flash_write` |
+| `opera` | any | `opera/per_game/{stem}.{nvram_version}.srm` primary when `opera_nvram_storage` = `per game` (default) | `opera/shared/nvram.{nvram_version}.srm` when `shared` | `opera_lr_nvram.c`; subdirs `opera/per_game`, `opera/shared` |
+| `pokemini` | any | `{stem}.eep` primary | | `libretro.c`, written at unload |
+| `handy` | any | `{stem}.eeprom` primary | | `libretro.cpp`, written at `retro_deinit` |
+| `melonds` | any | `{stem}.sav` primary | | legacy `libretro.cpp`, flushed on the core's own timer |
+| `fbneo` | any | `fbneo/{romset}.fs` primary; `fbneo/{romset}.nv` sidecar; `fbneo/{romset}.memcard` sidecar when `fbneo-memcard-mode` = `per-game` | `fbneo/shared.memcard` when `shared` | `retro_common.cpp`, `eeprom.cpp`; subdir `fbneo`; option values are the English table of a localized option |
+| `mame2003_plus` | any | `mame2003-plus/nvram/{romset}.nv` primary and `mame2003-plus/hi/{romset}.hi` sidecar when `mame2003-plus_core_save_subfolder` = `enabled` (default); `nvram/{romset}.nv` and `hi/{romset}.hi` when `disabled` | | `fileio.c`; subdirs `mame2003-plus/nvram`, `mame2003-plus/hi`, `nvram`, `hi` |
+| `dosbox_pure` | any | `{stem}.pure.zip` primary | | `DBP_GetSaveFile`; one zip per content, travels as a file |
+| `same_cdi` | any | `same_cdi/nvram/{stem}/` primary (folder) when `same_cdi_nvram_saves` = `enabled` (default) | | `retro_init.cpp`; subdir `same_cdi/nvram` |
+| `nestopia` | `fds` | `{stem}.srm` primary; `{stem}.sav` sidecar when `nestopia_fds_savefile_format` = `sav_ups` (default); `{stem}.ups` when `ups`; `{stem}.ips` when `ips` | | `libretro.cpp` `SAVE_FDS` |
+
+Row platforms use the slugs in the platform table plus `segacd` and
+`fds`. Callers may pass their own forms: `scd`, `sega_cd`, `sega-cd`,
+`mega_cd`, `mega-cd`, `megacd` resolve to `segacd`; `sfc`, `sfam` to
+`snes`; `ps1`, `playstation` to `psx`; `famicom_disk_system` to `fds`.
+
+Folder members are archived from the folder's parent, so the zip holds
+`<folder>/<file>` the way a zipped save folder does.
 
 ## Quick example (C)
 
@@ -505,12 +660,18 @@ understands:
 
 - [`bindings/android/`](bindings/android/) — Gradle library module
   wrapping the C ABI for Kotlin/Java consumers via JNI. Used by
-  argosy-launcher.
+  argosy-launcher. Guide: [docs/kotlin.md](docs/kotlin.md).
 - [`bindings/go/`](bindings/go/) — cgo wrapper for Go consumers (Grout).
+  Guide: [docs/go.md](docs/go.md).
+- [`bindings/python/`](bindings/python/) — cffi wrapper. Guide:
+  [docs/python.md](docs/python.md).
 
-Additional bindings (Rust via bindgen, Python via cffi, etc.) can be
-added under `bindings/<lang>/` — sigil's small public API and stable
-enum numbering keep these straightforward.
+All three expose the same operations, options and fields.
+`bindings/python/test_contract.py` (`make contract`, no toolchain
+needed) holds the table of names and fails when a binding drops one, and
+keeps the C enums, the JNI descriptors and the Kotlin constructors in
+step. A new binding under `bindings/<lang>/` joins that table and gets
+its own page under `docs/`.
 
 ## Testing
 

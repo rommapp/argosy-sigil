@@ -4,10 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Synthetic SNES images with one internal header whose checksum and
- * complement agree, placed at the LoROM, HiROM or ExHiROM base, with and
- * without a 512-byte copier header. */
-
 #define LOROM_BASE   0x7FC0
 #define HIROM_BASE   0xFFC0
 #define EXHIROM_BASE 0x40FFC0

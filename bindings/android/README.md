@@ -13,7 +13,7 @@ There are two integration paths. Pick whichever fits your repo layout.
 Add sigil under your project root:
 
 ```sh
-git submodule add https://github.com/rommforge/argosy-sigil.git sigil
+git submodule add https://github.com/rommapp/argosy-sigil.git sigil
 ```
 
 Reference the binding module in `settings.gradle.kts`:
@@ -47,23 +47,8 @@ includeBuild("../argosy-sigil/bindings/android") {
 
 ## Usage
 
-```kotlin
-import com.nendo.sigil.Sigil
-
-val r = Sigil.extract("/path/to/game.iso", platformSlug = "ps2")
-r?.let {
-    Log.i("MyApp", "title=${it.titleId} raw=${it.rawSerial} usage=${it.usage}")
-}
-```
-
-For Switch ROMs, supply `prodKeysPath`:
-
-```kotlin
-Sigil.extract(xciPath, platformSlug = "switch", prodKeysPath = prodKeysFile.absolutePath)
-```
-
-The `Sigil.extract()` call performs blocking I/O — call it from a
-background thread (`Dispatchers.IO` in coroutines, or a worker thread).
+[docs/kotlin.md](../../docs/kotlin.md): identify, locate, hash, with
+what each call requires and returns.
 
 ## ABI
 

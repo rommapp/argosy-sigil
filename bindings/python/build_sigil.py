@@ -24,6 +24,10 @@ ffibuilder.cdef(
 #define SIGIL_FEATURE_RTC ...
 #define SIGIL_SUPPORT_V1 ...
 #define SIGIL_OPTIONS_V1 ...
+#define SIGIL_SAVE_REQUEST_V1 ...
+#define SIGIL_SAVE_UNIT_V1 ...
+#define SIGIL_SAVE_PATH_MAX ...
+#define SIGIL_SAVE_ENTRY_MAX ...
 
 #define SIGIL_OK ...
 #define SIGIL_ERR_INVALID_ARG ...
@@ -119,6 +123,82 @@ sigil_platform sigil_platform_from_slug(const char *slug);
 const char *sigil_platform_to_slug(sigil_platform p);
 
 int sigil_load_header_key_from_prod_keys(const char *path, uint8_t *out);
+
+typedef struct sigil_io sigil_io;
+struct sigil_io {
+    int     (*read)(void *ctx, uint64_t off, void *buf, size_t len);
+    int64_t (*size)(void *ctx);
+    void    (*close)(void *ctx);
+    void     *ctx;
+};
+
+sigil_io *sigil_io_open_file(const char *path);
+void      sigil_io_close(sigil_io *io);
+
+typedef enum {
+    SIGIL_SAVE_SHAPE_NONE,
+    SIGIL_SAVE_SHAPE_SINGLE,
+    SIGIL_SAVE_SHAPE_MULTI,
+    SIGIL_SAVE_SHAPE_FOLDER,
+    ...
+} sigil_save_shape;
+
+typedef enum {
+    SIGIL_SAVE_ROLE_PRIMARY,
+    SIGIL_SAVE_ROLE_SIDECAR,
+    SIGIL_SAVE_ROLE_RTC,
+    ...
+} sigil_save_role;
+
+typedef struct {
+    char path[...];
+    char entry[...];
+    int  role;
+    int  present;
+} sigil_save_member;
+
+typedef struct {
+    const char *key;
+    const char *value;
+} sigil_save_option;
+
+typedef sigil_io *(*sigil_save_open_fn)(void *ctx, const char *relative_path);
+
+typedef struct {
+    uint32_t                  struct_version;
+    const char               *layout;
+    const char               *platform;
+    const char               *content_path;
+    const sigil_result       *result;
+    uint32_t                  features;
+    const sigil_save_option  *options;
+    size_t                    option_count;
+    const char *const        *listing;
+    size_t                    listing_count;
+    sigil_save_open_fn        open;
+    void                     *open_ctx;
+} sigil_save_request;
+
+typedef struct {
+    uint32_t           struct_version;
+    char               key[...];
+    int                shape;
+    sigil_save_member *members;
+    size_t             member_count;
+    sigil_save_member *expected;
+    size_t             expected_count;
+    char             (*unkeyed)[512];
+    size_t             unkeyed_count;
+    char               artifact[...];
+    char               content_hash[33];
+    char               identity_hash[33];
+} sigil_save_unit;
+
+int  sigil_save_resolve(const sigil_save_request *req, sigil_save_unit **out);
+void sigil_save_unit_free(sigil_save_unit *unit);
+int  sigil_save_hash(sigil_save_unit *unit, sigil_save_open_fn open, void *open_ctx);
+size_t sigil_save_layout_subdirs(const char *layout, const char **out, size_t cap);
+const char *sigil_content_stem(const char *content_path, char *out, size_t cap);
 
 const char *sigil_strerror(int code);
 const char *sigil_version(void);

@@ -24,12 +24,74 @@ JNI = ROOT / "bindings" / "android" / "src" / "main" / "cpp" / "sigil_jni.c"
 # Kotlin/JVM primitive and reference types to their field descriptors.
 _JVM_DESCRIPTORS = {
     "String": "Ljava/lang/String;",
+    "List": "Ljava/util/List;",
     "Int": "I",
     "Long": "J",
     "Boolean": "Z",
     "Float": "F",
     "Double": "D",
 }
+
+# Kotlin classes the JNI constructs, keyed by the global jclass that holds them.
+_JNI_CLASSES = {
+    "SigilResult": "g_result_class",
+    "SigilSaveMember": "g_member_class",
+    "SigilSaveUnit": "g_unit_class",
+    "SigilException": "g_exception_class",
+}
+
+# One row per operation the C API offers, with the name each binding gives it.
+# A binding that lacks a row is not a binding of that operation.
+_API_SURFACE = {
+    "version": ("fun version(", "def version(", "func Version("),
+    "platform slug": ("fun platformSlug(", "def platform_from_slug(", "func PlatformFromSlug("),
+    "extract": ("fun extract(", "def extract(", "func Extract("),
+    "header key from prod.keys": (
+        "fun loadHeaderKeyFromProdKeys(",
+        "def load_header_key_from_prod_keys(",
+        "func LoadHeaderKeyFromProdKeys(",
+    ),
+    "persisted result": ("fun persisted(", "def persisted(", "func PersistedResult("),
+    "locate saves": ("fun locateSaves(", "def locate_saves(", "func LocateSaves("),
+    "hash saves": ("fun hashSaves(", "def hash_saves(", "func HashSaves("),
+    "layout subdirs": ("fun layoutSubdirs(", "def layout_subdirs(", "func LayoutSubdirs("),
+    "content stem": ("fun contentStem(", "def content_stem(", "func ContentStem("),
+    "list save root": ("fun listSaveRoot(", "def list_save_root(", "func ListSaveRoot("),
+}
+
+_EXTRACT_OPTIONS = {
+    "filename fallback": ("filenameFallback", "filename_fallback", "DisableFilenameFallback"),
+    "3ds homebrew": ("allow3dsHomebrew", "allow_3ds_homebrew", "Allow3DSHomebrew"),
+    "switch header key": ("headerKey", "header_key", "SwitchHeaderKey"),
+    "switch prod.keys path": ("prodKeysPath", "prod_keys_path", "SwitchProdKeysPath"),
+    "switch prod.keys text": ("prodKeysText", "prod_keys_text", "SwitchProdKeysBlob"),
+}
+
+_RESULT_FIELDS = {
+    "title id": ("titleId", "title_id", "TitleID"),
+    "raw serial": ("rawSerial", "raw_serial", "RawSerial"),
+    "save id": ("saveId", "save_id", "SaveID"),
+    "platform slug": ("platformSlug", "platform", "PlatformSlug"),
+    "source": ("source", "source", "Source"),
+    "usage": ("usage", "usage", "Usage"),
+    "experimental": ("experimental", "experimental", "Experimental"),
+    "switch content type": ("switchContentType", "switch_content_type", "SwitchContentType"),
+    "title version": ("titleVersion", "title_version", "TitleVersion"),
+    "features": ("features", "features", "Features"),
+}
+
+_UNIT_FIELDS = {
+    "key": ("key", "key", "Key"),
+    "shape": ("shape", "shape", "Shape"),
+    "members": ("members", "members", "Members"),
+    "expected": ("expected", "expected", "Expected"),
+    "unkeyed": ("unkeyed", "unkeyed", "Unkeyed"),
+    "artifact": ("artifact", "artifact", "Artifact"),
+    "content hash": ("contentHash", "content_hash", "ContentHash"),
+    "identity hash": ("identityHash", "identity_hash", "IdentityHash"),
+}
+
+GO = ROOT / "bindings" / "go" / "sigil.go"
 
 
 def _canonical_string(enum_name: str) -> str:
@@ -62,13 +124,13 @@ def _kotlin_usage_entries() -> list[tuple[str, int]]:
     return [(_pascal_to_upper_snake(n), int(v)) for n, v in entries]
 
 
-def _kotlin_ctor_types() -> list[str]:
+def _kotlin_ctor_types(class_name: str) -> list[str]:
     block = re.search(
-        r"data class SigilResult\((.*?)\)", KOTLIN.read_text(), re.DOTALL
+        rf"\bclass {class_name}\((.*?)\)", KOTLIN.read_text(), re.DOTALL
     )
-    assert block, "Kotlin SigilResult constructor not found"
-    types = re.findall(r"\bval\s+\w+:\s*(\w+)", block.group(1))
-    assert types, "no SigilResult constructor params parsed"
+    assert block, f"Kotlin {class_name} constructor not found"
+    types = re.findall(r"(?:^|,)\s*(?:private\s+)?(?:val\s+)?\w+:\s*(\w+)", block.group(1))
+    assert types, f"no {class_name} constructor params parsed"
     return types
 
 
@@ -105,31 +167,87 @@ def test_kotlin_usage_enum_matches_c_enum():
     )
 
 
-def _kotlin_ctor_descriptor() -> str:
+def _kotlin_ctor_descriptor(class_name: str) -> str:
     tokens = []
-    for t in _kotlin_ctor_types():
+    for t in _kotlin_ctor_types(class_name):
         assert t in _JVM_DESCRIPTORS, f"unmapped Kotlin type {t!r}"
         tokens.append(_JVM_DESCRIPTORS[t])
     return "(" + "".join(tokens) + ")V"
 
 
-def _jni_ctor_descriptor() -> str:
-    match = re.search(r'"<init>",\s*"([^"]+)"', JNI.read_text(), re.DOTALL)
-    assert match, "GetMethodID <init> descriptor not found in sigil_jni.c"
+def _jni_ctor_descriptor(global_class: str) -> str:
+    match = re.search(
+        rf'GetMethodID\(env,\s*{global_class},\s*"<init>",\s*"([^"]+)"',
+        JNI.read_text(),
+        re.DOTALL,
+    )
+    assert match, f"GetMethodID <init> for {global_class} not found in sigil_jni.c"
     return match.group(1)
 
 
-def test_jni_descriptor_matches_kotlin_constructor():
+def _jni_ctor_args(global_class: str) -> list[str]:
+    match = re.search(
+        rf"NewObject\(env,\s*{global_class},\s*\w+,\s*(.*?)\);", JNI.read_text(), re.DOTALL
+    )
+    assert match, f"NewObject for {global_class} not found in sigil_jni.c"
+    return [a.strip() for a in match.group(1).split(",")]
+
+
+def test_jni_descriptors_match_kotlin_constructors():
     """The bug in cde2301: the JNI descriptor kept a String param the Kotlin
     constructor had dropped, so GetMethodID missed the constructor and every
-    extraction crashed. This locks the two together."""
-    assert _jni_ctor_descriptor() == _kotlin_ctor_descriptor()
+    extraction crashed. This locks each pair together."""
+    for class_name, global_class in _JNI_CLASSES.items():
+        assert _jni_ctor_descriptor(global_class) == _kotlin_ctor_descriptor(class_name), (
+            f"{class_name} descriptor drifted"
+        )
 
 
-def test_jni_string_args_match_descriptor():
-    string_params = _jni_ctor_descriptor().count("Ljava/lang/String;")
-    # Each String constructor arg is filled by one `jstring jX = ...` local.
-    jstring_locals = len(re.findall(r"\bjstring\s+\w+\s*=", JNI.read_text()))
-    assert jstring_locals == string_params, (
-        f"{jstring_locals} jstring locals feed a {string_params}-String constructor"
-    )
+def test_jni_string_args_match_descriptors():
+    jstring_locals = set(re.findall(r"\bjstring\s+(\w+)\s*=", JNI.read_text()))
+    for class_name, global_class in _JNI_CLASSES.items():
+        string_params = _jni_ctor_descriptor(global_class).count("Ljava/lang/String;")
+        string_args = [a for a in _jni_ctor_args(global_class) if a in jstring_locals]
+        assert len(string_args) == string_params, (
+            f"{class_name}: {len(string_args)} jstring args feed a "
+            f"{string_params}-String constructor"
+        )
+
+
+def _jni_exception_thrown_on_failure() -> bool:
+    return "throw_sigil(env, rc)" in JNI.read_text()
+
+
+def _binding_sources() -> dict[str, str]:
+    return {"kotlin": KOTLIN.read_text(), "python": PY_INIT.read_text(), "go": GO.read_text()}
+
+
+def _assert_each_binding_has(table: dict[str, tuple[str, str, str]], what: str) -> None:
+    sources = _binding_sources()
+    for operation, names in table.items():
+        for language, name in zip(("kotlin", "python", "go"), names):
+            assert name in sources[language], f"{language} binding lacks {what} {operation!r} ({name})"
+
+
+def test_every_binding_exposes_every_operation():
+    _assert_each_binding_has(_API_SURFACE, "operation")
+
+
+def test_every_binding_takes_every_extract_option():
+    _assert_each_binding_has(_EXTRACT_OPTIONS, "extract option")
+
+
+def test_every_binding_returns_every_result_field():
+    _assert_each_binding_has(_RESULT_FIELDS, "result field")
+
+
+def test_every_binding_returns_every_save_unit_field():
+    _assert_each_binding_has(_UNIT_FIELDS, "save unit field")
+
+
+def test_every_binding_reports_the_c_error_code():
+    sources = _binding_sources()
+    assert "class SigilException(val code: Int" in sources["kotlin"]
+    assert _jni_exception_thrown_on_failure()
+    assert "self.code = code" in sources["python"]
+    assert "func errFromCode(rc C.int) error" in sources["go"]

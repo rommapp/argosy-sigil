@@ -211,17 +211,9 @@ SIGIL_API void      sigil_io_close(sigil_io *io);
 
 SIGIL_API int sigil_load_header_key_from_prod_keys(const char *path, uint8_t out[32]);
 
-/* ---- Save units --------------------------------------------------------------
- *
- * A save unit is every file under an emulator's save root that belongs to one
- * game, named so a client can archive it and hash it the way the RomM server
- * will. Three wire shapes exist: one member travels raw, two or more travel as
- * a flat zip with each member at the root, and a folder-keyed platform travels
- * as a zip of the `save_id` folder. Entry names are part of the hash.
- *
- * Sigil never touches the filesystem here. The caller lists the root (plus the
- * subfolders `sigil_save_layout_subdirs` names) and, when it wants a hash,
- * opens members on request. */
+/* ---- Save units (README, "Save units") ---------------------------------------
+ * Sigil never touches the filesystem here: the caller lists the root and the
+ * subfolders `sigil_save_layout_subdirs` names, and opens members on request. */
 
 typedef enum {
     SIGIL_SAVE_SHAPE_NONE = 0,   /* nothing present */
@@ -251,19 +243,21 @@ typedef struct {
     const char *value;
 } sigil_save_option;
 
+/* Returns a stream for one member of the save root, or NULL. */
+typedef sigil_io *(*sigil_save_open_fn)(void *ctx, const char *relative_path);
+
 typedef struct {
     uint32_t                  struct_version;   /* SIGIL_SAVE_REQUEST_V1 */
     const char               *layout;           /* core or emulator id; unknown ids use the libretro default */
     const char               *platform;         /* platform slug, may be NULL */
-    const char               *content_name;     /* name the emulator loaded: rom, m3u, cue, chd, or archive#entry */
+    const char               *content_path;     /* path the emulator loaded, verbatim; archive.zip#member.ext for a member */
     const sigil_result       *result;           /* may be NULL when the platform has no title id */
     uint32_t                  features;         /* SIGIL_FEATURE_* when result is NULL (persisted earlier) */
     const sigil_save_option  *options;
     size_t                    option_count;
     const char *const        *listing;          /* relative paths under the root */
     size_t                    listing_count;
-    /* Returns a stream for one member, or NULL. NULL `open` skips hashing. */
-    sigil_io               *(*open)(void *ctx, const char *relative_path);
+    sigil_save_open_fn        open;             /* NULL resolves names only; see sigil_save_hash */
     void                     *open_ctx;
 } sigil_save_request;
 
@@ -285,6 +279,9 @@ typedef struct {
 SIGIL_API int  sigil_save_resolve(const sigil_save_request *req, sigil_save_unit **out);
 SIGIL_API void sigil_save_unit_free(sigil_save_unit *unit);
 
+/* Fills content_hash and identity_hash of a resolved unit by opening its members. */
+SIGIL_API int  sigil_save_hash(sigil_save_unit *unit, sigil_save_open_fn open, void *open_ctx);
+
 /* Subfolders under the save root a layout writes into, so the caller knows
  * what to list. Returns the count written to `out` (at most `cap`). */
 SIGIL_API size_t sigil_save_layout_subdirs(const char *layout, const char **out, size_t cap);
@@ -292,7 +289,7 @@ SIGIL_API size_t sigil_save_layout_subdirs(const char *layout, const char **out,
 /* The base name RetroArch derives for save files (runloop_path_set_basename):
  * the loaded path's file name without its extension, taking the member name
  * for `archive.zip#member.ext`. Returns `out`. */
-SIGIL_API const char *sigil_content_stem(const char *content_name, char *out, size_t cap);
+SIGIL_API const char *sigil_content_stem(const char *content_path, char *out, size_t cap);
 
 SIGIL_API const char *sigil_strerror(int code);
 SIGIL_API const char *sigil_version(void);

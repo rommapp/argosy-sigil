@@ -1,14 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "sigil_internal.h"
 
-/* SNES carts have no title id either. The internal header sits at 0x7FC0 for
- * LoROM, 0xFFC0 for HiROM and 0x40FFC0 for ExHiROM, and a copier may have
- * prepended 512 bytes, so the file size settles the skew and the header's own
- * checksum/complement pair settles the base. snes9x builds
- * (ROMType << 8) | ROMSpeed from header bytes 0x16 and 0x15 and enables its
- * clock chips on 0x5535 (S-RTC) and 0xF93A (SPC7110 with RTC), which is the
- * whole of what a save unit needs to know (snes9x memmap.cpp InitROM). */
-
 #define SNES_COPIER_HEADER   512
 #define SNES_HEADER_LEN      0x40
 #define SNES_ROM_SPEED       0x15
@@ -28,8 +20,6 @@ static bool snes_header_valid(const uint8_t *h) {
     return (uint16_t)(complement ^ checksum) == 0xFFFF;
 }
 
-/* Larger bases first: an ExHiROM image also carries plausible bytes at the
- * HiROM base, so the deepest header that validates is the real one. */
 static int snes_find_header(const sigil_io *io, uint64_t skew, uint8_t out[SNES_HEADER_LEN]) {
     int64_t size = io->size ? io->size(io->ctx) : -1;
     for (size_t i = 0; i < SNES_HEADER_BASE_COUNT; i++) {

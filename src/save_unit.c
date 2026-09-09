@@ -16,12 +16,12 @@ static const char *last_separator(const char *s) {
     return slash;
 }
 
-const char *sigil_content_stem(const char *content_name, char *out, size_t cap) {
+const char *sigil_content_stem(const char *content_path, char *out, size_t cap) {
     if (!out || cap == 0) return out;
     out[0] = '\0';
-    if (!content_name) return out;
+    if (!content_path) return out;
 
-    const char *name = content_name;
+    const char *name = content_path;
     const char *hash = strrchr(name, '#');
     if (hash) name = hash + 1;
     const char *sep = last_separator(name);
@@ -53,8 +53,6 @@ static bool condition_holds(const sigil_save_request *req, const char *key,
     return strcmp(actual, value) == 0;
 }
 
-/* Genesis Plus GX names the cart file by its size option, but with its own
- * spelling of each size (libretro.c check_variables). */
 static const char *gpgx_cart_size_name(const char *value) {
     if (!value) return "4Mbit";
     if (strcmp(value, "128k") == 0) return "128Kbit";
@@ -95,9 +93,6 @@ static const char *variable_value(const expand_ctx *ctx, const char *name, size_
     return NULL;
 }
 
-/* Expands `{var}` references. Fails when a variable has no value, so a
- * template that needs a title id the caller could not supply never turns into
- * a name with a hole in it. */
 static bool expand_template(const expand_ctx *ctx, const char *template_, char *out, size_t cap) {
     size_t n = 0;
     const char *p = template_;
@@ -160,8 +155,6 @@ static void add_member(unit_builder *b, const char *path, const char *entry, int
     (*count)++;
 }
 
-/* A folder member's entries are named from the folder's parent, so the
- * archive holds `<folder>/<file>` the way a zipped save folder does. */
 static void add_folder_members(unit_builder *b, const sigil_save_request *req,
                                const char *folder_path, int role) {
     size_t prefix_len = strlen(folder_path);
@@ -275,9 +268,6 @@ static int entry_compare(const void *a, const void *b) {
     return strcmp(((const hashed_entry *)a)->name, ((const hashed_entry *)b)->name);
 }
 
-/* RomM _compute_zip_hash: md5 of "name:md5\n..." over the entries sorted by
- * name, directories excluded. The entry order is byte order, which is what
- * Python's sorted() yields for the same UTF-8 names. */
 static void combined_hash(entry_list *l, char out_hex[33]) {
     qsort(l->entries, l->count, sizeof(hashed_entry), entry_compare);
     sigil_md5 m;
@@ -297,8 +287,8 @@ static int on_zip_entry(void *ctx, const char *name, const char *md5_hex) {
     return entry_list_add((entry_list *)ctx, name, md5_hex);
 }
 
-static int hash_single(const sigil_save_request *req, const sigil_save_member *member, char out_hex[33]) {
-    sigil_io *io = req->open(req->open_ctx, member->path);
+static int hash_single(sigil_save_open_fn open, void *open_ctx, const sigil_save_member *member, char out_hex[33]) {
+    sigil_io *io = open(open_ctx, member->path);
     if (!io) return SIGIL_ERR_IO;
     int rc;
     if (sigil_io_is_zip(io)) {
@@ -313,13 +303,14 @@ static int hash_single(const sigil_save_request *req, const sigil_save_member *m
     return rc;
 }
 
-static int hash_unit(const sigil_save_request *req, sigil_save_unit *unit) {
+int sigil_save_hash(sigil_save_unit *unit, sigil_save_open_fn open, void *open_ctx) {
+    if (!unit || !open || unit->struct_version != SIGIL_SAVE_UNIT_V1) return SIGIL_ERR_INVALID_ARG;
     unit->content_hash[0] = '\0';
     unit->identity_hash[0] = '\0';
-    if (!req->open || unit->member_count == 0) return SIGIL_OK;
+    if (unit->member_count == 0) return SIGIL_OK;
 
     if (unit->shape == SIGIL_SAVE_SHAPE_SINGLE) {
-        int rc = hash_single(req, &unit->members[0], unit->content_hash);
+        int rc = hash_single(open, open_ctx, &unit->members[0], unit->content_hash);
         if (rc == SIGIL_OK) memcpy(unit->identity_hash, unit->content_hash, 33);
         return rc;
     }
@@ -330,7 +321,7 @@ static int hash_unit(const sigil_save_request *req, sigil_save_unit *unit) {
     const sigil_save_member *state_member = NULL;
     int rc = SIGIL_OK;
     for (size_t i = 0; i < unit->member_count && rc == SIGIL_OK; i++) {
-        sigil_io *io = req->open(req->open_ctx, unit->members[i].path);
+        sigil_io *io = open(open_ctx, unit->members[i].path);
         if (!io) { rc = SIGIL_ERR_IO; break; }
         char hex[33];
         rc = md5_stream(io, hex);
@@ -345,7 +336,7 @@ static int hash_unit(const sigil_save_request *req, sigil_save_unit *unit) {
     }
     if (rc == SIGIL_OK) {
         combined_hash(&all, unit->content_hash);
-        if (state_count == 1) rc = hash_single(req, state_member, unit->identity_hash);
+        if (state_count == 1) rc = hash_single(open, open_ctx, state_member, unit->identity_hash);
         else combined_hash(&state, unit->identity_hash);
     }
     free(all.entries);
@@ -375,12 +366,12 @@ static void artifact_name(sigil_save_unit *unit) {
 
 int sigil_save_resolve(const sigil_save_request *req, sigil_save_unit **out) {
     if (!req || !out || req->struct_version != SIGIL_SAVE_REQUEST_V1) return SIGIL_ERR_INVALID_ARG;
-    if (!req->content_name || !req->listing) return SIGIL_ERR_INVALID_ARG;
+    if (!req->content_path || !req->listing) return SIGIL_ERR_INVALID_ARG;
     *out = NULL;
 
     expand_ctx ctx;
     ctx.req = req;
-    sigil_content_stem(req->content_name, ctx.stem, sizeof(ctx.stem));
+    sigil_content_stem(req->content_path, ctx.stem, sizeof(ctx.stem));
     if (ctx.stem[0] == '\0') return SIGIL_ERR_INVALID_ARG;
 
     uint32_t features = req->features;
@@ -424,8 +415,10 @@ int sigil_save_resolve(const sigil_save_request *req, sigil_save_unit **out) {
 
     artifact_name(unit);
 
-    int rc = hash_unit(req, unit);
-    if (rc != SIGIL_OK) { sigil_save_unit_free(unit); return rc; }
+    if (req->open) {
+        int rc = sigil_save_hash(unit, req->open, req->open_ctx);
+        if (rc != SIGIL_OK) { sigil_save_unit_free(unit); return rc; }
+    }
 
     *out = unit;
     return SIGIL_OK;

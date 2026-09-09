@@ -5,10 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Save-unit resolution over listings, and hashes checked against values the
- * RomM server produced (save_unit_fixture.h). Every layout row gets a
- * listing that exercises its conditions. */
-
 typedef struct { const uint8_t *buf; size_t len; } mem_ctx;
 
 static int mem_read(void *ctx, uint64_t off, void *buf, size_t len) {
@@ -68,7 +64,7 @@ static sigil_save_unit *resolve(const char *label, const char *layout, const cha
     req.struct_version = SIGIL_SAVE_REQUEST_V1;
     req.layout = layout;
     req.platform = platform;
-    req.content_name = content;
+    req.content_path = content;
     req.features = features;
     req.options = opts;
     req.option_count = opt_count;
@@ -418,6 +414,37 @@ static void test_hashes(void) {
         expect_str("folder hash", u->members[0].entry, "ULUS10064DATA00/DATA.BIN", "entry");
         expect_str("folder hash", u->content_hash, FOLDER_PSP_HASH, "hash");
         expect_str("folder hash", u->artifact, "ULUS10064DATA00.zip", "artifact");
+        sigil_save_unit_free(u);
+    }
+
+    struct { const char *label; const char *layout; const char *platform; const char *content;
+             uint32_t features; const char *const *listing; size_t count; } later[] = {
+        { "later raw", "mgba", "gb", "Hello.gb", 0, (const char *const[]){ "Hello.srm" }, 1 },
+        { "later multi", "mgba", "gbc", "Crystal.gbc", SIGIL_FEATURE_RTC, multi, 2 },
+        { "later zip", "dosbox_pure", "dos", "Doom.zip", 0, stored, 1 },
+        { "later folder", "same_cdi", "cdi", "ULUS10064DATA00.chd", 0, folder, 2 },
+    };
+    for (size_t i = 0; i < sizeof(later) / sizeof(later[0]); i++) {
+        sigil_save_unit *named = resolve(later[i].label, later[i].layout, later[i].platform, later[i].content,
+                                         later[i].features, NULL, 0, later[i].listing, later[i].count, NULL);
+        sigil_save_unit *hashed = resolve(later[i].label, later[i].layout, later[i].platform, later[i].content,
+                                          later[i].features, NULL, 0, later[i].listing, later[i].count, &root);
+        if (!named || !hashed) continue;
+        expect_str(later[i].label, named->content_hash, "", "hash before sigil_save_hash");
+        expect_str(later[i].label, named->identity_hash, "", "identity before sigil_save_hash");
+        int rc = sigil_save_hash(named, fake_open, &root);
+        if (rc != SIGIL_OK) fail(later[i].label, "sigil_save_hash failed");
+        expect_str(later[i].label, named->content_hash, hashed->content_hash, "hash");
+        expect_str(later[i].label, named->identity_hash, hashed->identity_hash, "identity");
+        sigil_save_unit_free(named);
+        sigil_save_unit_free(hashed);
+    }
+
+    const char *missing[] = { "Missing.srm" };
+    u = resolve("hash missing member", "mgba", "gb", "Missing.gb", 0, NULL, 0, missing, 1, NULL);
+    if (u) {
+        if (sigil_save_hash(u, fake_open, &root) != SIGIL_ERR_IO) fail("hash missing member", "want SIGIL_ERR_IO");
+        if (sigil_save_hash(u, NULL, &root) != SIGIL_ERR_INVALID_ARG) fail("hash without open", "want SIGIL_ERR_INVALID_ARG");
         sigil_save_unit_free(u);
     }
 }

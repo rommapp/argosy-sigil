@@ -1,13 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "sigil_internal.h"
 
-/* Game Boy carts have no title id; saves are named after the content file.
- * The header still decides what the save unit holds: byte 0x147 names the
- * mapper, and four mapper types carry a real-time clock that a libretro core
- * exposes as RETRO_MEMORY_RTC. gambatte, mGBA and VBA-M all key that region on
- * exactly these values (gambatte cartridge_libretro.cpp hasRtc, mGBA
- * GB_MBC3_RTC, VBA-M gbRTCPresent). */
-
 #define GB_HEADER_OFF     0x100
 #define GB_HEADER_LEN     0x50
 #define GB_CART_TYPE      0x147
@@ -27,8 +20,6 @@ static bool gb_cart_has_rtc(uint8_t cart_type) {
         || cart_type == GB_HUC3;
 }
 
-/* The boot ROM refuses a cart whose header checksum fails, so a mismatch
- * means these bytes are not a Game Boy header and 0x147 is noise. */
 static bool gb_header_checksum_ok(const uint8_t *rom) {
     uint8_t x = 0;
     for (uint32_t i = GB_CHECKSUM_FIRST; i <= GB_CHECKSUM_LAST; i++) {

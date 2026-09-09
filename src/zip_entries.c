@@ -3,12 +3,6 @@
 #include <stdlib.h>
 #include <zlib.h>
 
-/* Walks a zip presented as a sigil_io and hashes each file entry, which is
- * how the RomM server hashes any save that happens to be a zip (a DOSBox Pure
- * `.pure.zip`, or a bundle). It shares record layouts with io_zip.c but not
- * code: that reader hands one member out as a stream, this one visits all of
- * them once, forward only. */
-
 #define ZE_EOCD_SIG            0x06054b50u
 #define ZE_EOCD64_SIG          0x06064b50u
 #define ZE_EOCD64_LOCATOR_SIG  0x07064b50u
@@ -98,9 +92,6 @@ static void apply_zip64_extra(const uint8_t *extra, size_t extra_len,
     }
 }
 
-/* Mirrors Python's zipfile.is_zipfile, which the server decides by: an
- * end-of-central-directory record within the comment window at the tail,
- * nothing about the head of the file. */
 bool sigil_io_is_zip(const sigil_io *io) {
     if (!io || !io->read) return false;
     dir_loc loc;

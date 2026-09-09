@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "sigil_internal.h"
 
-/* RFC 1321. The server hashes save content with MD5 (RomM
- * assets_handler.compute_content_hash), so a unit's hash has to be the same
- * digest over the same bytes; no other choice of hash is available here. */
-
 static const uint32_t MD5_K[64] = {
     0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
     0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,

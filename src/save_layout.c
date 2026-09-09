@@ -1,32 +1,21 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "save_layout.h"
 
-/* Every row below was read from the core's own source or its libretro docs
- * page; the file names are the core's literals, not analogies. A core absent
- * from the table persists through RETRO_MEMORY_SAVE_RAM alone and takes the
- * libretro default row. */
-
 #define M(t, r)                 { t, SIGIL_SAVE_ROLE_##r, NULL, NULL, false }
 #define M_OPT(t, r, k, v, d)    { t, SIGIL_SAVE_ROLE_##r, k, v, d }
 #define S(t)                    { t, NULL, NULL, false }
 #define S_OPT(t, k, v, d)       { t, k, v, d }
 #define COUNT(a)                (sizeof(a) / sizeof((a)[0]))
 
-/* RetroArch persists SAVE_RAM as <stem>.srm and RETRO_MEMORY_RTC as
- * <stem>.rtc (save.c, path_init_savefile_rtc). */
 static const sigil_layout_member LIBRETRO_DEFAULT_MEMBERS[] = {
     M("{stem}.srm", PRIMARY),
     M("{stem}.rtc", RTC),
 };
 
-/* Cores with no RTC region at all: vba_next, gpsp (libretro.c memory maps). */
 static const sigil_layout_member SRM_ONLY_MEMBERS[] = {
     M("{stem}.srm", PRIMARY),
 };
 
-/* Genesis Plus GX Sega CD, libretro/libretro.c check_variables and bram_save:
- * per-game names only under "per game"; the per-bios and per-cart defaults
- * write one file for every game. */
 static const sigil_layout_member GPGX_SEGACD_MEMBERS[] = {
     M("{stem}.srm", PRIMARY),
     M_OPT("{stem}.brm", SIDECAR, "genesis_plus_gx_system_bram", "per game", false),
@@ -39,9 +28,6 @@ static const sigil_layout_shared GPGX_SEGACD_SHARED[] = {
     S_OPT("{cart_size}_cart.brm", "genesis_plus_gx_cart_bram", "per cart", true),
 };
 
-/* Beetle PSX HW: card 0 is SAVE_RAM under the libretro method or
- * <content>.<index>.mcr under the mednafen method; every other card is a
- * file (commit 707d1be). Shared names from docs.libretro.com/library/beetle_psx_hw. */
 static const sigil_layout_member BEETLE_PSX_MEMBERS[] = {
     M_OPT("{stem}.srm", PRIMARY, "beetle_psx_hw_use_mednafen_memcard0_method", "libretro", true),
     M_OPT("{stem}.{left_index}.mcr", PRIMARY, "beetle_psx_hw_use_mednafen_memcard0_method", "mednafen", false),
@@ -52,9 +38,6 @@ static const sigil_layout_shared BEETLE_PSX_SHARED[] = {
     S_OPT("mednafen_psx_libretro_shared.1.mcr", "beetle_psx_hw_shared_memory_cards", "enabled", false),
 };
 
-/* Beetle Saturn, mednafen/ss/ss.c: internal backup RAM is SAVE_RAM under the
- * libretro method or <content>.bkr under mednafen; the cart (.bcr) and the
- * SMPC clock (.smpc) are always files. */
 static const sigil_layout_member BEETLE_SATURN_MEMBERS[] = {
     M_OPT("{stem}.srm", PRIMARY, "beetle_saturn_save_method", "libretro", true),
     M_OPT("{stem}.bkr", PRIMARY, "beetle_saturn_save_method", "mednafen", false),
@@ -67,8 +50,6 @@ static const sigil_layout_shared BEETLE_SATURN_SHARED[] = {
     S_OPT("mednafen_saturn_libretro_shared.bcr", "beetle_saturn_shared_ext", "enabled", false),
 };
 
-/* PCSX ReARMed: card 1 is SAVE_RAM; card 2 defaults to one shared file,
- * seen on device as pcsx-card2.mcd in the save root. */
 static const sigil_layout_member PCSX_REARMED_MEMBERS[] = {
     M("{stem}.srm", PRIMARY),
 };
@@ -76,12 +57,10 @@ static const sigil_layout_shared PCSX_REARMED_SHARED[] = {
     S_OPT("pcsx-card2.mcd", "pcsx_rearmed_memcard2", "shared", true),
 };
 
-/* Beetle NeoPop, mednafen/ngp/system.c system_io_flash_write. */
 static const sigil_layout_member BEETLE_NGP_MEMBERS[] = {
     M("{stem}.flash", PRIMARY),
 };
 
-/* Opera, opera_lr_nvram.c: per-game by default, shared on request. */
 static const sigil_layout_member OPERA_MEMBERS[] = {
     M_OPT("opera/per_game/{stem}.{nvram_version}.srm", PRIMARY, "opera_nvram_storage", "per game", true),
 };
@@ -90,23 +69,18 @@ static const sigil_layout_shared OPERA_SHARED[] = {
 };
 static const char *const OPERA_SUBDIRS[] = { "opera/per_game", "opera/shared" };
 
-/* PokeMini libretro.c: <basename>.eep written at unload. */
 static const sigil_layout_member POKEMINI_MEMBERS[] = {
     M("{stem}.eep", PRIMARY),
 };
 
-/* Handy libretro.cpp: <content>.eeprom written at retro_deinit. */
 static const sigil_layout_member HANDY_MEMBERS[] = {
     M("{stem}.eeprom", PRIMARY),
 };
 
-/* Legacy melonDS libretro.cpp: <game>.sav through its own flush timer. */
 static const sigil_layout_member MELONDS_MEMBERS[] = {
     M("{stem}.sav", PRIMARY),
 };
 
-/* FBNeo retro_common.cpp / eeprom.cpp: everything under <save>/fbneo/.
- * Memcard mode values are the English table of a localized option. */
 static const sigil_layout_member FBNEO_MEMBERS[] = {
     M("fbneo/{romset}.fs", PRIMARY),
     M("fbneo/{romset}.nv", SIDECAR),
@@ -117,8 +91,6 @@ static const sigil_layout_shared FBNEO_SHARED[] = {
 };
 static const char *const FBNEO_SUBDIRS[] = { "fbneo" };
 
-/* MAME 2003 Plus fileio.c: nvram/ and hi/ under the APPNAME subfolder while
- * core_save_subfolder is enabled (its default), else directly under the root. */
 static const sigil_layout_member MAME2003_PLUS_MEMBERS[] = {
     M_OPT("mame2003-plus/nvram/{romset}.nv", PRIMARY, "mame2003-plus_core_save_subfolder", "enabled", true),
     M_OPT("mame2003-plus/hi/{romset}.hi", SIDECAR, "mame2003-plus_core_save_subfolder", "enabled", true),
@@ -129,19 +101,15 @@ static const char *const MAME2003_PLUS_SUBDIRS[] = {
     "mame2003-plus/nvram", "mame2003-plus/hi", "nvram", "hi"
 };
 
-/* DOSBox Pure DBP_GetSaveFile: one zip per content; it travels as a file. */
 static const sigil_layout_member DOSBOX_PURE_MEMBERS[] = {
     M("{stem}.pure.zip", PRIMARY),
 };
 
-/* SAME CDI retro_init.cpp: MAME's nvram directory under a per-game folder
- * while same_cdi_nvram_saves is enabled (its default). */
 static const sigil_layout_member SAME_CDI_MEMBERS[] = {
     M_OPT("same_cdi/nvram/{stem}/", PRIMARY, "same_cdi_nvram_saves", "enabled", true),
 };
 static const char *const SAME_CDI_SUBDIRS[] = { "same_cdi/nvram" };
 
-/* Nestopia libretro.cpp SAVE_FDS: the disk image or a patch beside the SRAM. */
 static const sigil_layout_member NESTOPIA_FDS_MEMBERS[] = {
     M("{stem}.srm", PRIMARY),
     M_OPT("{stem}.sav", SIDECAR, "nestopia_fds_savefile_format", "sav_ups", true),
@@ -149,8 +117,6 @@ static const sigil_layout_member NESTOPIA_FDS_MEMBERS[] = {
     M_OPT("{stem}.ips", SIDECAR, "nestopia_fds_savefile_format", "ips", false),
 };
 
-/* bsnes program.cpp: its own .srm for every cart, .rtc only for Game Boy
- * carts; SNES clock chips persist nothing there. */
 static const sigil_layout_member BSNES_SNES_MEMBERS[] = {
     M("{stem}.srm", PRIMARY),
 };
@@ -182,9 +148,6 @@ static const sigil_layout LAYOUTS[] = {
     ROW("nestopia", "fds", NESTOPIA_FDS_MEMBERS),
 };
 
-/* Rows name platforms by the slugs in the README; consumers may pass their
- * own short forms, which resolve here the way sigil_platform_from_slug
- * resolves title-id platforms. */
 static const char *canonical_platform(const char *slug) {
     if (!slug) return NULL;
     if (strcmp(slug, "scd") == 0 || strcmp(slug, "sega_cd") == 0 || strcmp(slug, "sega-cd") == 0

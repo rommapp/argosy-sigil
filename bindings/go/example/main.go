@@ -26,6 +26,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "sigil: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("platform=%s title_id=%s raw_serial=%s usage=%s source=%s\n",
-		r.Platform, r.TitleID, r.RawSerial, r.Usage, r.Source)
+	features := "-"
+	if r.HasRTC() {
+		features = "rtc"
+	}
+	fmt.Printf("platform=%s title_id=%s raw_serial=%s save_id=%s usage=%s source=%s features=%s\n",
+		r.Platform, r.TitleID, r.RawSerial, r.SaveID, r.Usage, r.Source, features)
 }

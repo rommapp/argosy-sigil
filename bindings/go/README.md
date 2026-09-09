@@ -29,25 +29,8 @@ The cgo `#cgo LDFLAGS` in `sigil.go` looks for the static libs at
 
 ## Use
 
-```go
-import "github.com/rommforge/argosy-sigil/bindings/go"
-
-r, err := sigil.Extract("/path/to/game.iso", sigil.PlatformAuto, nil)
-if err != nil { /* sigil.ErrNotFound, .ErrIO, etc. */ }
-
-// r.TitleID    -> canonical save-matching form
-// r.RawSerial  -> as-in-binary form
-// r.Platform   -> resolved platform
-// r.Source     -> SourceBinary or SourceFilename
-// r.Usage      -> UsageFolderExact / FolderPrefix / FileExact / FilePrefix
-```
-
-Switch with prod.keys:
-
-```go
-opts := &sigil.Options{SwitchProdKeysPath: "/path/to/prod.keys"}
-r, err := sigil.Extract(xciPath, sigil.PlatformSwitch, opts)
-```
+[docs/go.md](../../docs/go.md): identify, locate, hash, with what each
+call requires and returns.
 
 ## Notes
 

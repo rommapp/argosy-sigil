@@ -3,9 +3,6 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Synthetic Game Boy headers: the checksum over 0x134..0x14C is written so
- * the boot-ROM check passes, then one cart-type byte at 0x147 per case. */
-
 #define ROM_LEN      0x8000
 #define CART_TYPE    0x147
 #define CHECKSUM     0x14D
