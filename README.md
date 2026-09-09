@@ -112,7 +112,7 @@ to sigil's own files must remain MPL-2.0.
 | `psvita` | PS Vita | `.zip` dump, extracted folder, or `param.sfo` | `PCSE12345` (TITLE_ID from `sce_sys/param.sfo`) | folder-exact | filename fallback when no `param.sfo` is reachable |
 | `switch` | Nintendo Switch | `.nsp`, `.xci` | `0100ABCD12345000` | folder-exact | |
 | `3ds` | Nintendo 3DS | `.3ds`, `.cci`, `.cxi`, `.app`, `.z3ds`, `.zcci`, `.zcxi` | `0004000000123456` | folder-split | `.3dsx` / `.z3dsx` / `.elf` / `.axf` are homebrew and carry no title id |
-| `wii` | Wii | `.iso`, `.rvz`, `.wbfs` | `525A5445` (hex of ASCII gameId) | folder-exact | |
+| `wii` | Wii | `.iso`, `.rvz`, `.wbfs`, `.wad` | `525A5445` (hex of ASCII gameId); `.wad`: `00010001574B5445` (full 16-hex title id) | folder-exact; `.wad`: folder-split | |
 | `wiiu` | Wii U | `.wua` | `10143500` (last 8 of folder name) | folder-exact | |
 | `gamecube` | GameCube | `.iso`, `.rvz`, `.wbfs` | `475A4C45` (hex of ASCII gameId) | file-prefix | |
 | `xbox` | Xbox | `.xiso`, `.xiso.iso`, `.iso` (needs hint), extracted game folder or `.xbe` | `TT-027` (XBE certificate title id) | folder-exact | experimental |
@@ -449,7 +449,9 @@ carries a 4-character ASCII gameId (`RZTE`, `GZLE`). The save form
 is the hex encoding of those bytes (`52535445`, `475A4C45`) — that's
 what Dolphin's NAND structure uses. `raw_serial` preserves the ASCII
 form for human-readable logging; use `title_id` for actual save
-lookup.
+lookup. The header starts at 0 in an `.iso` and at 0x58 in an `.rvz`,
+behind the RVZ container header; a console magic backs it (Wii
+`5D1C9EA3` at +0x18, GameCube `C2339F3D` at +0x1C).
 
 **Wii `.wbfs` — the disc header moves, it does not disappear.** A WBFS
 file wraps a real disc header behind its own container header; the
@@ -459,6 +461,25 @@ console magic backs it (Wii `5D1C9EA3` at +0x18, GameCube `C2339F3D`
 at +0x1C). That check is not decoration: `WBFS` is four uppercase ASCII
 bytes, so without it the container magic itself passes as a game id and
 every wbfs dump collapses to the same bogus `57424653`.
+
+**Wii `.wad` — WiiWare and Virtual Console channels.** A WAD is the
+NAND install package: a 0x20-byte header, then the certificate chain,
+ticket, TMD, data and footer, each 64-byte aligned in that order. The
+header holds a size of 0x20 at offset 0, the type at 4 (`Is` 0x4973
+installable, `ib` 0x6962 boot2, `Bk` 0x426B backup), the certificate
+chain size at 8, the ticket size at 0x10 and the TMD size at 0x14. The
+8-byte title id sits at ticket offset 0x1DC, and at TMD offset 0x18C
+for a ticketless package; sigil reads the ticket first and falls back
+to the TMD. The upper four bytes are the category (`00010001` WiiWare
+and Virtual Console, `00010004` channels that ship with a disc game),
+the lower four are the ASCII game code, and a package whose lower half
+is not `[A-Z0-9]` (IOS, system titles) has no save and returns
+`SIGIL_ERR_NOT_FOUND`. `title_id` is the full 16 hex, `raw_serial` the
+ASCII code, and `save_id` is `<category>/<code>` in lowercase with
+`usage` folder-split, because Dolphin keeps the save at
+`Wii/title/<category>/<code>/data` and the category is not fixed. Disc
+saves keep their `Wii/title/00010000/<code>` form, so a consumer's Wii
+root is `Wii/title/00010000` for discs and `Wii/title` for WADs.
 
 **Wii U — last 8 of 16-hex.** WUA archives carry a top-level folder
 named `00050000<8 hex>_v0`. The full 16 hex is the formal title ID;

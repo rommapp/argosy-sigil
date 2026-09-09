@@ -143,6 +143,7 @@ static sigil_platform sniff_from_extension(const char *filename) {
     if (strcmp(ext, "z3dsx") == 0) return SIGIL_PLATFORM_3DS;
     if (strcmp(ext, "rvz") == 0)   return SIGIL_PLATFORM_WII;
     if (strcmp(ext, "wbfs") == 0)  return SIGIL_PLATFORM_WII;
+    if (strcmp(ext, "wad") == 0)   return SIGIL_PLATFORM_WII;
     if (strcmp(ext, "cso") == 0)   return SIGIL_PLATFORM_PSP;
     if (strcmp(ext, "ciso") == 0)  return SIGIL_PLATFORM_PSP;
     if (strcmp(ext, "sfo") == 0)   return SIGIL_PLATFORM_PS3;
