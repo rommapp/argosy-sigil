@@ -16,15 +16,39 @@ static bool starts_with(const uint8_t *p, size_t n, const char *prefix) {
     return memcmp(p, prefix, plen) == 0;
 }
 
-static bool match_serial_at(const uint8_t *p, size_t avail) {
-    if (avail < 11) return false;
-    if (!sigil_is_upper(p[0]) || !sigil_is_upper(p[1])
-        || !sigil_is_upper(p[2]) || !sigil_is_upper(p[3])) return false;
-    if (p[4] != '_' && p[4] != '.') return false;
-    if (!sigil_is_dig(p[5]) || !sigil_is_dig(p[6]) || !sigil_is_dig(p[7])) return false;
-    if (p[8] != '.') return false;
-    if (!sigil_is_dig(p[9]) || !sigil_is_dig(p[10])) return false;
-    return true;
+static bool is_letter(uint8_t c) {
+    return sigil_is_upper(sigil_to_upper((char)c));
+}
+
+#define SERIAL_DIGITS 5
+
+/* Matches LLLL, one separator, then five digits with at most one dot among
+ * them, and returns the matched length (0 for no match). SLUS_005.94 is the
+ * usual shape, but retail boot lines also read slus_005.94 (Metal Gear Solid),
+ * SLUS_00.220 (Battle Arena Toshinden 2), SCUS-941.02 (Kileak) and
+ * SLUSP012.06 (Dragon Warrior VII). */
+static size_t match_serial_at(const uint8_t *p, size_t avail, char digits[SERIAL_DIGITS]) {
+    if (avail < 4 + 1 + SERIAL_DIGITS) return 0;
+    if (!is_letter(p[0]) || !is_letter(p[1])
+        || !is_letter(p[2]) || !is_letter(p[3])) return 0;
+    if (p[4] != '_' && p[4] != '.' && p[4] != '-' && !is_letter(p[4])) return 0;
+
+    size_t i = 5;
+    size_t n = 0;
+    bool dot = false;
+    while (i < avail && n < SERIAL_DIGITS) {
+        if (sigil_is_dig((char)p[i])) {
+            digits[n++] = (char)p[i];
+        } else if (p[i] == '.' && !dot && n > 0) {
+            dot = true;
+        } else {
+            return 0;
+        }
+        i++;
+    }
+    if (n < SERIAL_DIGITS) return 0;
+    if (i < avail && sigil_is_dig((char)p[i])) return 0;
+    return i;
 }
 
 int sigil_cnf_parse_boot(const uint8_t *cnf, size_t len,
@@ -56,27 +80,27 @@ int sigil_cnf_parse_boot(const uint8_t *cnf, size_t len,
         size_t line_end = pos;
         while (line_end < len && cnf[line_end] != '\n' && cnf[line_end] != '\r') line_end++;
 
-        /* Scan the bounded line for the LLLL[_.]NNN.NN pattern; this handles
+        /* Scan the bounded line rather than its start; this handles
          * subdirectory paths like cdrom:\MARL\SLUS_010.73;1 (Rhapsody). */
-        size_t serial_pos = (size_t)-1;
-        for (size_t i = pos; i + 11 <= line_end; i++) {
-            if (match_serial_at(cnf + i, line_end - i)) {
+        char digits[SERIAL_DIGITS];
+        size_t serial_pos = 0;
+        size_t serial_len = 0;
+        for (size_t i = pos; i < line_end; i++) {
+            if (i > pos && (is_letter(cnf[i - 1]) || sigil_is_dig((char)cnf[i - 1]))) continue;
+            serial_len = match_serial_at(cnf + i, line_end - i, digits);
+            if (serial_len) {
                 serial_pos = i;
                 break;
             }
         }
-        if (serial_pos == (size_t)-1) continue;
+        if (!serial_len) continue;
 
-        memcpy(raw, cnf + serial_pos, 11);
-        raw[11] = '\0';
-        memcpy(canonical, cnf + serial_pos, 4);
+        memcpy(raw, cnf + serial_pos, serial_len);
+        raw[serial_len] = '\0';
+        for (size_t i = 0; i < 4; i++) canonical[i] = sigil_to_upper((char)cnf[serial_pos + i]);
         canonical[4] = '-';
-        canonical[5] = cnf[serial_pos + 5];
-        canonical[6] = cnf[serial_pos + 6];
-        canonical[7] = cnf[serial_pos + 7];
-        canonical[8] = cnf[serial_pos + 9];
-        canonical[9] = cnf[serial_pos + 10];
-        canonical[10] = '\0';
+        memcpy(canonical + 5, digits, SERIAL_DIGITS);
+        canonical[5 + SERIAL_DIGITS] = '\0';
         return SIGIL_OK;
     }
     return SIGIL_ERR_NOT_FOUND;
