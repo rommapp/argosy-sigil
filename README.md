@@ -382,10 +382,13 @@ platform=psvita title_id=PCSE00695 raw_serial=PCSE00695 save_id=PCSE00695 usage=
 Pass `--platform=auto` (the default) to sniff from the file extension.
 Extensions that name a container rather than a console (`.zip`, a bare
 `.iso`) still need a hint unless the contents identify the platform on
-their own, which is why the Vita example above does not take one. Check
-`source` on the result: `binary` means the id came from file content,
-`filename` means every binary path failed and a naming pattern was
-scanned instead.
+their own, which is why the Vita example above does not take one. An
+extension two consoles share is settled the same way. `.rvz` and
+`.wbfs` hold either a Wii or a GameCube disc, and the header magic
+decides which, so a `--platform` that disagrees with the disc loses.
+Check `source` on the result: `binary` means the id came from file
+content, `filename` means every binary path failed and a naming
+pattern was scanned instead.
 
 ## Switch keys
 
@@ -457,7 +460,10 @@ GameCube `.gci` file name carries the ASCII characters, so `save_id`
 follows the platform and only Wii's tracks `title_id`. The header
 starts at 0 in an `.iso` and at 0x58 in an `.rvz`,
 behind the RVZ container header; a console magic backs it (Wii
-`5D1C9EA3` at +0x18, GameCube `C2339F3D` at +0x1C).
+`5D1C9EA3` at +0x18, GameCube `C2339F3D` at +0x1C). That magic is also
+what names the console, since `.iso`, `.rvz` and `.wbfs` carry either
+one. The reader takes the disc's word over the requested platform, and
+the request stands only when neither magic is present.
 
 **Wii `.wbfs` — the disc header moves, it does not disappear.** A WBFS
 file wraps a real disc header behind its own container header; the

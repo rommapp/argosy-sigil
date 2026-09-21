@@ -30,15 +30,18 @@ static int read_be32(const sigil_io *io, uint64_t off, uint32_t *out) {
     return SIGIL_OK;
 }
 
-static bool disc_header_at(const sigil_io *io, uint64_t off) {
+/* The two consoles share every container and most extensions, so the header
+ * magic is the only thing that tells them apart. Returns AUTO when neither
+ * magic is present, leaving whatever platform the caller asked for standing. */
+static sigil_platform disc_platform_at(const sigil_io *io, uint64_t off) {
     uint32_t magic;
     if (read_be32(io, off + WII_MAGIC_OFF, &magic) == SIGIL_OK && magic == WII_MAGIC) {
-        return true;
+        return SIGIL_PLATFORM_WII;
     }
     if (read_be32(io, off + GC_MAGIC_OFF, &magic) == SIGIL_OK && magic == GC_MAGIC) {
-        return true;
+        return SIGIL_PLATFORM_GAMECUBE;
     }
-    return false;
+    return SIGIL_PLATFORM_AUTO;
 }
 
 static bool ascii_game_id(const uint8_t *bytes) {
@@ -142,32 +145,35 @@ static int extract_wii_or_gc(const sigil_io *io, sigil_platform platform,
     if (platform == SIGIL_PLATFORM_WII && wad_header_at_zero(io)) return extract_wad(io, out);
 
     sigil_result_init(out);
-    out->platform = platform;
-    out->usage = (platform == SIGIL_PLATFORM_WII)
-        ? SIGIL_USAGE_FOLDER_EXACT
-        : SIGIL_USAGE_FILE_PREFIX;
 
     uint8_t magic[4];
     int rc = sigil_io_read_exact(io, 0, magic, sizeof(magic));
     if (rc != SIGIL_OK) return rc;
 
     uint64_t id_off;
-    if (memcmp(magic, "WBFS", 4) == 0) {
+    bool from_wbfs = memcmp(magic, "WBFS", 4) == 0;
+    if (from_wbfs) {
         rc = wbfs_disc_header_off(io, &id_off);
         if (rc != SIGIL_OK) return rc;
-        if (!disc_header_at(io, id_off)) return SIGIL_ERR_NOT_FOUND;
     } else if (memcmp(magic, "RVZ", 3) == 0) {
         id_off = 0x58;
     } else {
         id_off = 0x00;
     }
 
+    sigil_platform disc = disc_platform_at(io, id_off);
+    if (from_wbfs && disc == SIGIL_PLATFORM_AUTO) return SIGIL_ERR_NOT_FOUND;
+    if (disc != SIGIL_PLATFORM_AUTO) platform = disc;
+
     rc = extract_gameid(io, id_off, out->raw_serial, out->title_id);
     if (rc != SIGIL_OK) return rc;
 
+    out->platform = platform;
     if (platform == SIGIL_PLATFORM_WII) {
+        out->usage = SIGIL_USAGE_FOLDER_EXACT;
         wii_save_id(out->title_id, out->save_id);
     } else {
+        out->usage = SIGIL_USAGE_FILE_PREFIX;
         gamecube_save_id(out->raw_serial, out->save_id);
     }
 

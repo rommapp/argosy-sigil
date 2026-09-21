@@ -5,6 +5,12 @@
 
 #define HD_SEC_SZ 512
 
+#define WII_MAGIC      0x5D1C9EA3u
+#define GC_MAGIC       0xC2339F3Du
+#define WII_MAGIC_OFF  0x18
+#define GC_MAGIC_OFF   0x1C
+#define RVZ_HEADER_OFF 0x58
+
 static void write_be32(uint8_t *p, uint32_t v) {
     p[0] = (uint8_t)(v >> 24);
     p[1] = (uint8_t)(v >> 16);
@@ -56,6 +62,34 @@ static int expect(const uint8_t *buf, size_t len, const char *filename,
     return 0;
 }
 
+static int expect_detect(const uint8_t *buf, size_t len, const char *filename,
+                         sigil_platform hint, sigil_platform want_platform,
+                         const char *want_save, sigil_usage want_usage,
+                         const char *label) {
+    mem_ctx ctx = { buf, len };
+    sigil_io io = { mem_read, mem_size, NULL, &ctx };
+    sigil_result r;
+    int rc = sigil_extract_from_io(&io, filename, hint, NULL, &r);
+    if (rc != SIGIL_OK) {
+        fprintf(stderr, "FAIL %s: rc=%d\n", label, rc);
+        return 1;
+    }
+    if (r.platform != want_platform) {
+        fprintf(stderr, "FAIL %s: platform=%d (want %d)\n",
+                label, (int)r.platform, (int)want_platform);
+        return 1;
+    }
+    if (strcmp(r.save_id, want_save) != 0) {
+        fprintf(stderr, "FAIL %s: save_id='%s' (want '%s')\n", label, r.save_id, want_save);
+        return 1;
+    }
+    if (r.usage != want_usage) {
+        fprintf(stderr, "FAIL %s: usage=%d (want %d)\n", label, (int)r.usage, (int)want_usage);
+        return 1;
+    }
+    return 0;
+}
+
 /* Dolphin writes GameCube memory cards as `<maker>-<gameId>-<internal>.gci`
  * under `<region>/Card A/`, where gameId is the four ASCII characters of the
  * disc header. A consumer locating one matches on those characters, so save_id
@@ -94,6 +128,48 @@ int main(void) {
     memset(buf, 0, sizeof(buf));
     if (expect(buf, sizeof(buf), "Animal Crossing [GAFE].iso", "47414645", "GAFE", "GAFE",
                SIGIL_SOURCE_FILENAME, "filename fallback")) {
+        return 1;
+    }
+
+    /* Both consoles ship as `.rvz` and `.wbfs`, so the extension sends either
+     * one here as a Wii disc. Only the header magic separates them, and a
+     * GameCube disc read as a Wii one would report the hex save_id Dolphin's
+     * NAND uses instead of the ASCII id its `.gci` names carry. */
+    memset(buf, 0, sizeof(buf));
+    memcpy(buf, "RVZ\x01", 4);
+    memcpy(buf + RVZ_HEADER_OFF, "GAFE", 4);
+    write_be32(buf + RVZ_HEADER_OFF + GC_MAGIC_OFF, GC_MAGIC);
+    if (expect_detect(buf, sizeof(buf), "game.rvz", SIGIL_PLATFORM_AUTO,
+                      SIGIL_PLATFORM_GAMECUBE, "GAFE", SIGIL_USAGE_FILE_PREFIX,
+                      "unhinted rvz carrying the gamecube magic")) {
+        return 1;
+    }
+    if (expect_detect(buf, sizeof(buf), "game.rvz", SIGIL_PLATFORM_WII,
+                      SIGIL_PLATFORM_GAMECUBE, "GAFE", SIGIL_USAGE_FILE_PREFIX,
+                      "gamecube magic outranks a wii hint")) {
+        return 1;
+    }
+
+    memset(buf, 0, sizeof(buf));
+    memcpy(buf, "RVZ\x01", 4);
+    memcpy(buf + RVZ_HEADER_OFF, "RZDE", 4);
+    write_be32(buf + RVZ_HEADER_OFF + WII_MAGIC_OFF, WII_MAGIC);
+    if (expect_detect(buf, sizeof(buf), "game.rvz", SIGIL_PLATFORM_AUTO,
+                      SIGIL_PLATFORM_WII, "525a4445", SIGIL_USAGE_FOLDER_EXACT,
+                      "unhinted rvz carrying the wii magic")) {
+        return 1;
+    }
+    if (expect_detect(buf, sizeof(buf), "game.rvz", SIGIL_PLATFORM_GAMECUBE,
+                      SIGIL_PLATFORM_WII, "525a4445", SIGIL_USAGE_FOLDER_EXACT,
+                      "wii magic outranks a gamecube hint")) {
+        return 1;
+    }
+
+    memset(buf, 0, sizeof(buf));
+    memcpy(buf, "GZLE", 4);
+    if (expect_detect(buf, sizeof(buf), "game.iso", SIGIL_PLATFORM_WII,
+                      SIGIL_PLATFORM_WII, "475a4c45", SIGIL_USAGE_FOLDER_EXACT,
+                      "unbacked id keeps the hint")) {
         return 1;
     }
 
