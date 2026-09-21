@@ -73,6 +73,14 @@ static void wii_save_id(const char title_id[32], char out_save_id[32]) {
     sigil_lower_copy(title_id, out_save_id, 32);
 }
 
+/* A `.gci` file name carries the ASCII gameId, not the hex the Wii NAND
+ * directory uses, so the two consoles take different halves of the same id. */
+static void gamecube_save_id(const char raw_serial[32], char out_save_id[32]) {
+    size_t len = strlen(raw_serial);
+    if (len >= 32) return;
+    memcpy(out_save_id, raw_serial, len + 1);
+}
+
 static uint64_t wad_align(uint64_t v) {
     return (v + 63) & ~(uint64_t)63;
 }
@@ -157,7 +165,11 @@ static int extract_wii_or_gc(const sigil_io *io, sigil_platform platform,
     rc = extract_gameid(io, id_off, out->raw_serial, out->title_id);
     if (rc != SIGIL_OK) return rc;
 
-    if (platform == SIGIL_PLATFORM_WII) wii_save_id(out->title_id, out->save_id);
+    if (platform == SIGIL_PLATFORM_WII) {
+        wii_save_id(out->title_id, out->save_id);
+    } else {
+        gamecube_save_id(out->raw_serial, out->save_id);
+    }
 
     out->source = SIGIL_SOURCE_BINARY;
     return SIGIL_OK;

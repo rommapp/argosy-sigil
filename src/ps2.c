@@ -17,7 +17,7 @@ static const char *ps2_region_prefix(const char title_id[32]) {
     }
 }
 
-static void ps2_save_id_stem(const char title_id[32], char out_save_id[32]) {
+void sigil_ps2_save_id_stem(const char title_id[32], char out_save_id[32]) {
     size_t len = strlen(title_id);
     if (len + PS2_SAVE_PREFIX_LEN >= 32) {
         out_save_id[0] = '\0';
@@ -54,6 +54,6 @@ int sigil_extract_ps2(const sigil_io *io, const char *filename_hint,
     if (rc != SIGIL_OK) return rc;
 
     out->source = SIGIL_SOURCE_BINARY;
-    ps2_save_id_stem(out->title_id, out->save_id);
+    sigil_ps2_save_id_stem(out->title_id, out->save_id);
     return SIGIL_OK;
 }

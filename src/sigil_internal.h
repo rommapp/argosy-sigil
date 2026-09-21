@@ -145,6 +145,10 @@ int sigil_extract_ps2(const sigil_io *io, const char *filename_hint,
                       const sigil_options *opts, sigil_result *out);
 int sigil_extract_ps3(const sigil_io *io, const char *filename_hint,
                       const sigil_options *opts, sigil_result *out);
+/* The memory-card folder stem a PS2 serial produces, region prefix included.
+ * Shared with the filename fallback so a serial read off the name lands on the
+ * same on-disk stem as one read off SYSTEM.CNF. */
+void sigil_ps2_save_id_stem(const char title_id[32], char out_save_id[32]);
 int sigil_extract_xbox360(const sigil_io *io, const char *filename_hint,
                           const sigil_options *opts, sigil_result *out);
 int sigil_extract_wii(const sigil_io *io, const char *filename_hint,

@@ -228,6 +228,8 @@ static int try_gameid_bracket(const char *stem, size_t len,
         sigil_hex_encode_4((const uint8_t *)(stem + i + 1), out->title_id);
         if (platform == SIGIL_PLATFORM_WII) {
             sigil_lower_copy(out->title_id, out->save_id, sizeof(out->save_id));
+        } else {
+            memcpy(out->save_id, out->raw_serial, strlen(out->raw_serial) + 1);
         }
         return SIGIL_OK;
     }
@@ -263,8 +265,9 @@ int sigil_filename_fallback(const char *filename_hint,
         rc = try_dashed_serial(stem, len, out);
         break;
     case SIGIL_PLATFORM_PS2:
-        out->usage = SIGIL_USAGE_FOLDER_EXACT;
+        out->usage = SIGIL_USAGE_FOLDER_PREFIX;
         rc = try_dashed_serial(stem, len, out);
+        if (rc == SIGIL_OK) sigil_ps2_save_id_stem(out->title_id, out->save_id);
         break;
     case SIGIL_PLATFORM_SWITCH:
         out->usage = SIGIL_USAGE_FOLDER_EXACT;
@@ -299,8 +302,11 @@ int sigil_filename_fallback(const char *filename_hint,
         if ((rc = try_wiiu(stem, len, out)) == SIGIL_OK) break;
 
         out->platform = SIGIL_PLATFORM_PS2;
-        out->usage = SIGIL_USAGE_FOLDER_EXACT;
-        if ((rc = try_dashed_serial(stem, len, out)) == SIGIL_OK) break;
+        out->usage = SIGIL_USAGE_FOLDER_PREFIX;
+        if ((rc = try_dashed_serial(stem, len, out)) == SIGIL_OK) {
+            sigil_ps2_save_id_stem(out->title_id, out->save_id);
+            break;
+        }
 
         out->platform = SIGIL_PLATFORM_PSP;
         out->usage = SIGIL_USAGE_FOLDER_PREFIX;

@@ -47,9 +47,11 @@ identifier directly from the disc/cart binary and hands back:
   writes `Wii/title/00010000/525a4445` and Cemu writes
   `mlc01/usr/save/00050000/1010ec00`, both with `{:08x}`, so `save_id` is
   the lowercase form of `title_id` on those two platforms
-  (`title_id=525A4445`, `save_id=525a4445`). GameCube keeps the uppercase
-  form because its artifacts are `.gci` files matched by prefix, not a
-  NAND directory. The original Xbox diverges for the opposite reason:
+  (`title_id=525A4445`, `save_id=525a4445`). GameCube diverges further:
+  its artifacts are `.gci` files named `<maker>-<gameId>-<internal>.gci`,
+  carrying the four ASCII characters of the disc header rather than a hex
+  rendering of them, so `save_id` is that ASCII id
+  (`title_id=475A4C45`, `save_id=GZLE`). The original Xbox diverges for the opposite reason:
   there the id is a 32-bit number and the two fields are two renderings
   of it. `save_id` is the raw hex the console names its directory after
   (`E:\UDATA\4D530064`), while `title_id` is the serial everything else
@@ -429,9 +431,11 @@ that starts with that prefix.
 
 **GameCube — file prefix.** Saves are `.gci` files with the
 convention `<makerCode>-<gameId>-<internalName>.gci`. Sigil emits the
-hex-encoded ASCII gameId (`475A4C45` for `GZLE`); consumers match
-files whose basename contains `-<gameId>-`. argosy's `GciSaveHandler`
-is a reference implementation.
+ASCII gameId (`GZLE`); consumers match files whose basename contains
+`-<gameId>-`, or read the same four bytes off the GCI header. argosy's
+`GciSaveHandler` is a reference implementation. `title_id` is the hex
+rendering of those bytes and names nothing on disk here, so a consumer
+that fell back to it found no save.
 
 **PS2 — region prefix + folder-prefix enumeration.** `title_id` is the
 ROM serial (`SLUS-20152`). `save_id` is the region-prefixed stem
@@ -445,11 +449,13 @@ whose name starts with `save_id`. The suffix is not derivable from the
 disc, and it does not need to be: prefix matching captures it.
 
 **Wii / GameCube — title ID is hex of ASCII.** The disc header
-carries a 4-character ASCII gameId (`RZTE`, `GZLE`). The save form
-is the hex encoding of those bytes (`52535445`, `475A4C45`) — that's
-what Dolphin's NAND structure uses. `raw_serial` preserves the ASCII
-form for human-readable logging; use `title_id` for actual save
-lookup. The header starts at 0 in an `.iso` and at 0x58 in an `.rvz`,
+carries a 4-character ASCII gameId (`RZTE`, `GZLE`). `title_id` is the
+hex encoding of those bytes (`52535445`, `475A4C45`) on both consoles,
+and `raw_serial` preserves the ASCII form. Where they land on disk
+differs: Dolphin's Wii NAND directory is the hex, lowercased, while a
+GameCube `.gci` file name carries the ASCII characters, so `save_id`
+follows the platform and only Wii's tracks `title_id`. The header
+starts at 0 in an `.iso` and at 0x58 in an `.rvz`,
 behind the RVZ container header; a console magic backs it (Wii
 `5D1C9EA3` at +0x18, GameCube `C2339F3D` at +0x1C).
 

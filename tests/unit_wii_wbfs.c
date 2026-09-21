@@ -112,8 +112,8 @@ int main(void) {
         return 1;
     }
 
-    /* GameCube shares the extractor but not the NAND layout: its artifacts are
-     * .gci files matched by prefix, so it keeps the uppercase default. */
+    /* GameCube shares the extractor but not the NAND layout, so it keeps the
+     * hex title id and takes its own save id. unit_gamecube covers that field. */
     memset(buf, 0, sizeof(buf));
     memcpy(buf, "GZLE", 4);
     write_be32(buf + 0x1C, 0xC2339F3Du);
@@ -126,9 +126,8 @@ int main(void) {
             fprintf(stderr, "FAIL gamecube: rc=%d\n", rc);
             return 1;
         }
-        if (strcmp(r.title_id, "475A4C45") != 0 || strcmp(r.save_id, "475A4C45") != 0) {
-            fprintf(stderr, "FAIL gamecube: title_id='%s' save_id='%s'\n",
-                    r.title_id, r.save_id);
+        if (strcmp(r.title_id, "475A4C45") != 0) {
+            fprintf(stderr, "FAIL gamecube: title_id='%s'\n", r.title_id);
             return 1;
         }
     }
