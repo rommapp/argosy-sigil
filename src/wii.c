@@ -31,8 +31,8 @@ static int read_be32(const sigil_io *io, uint64_t off, uint32_t *out) {
 }
 
 /* The two consoles share every container and most extensions, so the header
- * magic is the only thing that tells them apart. Returns AUTO when neither
- * magic is present, leaving whatever platform the caller asked for standing. */
+ * magic is the only thing in the file that tells them apart. Returns AUTO when
+ * neither magic is present. */
 static sigil_platform disc_platform_at(const sigil_io *io, uint64_t off) {
     uint32_t magic;
     if (read_be32(io, off + WII_MAGIC_OFF, &magic) == SIGIL_OK && magic == WII_MAGIC) {
@@ -140,9 +140,12 @@ static int extract_wad(const sigil_io *io, sigil_result *out) {
     return SIGIL_OK;
 }
 
-static int extract_wii_or_gc(const sigil_io *io, sigil_platform platform,
-                              sigil_result *out) {
-    if (platform == SIGIL_PLATFORM_WII && wad_header_at_zero(io)) return extract_wad(io, out);
+int sigil_extract_nintendo_disc(const sigil_io *io, sigil_platform platform,
+                                const sigil_options *opts, sigil_result *out) {
+    (void)opts;
+    /* A WAD names its console by being one, so the check does not wait to be
+     * asked for Wii. */
+    if (wad_header_at_zero(io)) return extract_wad(io, out);
 
     sigil_result_init(out);
 
@@ -163,7 +166,10 @@ static int extract_wii_or_gc(const sigil_io *io, sigil_platform platform,
 
     sigil_platform disc = disc_platform_at(io, id_off);
     if (from_wbfs && disc == SIGIL_PLATFORM_AUTO) return SIGIL_ERR_NOT_FOUND;
-    if (disc != SIGIL_PLATFORM_AUTO) platform = disc;
+    if (platform == SIGIL_PLATFORM_AUTO) {
+        if (disc == SIGIL_PLATFORM_AUTO) return SIGIL_ERR_NOT_FOUND;
+        platform = disc;
+    }
 
     rc = extract_gameid(io, id_off, out->raw_serial, out->title_id);
     if (rc != SIGIL_OK) return rc;
@@ -179,18 +185,4 @@ static int extract_wii_or_gc(const sigil_io *io, sigil_platform platform,
 
     out->source = SIGIL_SOURCE_BINARY;
     return SIGIL_OK;
-}
-
-int sigil_extract_wii(const sigil_io *io, const char *filename_hint,
-                      const sigil_options *opts, sigil_result *out) {
-    (void)filename_hint;
-    (void)opts;
-    return extract_wii_or_gc(io, SIGIL_PLATFORM_WII, out);
-}
-
-int sigil_extract_gamecube(const sigil_io *io, const char *filename_hint,
-                           const sigil_options *opts, sigil_result *out) {
-    (void)filename_hint;
-    (void)opts;
-    return extract_wii_or_gc(io, SIGIL_PLATFORM_GAMECUBE, out);
 }

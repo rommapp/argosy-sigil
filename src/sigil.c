@@ -141,9 +141,9 @@ static sigil_platform sniff_from_extension(const char *filename) {
     if (strcmp(ext, "app") == 0)   return SIGIL_PLATFORM_3DS;
     if (strcmp(ext, "3dsx") == 0)  return SIGIL_PLATFORM_3DS;
     if (strcmp(ext, "z3dsx") == 0) return SIGIL_PLATFORM_3DS;
-    /* GameCube dumps use these same extensions. The reader is shared, and it
-     * settles the console from the disc header magic, so what this returns for
-     * `.rvz`/`.wbfs` only decides the fallback when no magic backs the id. */
+    /* GameCube dumps use these same extensions, so for `.rvz`/`.wbfs` this
+     * picks the shared reader rather than the console. Which console it is
+     * comes from the disc header magic, or from the caller when it named one. */
     if (strcmp(ext, "rvz") == 0)   return SIGIL_PLATFORM_WII;
     if (strcmp(ext, "wbfs") == 0)  return SIGIL_PLATFORM_WII;
     if (strcmp(ext, "wad") == 0)   return SIGIL_PLATFORM_WII;
@@ -290,15 +290,19 @@ static const char *directory_target_for_platform(sigil_platform p) {
     }
 }
 
+/* `named` is false when p came from the file extension rather than from the
+ * caller. Only the Nintendo disc reader can tell the difference from the
+ * content, and it is the only one that gets to. */
 static int dispatch(const sigil_io *io, const char *filename_hint,
-                    sigil_platform p, const sigil_options *opts,
+                    sigil_platform p, bool named, const sigil_options *opts,
                     sigil_result *out) {
     switch (p) {
     case SIGIL_PLATFORM_PSP:      return sigil_extract_psp(io, filename_hint, opts, out);
     case SIGIL_PLATFORM_PSX:      return sigil_extract_psx(io, filename_hint, opts, out);
     case SIGIL_PLATFORM_PS2:      return sigil_extract_ps2(io, filename_hint, opts, out);
-    case SIGIL_PLATFORM_WII:      return sigil_extract_wii(io, filename_hint, opts, out);
-    case SIGIL_PLATFORM_GAMECUBE: return sigil_extract_gamecube(io, filename_hint, opts, out);
+    case SIGIL_PLATFORM_WII:
+    case SIGIL_PLATFORM_GAMECUBE:
+        return sigil_extract_nintendo_disc(io, named ? p : SIGIL_PLATFORM_AUTO, opts, out);
     case SIGIL_PLATFORM_3DS:      return sigil_extract_3ds(io, filename_hint, opts, out);
     case SIGIL_PLATFORM_SWITCH:   return sigil_extract_switch(io, filename_hint, opts, out);
     case SIGIL_PLATFORM_WIIU:     return sigil_extract_wiiu(io, filename_hint, opts, out);
@@ -325,12 +329,13 @@ int sigil_extract_from_io(const sigil_io *io,
                           sigil_result *out) {
     if (!io || !io->read || !out) return SIGIL_ERR_INVALID_ARG;
 
-    if (hint == SIGIL_PLATFORM_AUTO) {
+    bool named = (hint != SIGIL_PLATFORM_AUTO);
+    if (!named) {
         hint = sniff_from_extension(filename_hint);
     }
     if (hint == SIGIL_PLATFORM_AUTO) return SIGIL_ERR_UNKNOWN_PLATFORM;
 
-    int rc = dispatch(io, filename_hint, hint, opts, out);
+    int rc = dispatch(io, filename_hint, hint, named, opts, out);
 
     /* Filename fallback runs on any non-OK result when the flag is set
      * (default for opts == NULL). */
@@ -393,7 +398,9 @@ int sigil_extract_from_path(const char *path, sigil_platform hint,
             sigil_platform inner_p = (hint != SIGIL_PLATFORM_AUTO)
                                    ? hint : sniff_from_extension(inner);
             if (inner_p != SIGIL_PLATFORM_AUTO) {
-                int arc = sigil_extract_from_io(aio, inner, inner_p, opts, out);
+                /* `hint`, not `inner_p`: a platform read off the member's
+                 * extension is still nobody's request. */
+                int arc = sigil_extract_from_io(aio, inner, hint, opts, out);
                 sigil_io_close(aio);
                 if (arc == SIGIL_OK) return arc;
             } else {
@@ -462,7 +469,9 @@ int sigil_extract_from_path(const char *path, sigil_platform hint,
     sigil_io *io = open_io_for_platform(effective_path, resolved);
     if (!io) return SIGIL_ERR_IO;
 
-    int rc = sigil_extract_from_io(io, path_basename(effective_path), resolved, opts, out);
+    /* `resolved` picked the reader and the io layer; the platform handed on is
+     * the caller's, so an extension-derived one does not pass as a request. */
+    int rc = sigil_extract_from_io(io, path_basename(effective_path), hint, opts, out);
     sigil_io_close(io);
     return rc;
 }

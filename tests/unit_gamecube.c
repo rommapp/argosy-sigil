@@ -134,7 +134,9 @@ int main(void) {
     /* Both consoles ship as `.rvz` and `.wbfs`, so the extension sends either
      * one here as a Wii disc. Only the header magic separates them, and a
      * GameCube disc read as a Wii one would report the hex save_id Dolphin's
-     * NAND uses instead of the ASCII id its `.gci` names carry. */
+     * NAND uses instead of the ASCII id its `.gci` names carry. A platform the
+     * caller names is a different matter: it stands, magic or no magic, so a
+     * consumer that has already classified the file keeps its answer. */
     memset(buf, 0, sizeof(buf));
     memcpy(buf, "RVZ\x01", 4);
     memcpy(buf + RVZ_HEADER_OFF, "GAFE", 4);
@@ -145,8 +147,8 @@ int main(void) {
         return 1;
     }
     if (expect_detect(buf, sizeof(buf), "game.rvz", SIGIL_PLATFORM_WII,
-                      SIGIL_PLATFORM_GAMECUBE, "GAFE", SIGIL_USAGE_FILE_PREFIX,
-                      "gamecube magic outranks a wii hint")) {
+                      SIGIL_PLATFORM_WII, "47414645", SIGIL_USAGE_FOLDER_EXACT,
+                      "a named wii platform outranks the gamecube magic")) {
         return 1;
     }
 
@@ -160,8 +162,8 @@ int main(void) {
         return 1;
     }
     if (expect_detect(buf, sizeof(buf), "game.rvz", SIGIL_PLATFORM_GAMECUBE,
-                      SIGIL_PLATFORM_WII, "525a4445", SIGIL_USAGE_FOLDER_EXACT,
-                      "wii magic outranks a gamecube hint")) {
+                      SIGIL_PLATFORM_GAMECUBE, "RZDE", SIGIL_USAGE_FILE_PREFIX,
+                      "a named gamecube platform outranks the wii magic")) {
         return 1;
     }
 
@@ -169,8 +171,23 @@ int main(void) {
     memcpy(buf, "GZLE", 4);
     if (expect_detect(buf, sizeof(buf), "game.iso", SIGIL_PLATFORM_WII,
                       SIGIL_PLATFORM_WII, "475a4c45", SIGIL_USAGE_FOLDER_EXACT,
-                      "unbacked id keeps the hint")) {
+                      "unbacked id keeps the named platform")) {
         return 1;
+    }
+
+    /* Nobody named a platform and the disc does not say, so there is nothing
+     * left to read it off. The extension picked the reader, not the console. */
+    memset(buf, 0, sizeof(buf));
+    memcpy(buf, "RVZ\x01", 4);
+    memcpy(buf + RVZ_HEADER_OFF, "GAFE", 4);
+    {
+        mem_ctx ctx = { buf, sizeof(buf) };
+        sigil_io io = { mem_read, mem_size, NULL, &ctx };
+        sigil_result r;
+        if (sigil_extract_from_io(&io, "game.rvz", SIGIL_PLATFORM_AUTO, NULL, &r) == SIGIL_OK) {
+            fprintf(stderr, "FAIL unbacked unnamed rvz: accepted platform=%d\n", (int)r.platform);
+            return 1;
+        }
     }
 
     printf("ok unit_gamecube\n");

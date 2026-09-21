@@ -151,10 +151,11 @@ int sigil_extract_ps3(const sigil_io *io, const char *filename_hint,
 void sigil_ps2_save_id_stem(const char title_id[32], char out_save_id[32]);
 int sigil_extract_xbox360(const sigil_io *io, const char *filename_hint,
                           const sigil_options *opts, sigil_result *out);
-int sigil_extract_wii(const sigil_io *io, const char *filename_hint,
-                      const sigil_options *opts, sigil_result *out);
-int sigil_extract_gamecube(const sigil_io *io, const char *filename_hint,
-                           const sigil_options *opts, sigil_result *out);
+/* Wii and GameCube share every container and all but one extension, so one
+ * reader serves both. `platform` is the console the caller named; AUTO means
+ * nobody named one and the disc header magic has to answer. */
+int sigil_extract_nintendo_disc(const sigil_io *io, sigil_platform platform,
+                                const sigil_options *opts, sigil_result *out);
 int sigil_extract_3ds(const sigil_io *io, const char *filename_hint,
                       const sigil_options *opts, sigil_result *out);
 int sigil_extract_switch(const sigil_io *io, const char *filename_hint,
