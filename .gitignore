@@ -28,6 +28,8 @@ tests/*.log
 
 # Local sample data
 /local-roms/
+/tests/fixtures/saves/*/files/*
+!/tests/fixtures/saves/*/files/.gitkeep
 .cxx/
 bindings/android/build/
 bindings/android/.cxx/

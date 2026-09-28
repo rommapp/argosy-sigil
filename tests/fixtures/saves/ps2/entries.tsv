@@ -1,0 +1,5 @@
+id	path	entry	owner_id	blocks	data_md5	verified_by
+mymc-mc01	mc01.ps2	BEDATA-SYSTEM	-	5	0e03562a18ac76b4b432effd6053fab6	mymcplus
+mymc-mc01	mc01.ps2	BESCES-50501REZ	SCES-50501	53	eb9aca545cafb1aed93011362d5ff0d7	mymcplus+psu-crosscheck
+rez-psu	BESCES-50501REZ.psu	BESCES-50501REZ	SCES-50501	53	eb9aca545cafb1aed93011362d5ff0d7	mymcplus+psu-crosscheck
+rez-max	BESCES-50501REZ.max	BESCES-50501REZ	SCES-50501	53	eb9aca545cafb1aed93011362d5ff0d7	mymcplus

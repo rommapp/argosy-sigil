@@ -1,0 +1,49 @@
+id	path	entry	owner_id	blocks	data_md5	verified_by
+hyper-duel-bkr	Hyper Duel (Japan).bkr	HYPERDUEL_0	-	5	a7500c0aa6221bbaa58b48834b96c0a1	spec-script; entry data md5 matches save-file-converter extract
+dezaemon2-bkr	Dezaemon 2 (Japan).bkr	DEZA2___SYS	-	1	cdb847a562ae41c54f22f572e02d3b50	spec-script; entry data md5 matches save-file-converter extract
+sf3-scn3-bkr	Shining Force III Scenario 3 (English v25.1).bkr	SFORCE33_01	-	421	640c0bd03819fc85d0eb3f5f5f1e6327	spec-script; entry data md5 matches save-file-converter extract
+sf3-scn3-bcr	Shining Force III Scenario 3 (English v25.1).bcr	SFORCE33_01	-	49	0e1d29c9f52d3996961133ca603ee79f	spec-script; entry data md5 matches save-file-converter extract
+sf3-scn3-bcr	Shining Force III Scenario 3 (English v25.1)-uncompressed.bcr	SFORCE33_01	-	49	0e1d29c9f52d3996961133ca603ee79f	spec-script; entry data md5 matches save-file-converter extract
+daytona-cce-bcr	Daytona USA - Championship Circuit Edition (USA).bcr	DAYTONA96_0	-	9	85379e001547ffd8d178d402cea484a5	spec-script; entry data md5 matches save-file-converter extract
+daytona-cce-bcr	Daytona USA - Championship Circuit Edition (USA).bcr	DAYTONA96_1	-	123	30e31202fb7d2dc38f3d9ce667705f43	spec-script; entry data md5 matches save-file-converter extract
+daytona-cce-bcr	Daytona USA - Championship Circuit Edition (USA)-uncompressed.bcr	DAYTONA96_0	-	9	85379e001547ffd8d178d402cea484a5	spec-script; entry data md5 matches save-file-converter extract
+daytona-cce-bcr	Daytona USA - Championship Circuit Edition (USA)-uncompressed.bcr	DAYTONA96_1	-	123	30e31202fb7d2dc38f3d9ce667705f43	spec-script; entry data md5 matches save-file-converter extract
+rayman-bkr-bcr	Rayman (USA) (R2)-internal.bkr	RAYMAN_NTS1	-	22	90dabef8b4b72c7fc60aafe7491666f9	spec-script
+rayman-bkr-bcr	Rayman (USA) (R2)-cart.bcr	RAYMAN_NTS1	-	3	0794e443a8e80919cbf90d2ddedee7c2	spec-script
+sega-rally-plus-stale-bkr	Sega Rally Championship Plus (Japan).bkr	RALLYPLUS_0	-	88	88d17cba6902bf198dcdc52f2bf6ba6b	spec-script
+draculax-yabause-srm	Akumajou Dracula X - Gekka no Yasoukyoku (Japan) (2M).srm	DRACULAX_01	-	77	f3a19c6312f615bf6914c39a122e973f	spec-script; entry data md5 matches save-file-converter extract
+yabasanshiro-backup	backup.bin	PANDRA_3_01	-	23	45f7a1605b0d730ffacfc515cada4f4e	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	PANDRA_3_02	-	23	c8022faf95b02e068c1ecb345393486a	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	PANDRA_3_03	-	23	14cb52c3b551fc08c3c3627419c06df1	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	B_RANGERS__	-	33	52d2f09d0c3a554181704ba8f52eac65	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	PANDRA_ZWEI	-	9	b1c92db3556f847c0f1db1932b551483	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	GUARDIAN_HE	-	21	3ee4f60e7a77c602e80e441cf4f23eb4	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	BUG_TOO_SAV	-	1	f1450306517624a57eafbbf8ed995985	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	NIGHTS___02	-	217	9ff53b1d400ecae443a09d9a59e02072	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	NIGHTS___01	-	33	51b6dfffa46d710f67f631d0fe06b7f8	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	VFIGHTER_01	-	19	c1f3b76d81f7dce100b692c6b52b4b84	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	SONICJAM_01	-	25	045164759bea5dc8005fdf5e27a7d053	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	NIGHTS_XMAS	-	61	6f7b5c711adf1982b7406bcc242884d8	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	VF_REMIX_01	-	19	dbfdfae673f425482a6083ad8e0eb733	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	TAROMARU_01	-	1	c46cd43d104602f5c69072df8d9dd855	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	PRINCESS_CR	-	59	007bd0a7c8644521ae7bc7af72db9b35	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	DARKSAVE_01	-	35	ff2c90ad54bcda6552fc32139b022a2c	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	COTTONBMDAT	-	29	1a54bc59183402656e6ad92db55fad28	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	KEIO2______	-	2	70bc8f4b72a86921468bf8e8441dce51	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	COTTON2_DAT	-	54	31f49db12c0c9d7bcb3a9bde70884eb3	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	SHIENRYU___	-	17	4a86c9d1ac003f18abc2274626c3cca4	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	RADIANT_S_G	-	33	b2154d45c78c318325ba0698e887fb2e	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	ATHLETEKING	-	22	4ac40595d08601097215b2891940f599	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	VRRECORD_00	-	42	804bd305d390bcb62c813d80a9aa6e4c	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	BOMBERSS_01	-	1	86e8d2495f84f0fbf84685f69b1fa37a	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+yabasanshiro-backup	backup.bin	RAYEARTH_00	-	75	c6af8c7708974531bd070bf594d68afc	spec-script; entry count 25 and 877 used blocks match save-file-converter test
+draculax-bup	DRACULAX.BUP	DRACULAX_02	-	77	af428e3fd013e3565c11c2051c75359a	spec-script; payload md5 matches save-file-converter extract
+sforce31-bup	SFORCE31.BUP	SFORCE31_01	-	52	58125109b08b29e49524870328fb4c19	spec-script; payload md5 matches save-file-converter extract
+pandra-zwei-bup	PANDRA_ZWEI.BUP	PANDRA_ZWEI	-	9	55bdae87be5efdb476dbba0c4c7d5cb9	spec-script
+pandra-zwei-bup	PANDRA_ZWEI_01.BUP	PANDRA_ZWEI	-	9	a252d360d4660a1d5fa2eaccb4ce3979	spec-script
+pandra-zwei-bup	PANDRA_ZWEI_02.BUP	PANDRA_ZWEI	-	9	30882a7c47d0887f3de6ad4f91091e7f	spec-script
+pandra-zwei-bup	PANDRA_ZWEI_03.BUP	PANDRA_ZWEI	-	9	7829afc62acaaa8f908775ec9802fc05	spec-script
+touge-king-bup	TGKRPLY_RP1.BUP	TGKRPLY_RP1	-	685	82566c9e393ae32dcfc650969c34658a	spec-script
+three-dirty-dwarves-bup	THREE_DIRTY.BUP	THREE_DIRTY	-	1	f2b66b1e27a9e68c9b4293ca7acb6d47	spec-script
+tokimeki-bup	TOKIMEKI_01.BUP	TOKIMEKI_01	-	0	bb8e9a0b32a6d15f4b9d4c6bcc320ca9	spec-script
+tokimeki-bup	TOKIMEKI_99.BUP	TOKIMEKI_99	-	2	574030430278ebb5f02f85a06d091379	spec-script

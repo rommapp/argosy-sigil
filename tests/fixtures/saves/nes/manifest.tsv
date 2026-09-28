@@ -1,0 +1,3 @@
+id	path	size	md5	emulator	emulator_version	game	content_id	kind	source	verified_by	notes
+zelda2-builtin	Zelda II - The Adventure of Link (USA) [2026-03-10_12-19-40].srm	8192	47dab96de37797c885c95d57521a5bf7	builtin	unknown	Zelda II - The Adventure of Link (USA)	unknown	sram	romm	rom-header,hex	Argosy built-in core, exact core unknown. MMC1 (mapper 1) battery PRG-RAM, 8 KiB raw, no header or footer. The newest upload for this game is unreadable in the store, so this is the newest readable one.
+rom2091-retroarch	argosy-latest.srm	8192	e904edf247a9a6440da629b0a29e44db	retroarch	unknown	unknown	unknown	sram	romm	hex	RetroArch, core unknown. RomM rom id 2091; the store names no game and the bytes do not identify one. 8 KiB raw battery RAM, mostly 0x00, no header or footer.

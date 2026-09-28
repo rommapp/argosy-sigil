@@ -1,0 +1,4 @@
+id	path	size	md5	emulator	emulator_version	game	content_id	kind	source	verified_by	notes
+isaac-rebirth-vita3k	PCSB00676/SlotParam_0.bin	844	1db1bd9f0f3d2c261347ca9b278351e8	vita3k-zx	unknown	The Binding of Isaac: Rebirth	PCSB00676	folder_file	romm	hex	RomM store psvita/6963/vita3k-zx, only readable upload. Save folder PCSB00676 with Vita3K SlotParam_0.bin, no sce_sys
+isaac-rebirth-vita3k	PCSB00676/localfilepaths.lst	12	dae1f611e1da45b7691457b374717a7f	vita3k-zx	unknown	The Binding of Isaac: Rebirth	PCSB00676	folder_file	romm	hex	RomM store psvita/6963/vita3k-zx, only readable upload. Save folder PCSB00676 with Vita3K SlotParam_0.bin, no sce_sys
+isaac-rebirth-vita3k	PCSB00676/options.ini	169	ae7e3d42ece4c2c547830800dc494c8c	vita3k-zx	unknown	The Binding of Isaac: Rebirth	PCSB00676	folder_file	romm	hex	RomM store psvita/6963/vita3k-zx, only readable upload. Save folder PCSB00676 with Vita3K SlotParam_0.bin, no sce_sys
