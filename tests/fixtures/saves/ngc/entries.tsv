@@ -1,0 +1,23 @@
+id	path	entry	owner_id	blocks	data_md5	verified_by
+fzero-gx-dolphin-gci-set	8P-GFZE-f_zero.dat.gci	f_zero.dat	GFZE8P	4	3dddc3acc2a93e23e111baf57d2a1de4	spec-script+hex
+fzero-gx-dolphin-gci-set	8P-GFZE-f_zero.dat0.gci	f_zero.dat	GFZE8P	4	3dddc3acc2a93e23e111baf57d2a1de4	spec-script+hex
+fzero-gx-dolphin-gci-set	8P-GFZE-fzc.dat.gci	fzc.dat	GFZE8P	18	89e0434acd0dc212b7ce45d0e1d9559a	spec-script+hex
+fzero-gx-dolphin-gci-set	8P-GFZE-fze020000200076747D46574372.dat.gci	fze020000200076747D46574372.dat	GFZE8P	3	8746db0a9ccab8f3ff17d6318b61732a	spec-script+hex
+fzero-gx-dolphin-gci-set	8P-GFZE-fze020000200076748122361635.dat.gci	fze020000200076748122361635.dat	GFZE8P	3	2adc703aa4856e22c8b9eddfe04702a1	spec-script+hex
+fzero-gx-dolphin-gci-set	8P-GFZE-fze020000200076749DE3A9786D.dat.gci	fze020000200076749DE3A9786D.dat	GFZE8P	3	eadf5f7b1e4fe9151091736844925fcf	spec-script+hex
+fzero-gx-builtin-srm	F-Zero GX (USA) [2026-04-30_20-05-26].srm	f_zero.dat	GFZE8P	4	3dddc3acc2a93e23e111baf57d2a1de4	spec-script+hex
+nfsu2-gci	need_for_speed_underground_2_usa.gci	NFSU2BUTCH	GUGE69	7	9fbb18e582c8cc6a93e78297dc5c07cd	spec-script+hex
+bleach-gc-jp-gci	bleach_gc_tasogare_ni_mamieru_shinigami_jp.gci	savedata	GIGJ8P	1	82e42744c06a63cd0556a14e6eed52ea	spec-script+hex
+soulcalibur2-gcs	soulcalibur-ii.20763.gcs	sc2_0.dat	GRSJAF	4	d922f95b62849bd70a5caf83c6c879da	spec-script+hex
+soulcalibur2-maxdrive-sav	soulcalibur-ii.20764.sav	sc2_0.dat	GRSJAF	4	d922f95b62849bd70a5caf83c6c879da	spec-script+hex
+card-raw-usa	memcard-image.raw	super_mario_sunshine	GMSE01	7	fc3d255d4a59f2aadb2f1e0745cb6dbe	spec-script+hex
+card-raw-usa	memcard-image.raw	hitz20-03.db	GN3E5D	8	da5a0010141b828e12c73179a86a0d3e	spec-script+hex
+card-raw-usa	memcard-image.raw	ikaruga_save_data	GIKE70	4	7770354a385a3fcdec4bc619b16e364f	spec-script+hex
+card-raw-usa	memcard-image.raw	Eternal Darkness	GEDE01	15	b82a25a26f4cf527469dd349428cc22a	spec-script+hex
+card-raw-usa	memcard-image.raw	sc2_0.dat	GRSEAF	4	47e5c18b53ad4fd431dfc0d22ed11c40	spec-script+hex
+card-raw-usa	memcard-image.raw	Euan	GH2E69	7	d50f509e4b6ff837da45ebb534e13527	spec-script+hex
+card-raw-usa	memcard-image.raw	gc4sword	G4SE01	3	fbc09b53f419b0a1f7e3d1228d044aab	spec-script+hex
+card-raw-usa	memcard-image.raw	starfox.dat	GF7E01	5	7258e72ab78d7edf580f253237be30f8	spec-script+hex
+card-raw-usa	memcard-image.raw	f_zero.dat	GFZE8P	4	a3e272b04c12151e9c1a3dee86f86ebb	spec-script+hex
+card-raw-usa	memcard-image.raw	RogueLeader	GSWE64	3	b862e8b4d66439972f853af5307d274f	spec-script+hex
+card-raw-jpn-nintendont	memcard-image-japan-nintendont.raw	NARUTO3_DATA_sys	G3NJDA	2	318ed2c42c86876bd17d237a453a7c44	spec-script+hex
