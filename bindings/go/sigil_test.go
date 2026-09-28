@@ -59,6 +59,72 @@ func TestUnknownSlug(t *testing.T) {
 	}
 }
 
+type cardSave struct {
+	name   string
+	blocks int
+}
+
+// ps1Card builds a raw PS1 card holding saves laid out in order.
+func ps1Card(saves []cardSave) []byte {
+	card := make([]byte, 128*1024)
+	copy(card, "MC")
+	for frame := 1; frame < 16; frame++ {
+		card[frame*128] = 0xA0
+		card[frame*128+8], card[frame*128+9] = 0xFF, 0xFF
+	}
+	block := 1
+	for _, s := range saves {
+		for i := 0; i < s.blocks; i++ {
+			f := (block + i) * 128
+			state, link := byte(0x52), uint16(block+i)
+			if i == 0 {
+				state = 0x51
+				copy(card[f+10:], s.name)
+			} else if i == s.blocks-1 {
+				state = 0x53
+			}
+			if i == s.blocks-1 {
+				link = 0xFFFF
+			}
+			card[f] = state
+			card[f+8], card[f+9] = byte(link), byte(link>>8)
+		}
+		block += s.blocks
+	}
+	return card
+}
+
+func TestListCardReportsSavesOwnersAndSpace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "card.mcr")
+	if err := os.WriteFile(path, ps1Card([]cardSave{{"BASLUSP01041CROSS", 2}, {"OPTIONS0000", 1}}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	listing, err := ListCard(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listing.Format != CardFormatPS1Raw || listing.TotalBlocks != 15 || listing.FreeSlots != 12 || listing.CorruptCount != 0 {
+		t.Fatalf("listing = %+v", listing)
+	}
+	want := []CardEntry{
+		{Name: "BASLUSP01041CROSS", OwnerID: "SLUS-01041", Blocks: 2, FirstBlock: 1},
+		{Name: "OPTIONS0000", OwnerID: "", Blocks: 1, FirstBlock: 3},
+	}
+	if !reflect.DeepEqual(listing.Entries, want) {
+		t.Fatalf("entries = %+v, want %+v", listing.Entries, want)
+	}
+}
+
+func TestListCardRejectsAFileThatIsNotACard(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "save.mcs")
+	if err := os.WriteFile(path, append([]byte("Q\x00\x00\x00"), make([]byte, 8316)...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ListCard(path); !errors.Is(err, ErrUnsupportedFormat) {
+		t.Fatalf("err = %v, want ErrUnsupportedFormat", err)
+	}
+}
+
 func md5hex(data []byte) string {
 	sum := md5.Sum(data)
 	return hex.EncodeToString(sum[:])

@@ -83,6 +83,10 @@ static jmethodID g_unit_ctor = NULL;
 static jclass g_array_list_class = NULL;
 static jmethodID g_array_list_ctor = NULL;
 static jmethodID g_array_list_add = NULL;
+static jclass g_card_entry_class = NULL;
+static jmethodID g_card_entry_ctor = NULL;
+static jclass g_card_listing_class = NULL;
+static jmethodID g_card_listing_ctor = NULL;
 
 static bool unit_classes_ready(void) {
     return g_member_class && g_member_ctor && g_unit_class && g_unit_ctor
@@ -129,6 +133,12 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
     g_unit_ctor = NULL;
     g_array_list_ctor = NULL;
     g_array_list_add = NULL;
+    if (g_card_entry_class) (*env)->DeleteGlobalRef(env, g_card_entry_class);
+    if (g_card_listing_class) (*env)->DeleteGlobalRef(env, g_card_listing_class);
+    g_card_entry_class = NULL;
+    g_card_listing_class = NULL;
+    g_card_entry_ctor = NULL;
+    g_card_listing_ctor = NULL;
 }
 
 JNIEXPORT jstring JNICALL
@@ -462,6 +472,87 @@ Java_com_nendo_sigil_Sigil_nativeHashSaves(JNIEnv *env, jclass clazz,
     (*env)->ReleaseStringUTFChars(env, jkey, key);
 
     if (rc != SIGIL_OK) throw_sigil(env, rc);
+    return out;
+}
+
+/* ---- memory cards ---------------------------------------------------------- */
+
+static bool card_classes_ready(void) {
+    return g_card_entry_class && g_card_entry_ctor && g_card_listing_class && g_card_listing_ctor
+        && g_array_list_class && g_array_list_ctor && g_array_list_add;
+}
+
+static void load_card_classes(JNIEnv *env) {
+    if (card_classes_ready()) return;
+    if (!g_card_entry_class) g_card_entry_class = global_class(env, "com/nendo/sigil/SigilCardEntry");
+    if (!g_card_listing_class) g_card_listing_class = global_class(env, "com/nendo/sigil/SigilCardListing");
+    if (!g_array_list_class) g_array_list_class = global_class(env, "java/util/ArrayList");
+    if (!g_card_entry_class || !g_card_listing_class || !g_array_list_class) return;
+    /* SigilCardEntry(name, ownerId, blocks, firstBlock) */
+    g_card_entry_ctor = find_method(env, g_card_entry_class, "<init>",
+        "(Ljava/lang/String;Ljava/lang/String;II)V");
+    /* SigilCardListing(formatCode, totalBlocks, freeBlocks, freeSlots, corruptCount, entries) */
+    g_card_listing_ctor = find_method(env, g_card_listing_class, "<init>",
+        "(IIIIILjava/util/List;)V");
+    if (!g_array_list_ctor) g_array_list_ctor = find_method(env, g_array_list_class, "<init>", "()V");
+    if (!g_array_list_add) g_array_list_add = find_method(env, g_array_list_class, "add", "(Ljava/lang/Object;)Z");
+}
+
+/* NewStringUTF aborts under CheckJNI on bytes that aren't modified UTF-8, and
+ * a card name is raw bytes, so anything outside printable ASCII becomes '?'. */
+static jstring ascii_string(JNIEnv *env, const char *raw) {
+    char clean[SIGIL_CARD_NAME_MAX];
+    size_t i = 0;
+    for (; raw[i] && i < sizeof(clean) - 1; i++) {
+        unsigned char c = (unsigned char)raw[i];
+        clean[i] = (c >= 0x20 && c < 0x7F) ? (char)c : '?';
+    }
+    clean[i] = '\0';
+    return (*env)->NewStringUTF(env, clean);
+}
+
+JNIEXPORT jobject JNICALL
+Java_com_nendo_sigil_Sigil_nativeListCard(JNIEnv *env, jclass clazz, jstring jpath) {
+    (void)clazz;
+    if (!jpath) { throw_sigil(env, SIGIL_ERR_INVALID_ARG); return NULL; }
+    const char *path = (*env)->GetStringUTFChars(env, jpath, NULL);
+    sigil_io *io = path ? sigil_io_open_file(path) : NULL;
+    if (path) (*env)->ReleaseStringUTFChars(env, jpath, path);
+    if (!io) { throw_sigil(env, SIGIL_ERR_IO); return NULL; }
+
+    sigil_card_listing *listing = NULL;
+    int rc = sigil_card_list(io, &listing);
+    sigil_io_close(io);
+    if (rc != SIGIL_OK) { throw_sigil(env, rc); return NULL; }
+
+    load_card_classes(env);
+    if (!card_classes_ready()) {
+        sigil_card_listing_free(listing);
+        throw_binding_broken(env, "SigilCardEntry or SigilCardListing");
+        return NULL;
+    }
+
+    jobject out = NULL;
+    jobject entries = (*env)->NewObject(env, g_array_list_class, g_array_list_ctor);
+    if (entries) {
+        for (size_t i = 0; i < listing->entry_count; i++) {
+            const sigil_card_entry *e = &listing->entries[i];
+            jstring jname  = ascii_string(env, e->name);
+            jstring jowner = ascii_string(env, e->owner_id);
+            jobject je = (*env)->NewObject(env, g_card_entry_class, g_card_entry_ctor,
+                                           jname, jowner, (jint)e->blocks, (jint)e->first_block);
+            if (je) (*env)->CallBooleanMethod(env, entries, g_array_list_add, je);
+            (*env)->DeleteLocalRef(env, jname);
+            (*env)->DeleteLocalRef(env, jowner);
+            if (je) (*env)->DeleteLocalRef(env, je);
+        }
+        out = (*env)->NewObject(env, g_card_listing_class, g_card_listing_ctor,
+                                (jint)listing->format, (jint)listing->total_blocks,
+                                (jint)listing->free_blocks, (jint)listing->free_slots,
+                                (jint)listing->corrupt_count, entries);
+    }
+    sigil_card_listing_free(listing);
+    if (!out && !(*env)->ExceptionCheck(env)) throw_sigil(env, SIGIL_ERR_OOM);
     return out;
 }
 

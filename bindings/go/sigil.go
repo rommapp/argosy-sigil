@@ -643,5 +643,97 @@ func goMembers(members *C.sigil_save_member, count int) []SaveMember {
 	return out
 }
 
+// CardFormat is the file format a memory card was read from.
+type CardFormat int
+
+const (
+	CardFormatUnknown      CardFormat = C.SIGIL_CARD_FORMAT_UNKNOWN
+	CardFormatPS1Raw       CardFormat = C.SIGIL_CARD_FORMAT_PS1_RAW
+	CardFormatPS1GME       CardFormat = C.SIGIL_CARD_FORMAT_PS1_GME
+	CardFormatPS1VMP       CardFormat = C.SIGIL_CARD_FORMAT_PS1_VMP
+	CardFormatPS2          CardFormat = C.SIGIL_CARD_FORMAT_PS2
+	CardFormatGameCubeRaw  CardFormat = C.SIGIL_CARD_FORMAT_GAMECUBE_RAW
+	CardFormatDreamcastVMU CardFormat = C.SIGIL_CARD_FORMAT_DREAMCAST_VMU
+	CardFormatSaturnBackup CardFormat = C.SIGIL_CARD_FORMAT_SATURN_BACKUP
+	CardFormatSegaCDBRAM   CardFormat = C.SIGIL_CARD_FORMAT_SEGACD_BRAM
+)
+
+func (f CardFormat) String() string {
+	switch f {
+	case CardFormatPS1Raw:
+		return "ps1-raw"
+	case CardFormatPS1GME:
+		return "ps1-gme"
+	case CardFormatPS1VMP:
+		return "ps1-vmp"
+	case CardFormatPS2:
+		return "ps2"
+	case CardFormatGameCubeRaw:
+		return "gamecube-raw"
+	case CardFormatDreamcastVMU:
+		return "dreamcast-vmu"
+	case CardFormatSaturnBackup:
+		return "saturn-backup"
+	case CardFormatSegaCDBRAM:
+		return "segacd-bram"
+	default:
+		return "unknown"
+	}
+}
+
+// CardEntry is one save on a memory card. OwnerID is the product code it
+// carries, or "" when it has none.
+type CardEntry struct {
+	Name       string
+	OwnerID    string
+	Blocks     uint32
+	FirstBlock uint32
+}
+
+// CardListing is the saves on a memory card and the space left on it.
+type CardListing struct {
+	Format       CardFormat
+	TotalBlocks  uint32
+	FreeBlocks   uint32
+	FreeSlots    uint32
+	CorruptCount uint32
+	Entries      []CardEntry
+}
+
+// ListCard returns the saves on the memory card at path. The card format is
+// detected from its content.
+func ListCard(path string) (*CardListing, error) {
+	cpath := C.CString(path)
+	defer C.free(unsafe.Pointer(cpath))
+	io := C.sigil_io_open_file(cpath)
+	if io == nil {
+		return nil, ErrIO
+	}
+	defer C.sigil_io_close(io)
+
+	var clisting *C.sigil_card_listing
+	if err := errFromCode(C.sigil_card_list(io, &clisting)); err != nil {
+		return nil, err
+	}
+	defer C.sigil_card_listing_free(clisting)
+
+	listing := &CardListing{
+		Format:       CardFormat(clisting.format),
+		TotalBlocks:  uint32(clisting.total_blocks),
+		FreeBlocks:   uint32(clisting.free_blocks),
+		FreeSlots:    uint32(clisting.free_slots),
+		CorruptCount: uint32(clisting.corrupt_count),
+	}
+	for _, e := range unsafe.Slice(clisting.entries, int(clisting.entry_count)) {
+		listing.Entries = append(listing.Entries, CardEntry{
+			Name:       C.GoString(&e.name[0]),
+			OwnerID:    C.GoString(&e.owner_id[0]),
+			Blocks:     uint32(e.blocks),
+			FirstBlock: uint32(e.first_block),
+		})
+	}
+	return listing, nil
+}
+
 // Version returns the sigil C library version.
 func Version() string { return C.GoString(C.sigil_version()) }

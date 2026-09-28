@@ -13,6 +13,8 @@ from sigil._sigil import ffi, lib
 __all__ = [
     "FEATURE_RTC",
     "PLATFORM_AUTO",
+    "SigilCardEntry",
+    "SigilCardListing",
     "SigilCryptoError",
     "SigilError",
     "SigilIOError",
@@ -29,6 +31,7 @@ __all__ = [
     "extract",
     "hash_saves",
     "layout_subdirs",
+    "list_card",
     "list_save_root",
     "load_header_key_from_prod_keys",
     "locate_saves",
@@ -128,6 +131,30 @@ _ROLE_NAMES: dict[int, SaveRole] = {
     lib.SIGIL_SAVE_ROLE_RTC: "rtc",
 }
 
+CardFormat = Literal[
+    "unknown",
+    "ps1-raw",
+    "ps1-gme",
+    "ps1-vmp",
+    "ps2",
+    "gamecube-raw",
+    "dreamcast-vmu",
+    "saturn-backup",
+    "segacd-bram",
+]
+
+_CARD_FORMAT_NAMES: dict[int, CardFormat] = {
+    lib.SIGIL_CARD_FORMAT_UNKNOWN: "unknown",
+    lib.SIGIL_CARD_FORMAT_PS1_RAW: "ps1-raw",
+    lib.SIGIL_CARD_FORMAT_PS1_GME: "ps1-gme",
+    lib.SIGIL_CARD_FORMAT_PS1_VMP: "ps1-vmp",
+    lib.SIGIL_CARD_FORMAT_PS2: "ps2",
+    lib.SIGIL_CARD_FORMAT_GAMECUBE_RAW: "gamecube-raw",
+    lib.SIGIL_CARD_FORMAT_DREAMCAST_VMU: "dreamcast-vmu",
+    lib.SIGIL_CARD_FORMAT_SATURN_BACKUP: "saturn-backup",
+    lib.SIGIL_CARD_FORMAT_SEGACD_BRAM: "segacd-bram",
+}
+
 _SUBDIR_LIST_DEPTH = 3
 _SUBDIR_CAP = 16
 
@@ -191,6 +218,28 @@ class SigilSaveUnit:
     artifact: str
     content_hash: str
     identity_hash: str
+
+
+@dataclass(frozen=True)
+class SigilCardEntry:
+    """One save on a memory card. `owner_id` is the product code it carries, or "" when it has none."""
+
+    name: str
+    owner_id: str
+    blocks: int
+    first_block: int
+
+
+@dataclass(frozen=True)
+class SigilCardListing:
+    """The saves on a memory card and the space left on it."""
+
+    format: CardFormat
+    total_blocks: int
+    free_blocks: int
+    free_slots: int
+    corrupt_count: int
+    entries: tuple[SigilCardEntry, ...]
 
 
 def _raise_error(code: int) -> None:
@@ -444,6 +493,40 @@ def hash_saves(saves: SigilSaveUnit, save_root: str | os.PathLike[str]) -> Sigil
     if rc != lib.SIGIL_OK:
         _raise_error(rc)
     return replace(saves, content_hash=_text(unit.content_hash), identity_hash=_text(unit.identity_hash))
+
+
+def list_card(path: str | os.PathLike[str]) -> SigilCardListing:
+    """The saves on the memory card at `path`. The card format is detected from its content."""
+    io = lib.sigil_io_open_file(os.fsencode(path))
+    if io == ffi.NULL:
+        _raise_error(lib.SIGIL_ERR_IO)
+    out = ffi.new("sigil_card_listing **")
+    try:
+        rc = lib.sigil_card_list(io, out)
+    finally:
+        lib.sigil_io_close(io)
+    if rc != lib.SIGIL_OK:
+        _raise_error(rc)
+    listing = out[0]
+    try:
+        return SigilCardListing(
+            format=_CARD_FORMAT_NAMES.get(listing.format, "unknown"),
+            total_blocks=int(listing.total_blocks),
+            free_blocks=int(listing.free_blocks),
+            free_slots=int(listing.free_slots),
+            corrupt_count=int(listing.corrupt_count),
+            entries=tuple(
+                SigilCardEntry(
+                    name=_text(e.name),
+                    owner_id=_text(e.owner_id),
+                    blocks=int(e.blocks),
+                    first_block=int(e.first_block),
+                )
+                for e in (listing.entries[i] for i in range(listing.entry_count))
+            ),
+        )
+    finally:
+        lib.sigil_card_listing_free(listing)
 
 
 def _text(chars) -> str:

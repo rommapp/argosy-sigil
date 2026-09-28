@@ -16,6 +16,13 @@ static inline uint32_t sigil_read_le32(const uint8_t *p) {
          | ((uint32_t)p[3] << 24);
 }
 
+static inline void sigil_write_le32(uint8_t *p, uint32_t v) {
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16);
+    p[3] = (uint8_t)(v >> 24);
+}
+
 static inline uint64_t sigil_read_le64(const uint8_t *p) {
     return (uint64_t)sigil_read_le32(p)
          | ((uint64_t)sigil_read_le32(p + 4) << 32);
@@ -33,7 +40,48 @@ static inline uint64_t sigil_read_be64(const uint8_t *p) {
          |  (uint64_t)sigil_read_be32(p + 4);
 }
 
+static inline uint16_t sigil_read_le16(const uint8_t *p) {
+    return (uint16_t)(p[0] | (p[1] << 8));
+}
+
+static inline uint16_t sigil_read_be16(const uint8_t *p) {
+    return (uint16_t)((p[0] << 8) | p[1]);
+}
+
+static inline void sigil_write_le16(uint8_t *p, uint16_t v) {
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+}
+
+static inline void sigil_write_be16(uint8_t *p, uint16_t v) {
+    p[0] = (uint8_t)(v >> 8);
+    p[1] = (uint8_t)v;
+}
+
+static inline void sigil_write_be32(uint8_t *p, uint32_t v) {
+    p[0] = (uint8_t)(v >> 24);
+    p[1] = (uint8_t)(v >> 16);
+    p[2] = (uint8_t)(v >> 8);
+    p[3] = (uint8_t)v;
+}
+
+static inline void sigil_write_le64(uint8_t *p, uint64_t v) {
+    sigil_write_le32(p, (uint32_t)v);
+    sigil_write_le32(p + 4, (uint32_t)(v >> 32));
+}
+
+static inline void sigil_write_be64(uint8_t *p, uint64_t v) {
+    sigil_write_be32(p, (uint32_t)(v >> 32));
+    sigil_write_be32(p + 4, (uint32_t)v);
+}
+
 int sigil_io_read_exact(const sigil_io *io, uint64_t off, void *buf, size_t len);
+
+/**
+ * Reads up to `len` bytes at `off`, stopping early at the end of the stream,
+ * and sets `*got` to the count read. SIGIL_ERR_IO only when a read fails.
+ */
+int sigil_io_read_upto(const sigil_io *io, uint64_t off, void *buf, size_t len, size_t *got);
 
 #define SIGIL_ISO_SECTOR_SIZE 2048
 

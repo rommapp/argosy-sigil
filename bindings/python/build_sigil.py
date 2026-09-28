@@ -200,6 +200,42 @@ int  sigil_save_hash(sigil_save_unit *unit, sigil_save_open_fn open, void *open_
 size_t sigil_save_layout_subdirs(const char *layout, const char **out, size_t cap);
 const char *sigil_content_stem(const char *content_path, char *out, size_t cap);
 
+#define SIGIL_CARD_LISTING_V1 ...
+
+typedef enum {
+    SIGIL_CARD_FORMAT_UNKNOWN,
+    SIGIL_CARD_FORMAT_PS1_RAW,
+    SIGIL_CARD_FORMAT_PS1_GME,
+    SIGIL_CARD_FORMAT_PS1_VMP,
+    SIGIL_CARD_FORMAT_PS2,
+    SIGIL_CARD_FORMAT_GAMECUBE_RAW,
+    SIGIL_CARD_FORMAT_DREAMCAST_VMU,
+    SIGIL_CARD_FORMAT_SATURN_BACKUP,
+    SIGIL_CARD_FORMAT_SEGACD_BRAM,
+    ...
+} sigil_card_format;
+
+typedef struct {
+    char     name[...];
+    char     owner_id[...];
+    uint32_t blocks;
+    uint32_t first_block;
+} sigil_card_entry;
+
+typedef struct {
+    uint32_t          struct_version;
+    int               format;
+    uint32_t          total_blocks;
+    uint32_t          free_blocks;
+    uint32_t          free_slots;
+    uint32_t          corrupt_count;
+    sigil_card_entry *entries;
+    size_t            entry_count;
+} sigil_card_listing;
+
+int  sigil_card_list(const sigil_io *io, sigil_card_listing **out);
+void sigil_card_listing_free(sigil_card_listing *listing);
+
 const char *sigil_strerror(int code);
 const char *sigil_version(void);
 """

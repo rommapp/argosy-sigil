@@ -103,6 +103,11 @@ MPL-2.0. See [LICENSE](LICENSE) for the full text and
 can use sigil in any application (proprietary or open); modifications
 to sigil's own files must remain MPL-2.0.
 
+The Sega CD backup RAM reader (`src/card_segacd.c`) takes its ECC layout
+table and format-block bytes from superctr/buram, Copyright (c) 2022 Ian
+Karlsson, used under the MIT license; the notice is in
+[licenses/buram-MIT.txt](licenses/buram-MIT.txt).
+
 ## Supported platforms
 
 | Slug | Platform | Inputs | `title_id` example | `usage` | Status |
@@ -734,6 +739,21 @@ ctest --test-dir build -R integration
 
 Integration tests skip cleanly with exit code 77 when env vars are
 unset, so the public CI without ROMs can still run unit tests.
+
+Save tests read real save files from `tests/fixtures/saves/`. The files
+aren't committed, only their manifests, so each test skips when its
+samples are missing. [tests/fixtures/saves/README.md](tests/fixtures/saves/README.md)
+explains how to add samples.
+
+```sh
+# Fuzz the card parsers. The default engine mutates the given samples
+# under the address and undefined-behaviour sanitizers and works with any
+# clang; pass -DSIGIL_FUZZ_ENGINE=libfuzzer with a clang that ships libFuzzer.
+cmake -S . -B build-fuzz -DSIGIL_BUILD_FUZZERS=ON -DSIGIL_BUILD_TESTS=OFF \
+  -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+cmake --build build-fuzz --target fuzz_card
+./build-fuzz/fuzz_card 1000000 1 tests/fixtures/saves/psx/files/*/*
+```
 
 ## Contributing
 

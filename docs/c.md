@@ -166,6 +166,37 @@ member's `path` under the root. Unzip a `FOLDER` artifact from the
 root's parent of the key folder. `expected` says where a primary goes
 when the emulator has not created one yet.
 
+## Memory cards
+
+List the saves on a memory card. PS1 cards are read today: the raw card
+(`.mcr`, `.mcd`, `.srm`), DexDrive `.gme` and PSP or Vita `.vmp`.
+
+```c
+int sigil_card_list(
+    const sigil_io *io,             /* required. The card file. Its format is detected from the content. */
+    sigil_card_listing **out        /* required. Free with sigil_card_listing_free. */
+);                                  /* SIGIL_ERR_UNSUPPORTED_FORMAT when the stream is not a card sigil reads. */
+
+typedef struct {
+    uint32_t struct_version;
+    int format;                     /* SIGIL_CARD_FORMAT_PS1_RAW, _PS1_GME, _PS1_VMP. */
+    uint32_t total_blocks;
+    uint32_t free_blocks;           /* Blocks a new save can use. */
+    uint32_t free_slots;            /* Directory slots a new save can use. */
+    uint32_t corrupt_count;         /* Saves left out because their block chain is broken. */
+    sigil_card_entry *entries;      /* Live saves, in directory order. */
+    size_t entry_count;
+} sigil_card_listing;
+
+typedef struct {
+    char name[32];                  /* As stored on the card, e.g. "BASLUSP01041USCHRO00". */
+    char owner_id[16];              /* Product code as disc identification reports it, e.g. "SLUS-01041".
+                                       "" when the name carries none. */
+    uint32_t blocks;
+    uint32_t first_block;
+} sigil_card_entry;
+```
+
 ## Helpers
 
 ```c

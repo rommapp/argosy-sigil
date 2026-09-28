@@ -33,6 +33,7 @@ extern "C" {
 #define SIGIL_RESULT_V3   3u
 #define SIGIL_SAVE_REQUEST_V1 1u
 #define SIGIL_SAVE_UNIT_V1    1u
+#define SIGIL_CARD_LISTING_V1 1u
 #define SIGIL_SUPPORT_V1  1u
 #define SIGIL_OPTIONS_V1  1u
 
@@ -290,6 +291,47 @@ SIGIL_API size_t sigil_save_layout_subdirs(const char *layout, const char **out,
  * the loaded path's file name without its extension, taking the member name
  * for `archive.zip#member.ext`. Returns `out`. */
 SIGIL_API const char *sigil_content_stem(const char *content_path, char *out, size_t cap);
+
+/* ---- Memory cards --------------------------------------------------------- */
+
+typedef enum {
+    SIGIL_CARD_FORMAT_UNKNOWN = 0,
+    SIGIL_CARD_FORMAT_PS1_RAW,        /* .mcr, .mcd, .srm, .bin: the bare 128 KiB card */
+    SIGIL_CARD_FORMAT_PS1_GME,        /* DexDrive: 0xF40-byte header, then the card */
+    SIGIL_CARD_FORMAT_PS1_VMP,        /* PSP and Vita: 0x80-byte signed header, then the card */
+    SIGIL_CARD_FORMAT_PS2,            /* .ps2: PCSX2 file card, with or without ECC */
+    SIGIL_CARD_FORMAT_GAMECUBE_RAW,   /* .raw, .gcp: a whole GameCube card image */
+    SIGIL_CARD_FORMAT_DREAMCAST_VMU,  /* .bin, .vmu: a 128 KiB VMU flash image */
+    SIGIL_CARD_FORMAT_SATURN_BACKUP,  /* .bkr, .bcr, .srm, backup.bin: Saturn backup RAM, internal or cart */
+    SIGIL_CARD_FORMAT_SEGACD_BRAM     /* .brm, .srm: Sega CD backup RAM, internal or cart */
+} sigil_card_format;
+
+#define SIGIL_CARD_NAME_MAX  64
+#define SIGIL_CARD_OWNER_MAX 16
+
+typedef struct {
+    char     name[SIGIL_CARD_NAME_MAX];      /* the name stored on the card, e.g. "BASLUSP01041USCHRO00" */
+    char     owner_id[SIGIL_CARD_OWNER_MAX]; /* the game id the save carries, as disc identification reports it
+                                                (PS1 "SLUS-01041", GameCube "47465A45"); empty when the format has none */
+    uint32_t blocks;                         /* blocks the save uses, in the card's own block size */
+    uint32_t first_block;                    /* block the save starts at */
+} sigil_card_entry;
+
+typedef struct {
+    uint32_t          struct_version;   /* SIGIL_CARD_LISTING_V1 */
+    int               format;           /* sigil_card_format */
+    uint32_t          total_blocks;     /* data blocks the card holds */
+    uint32_t          free_blocks;      /* data blocks a new save can use */
+    uint32_t          free_slots;       /* directory slots a new save can use */
+    uint32_t          corrupt_count;    /* saves left out because their block chain is broken */
+    sigil_card_entry *entries;          /* live saves, in directory order */
+    size_t            entry_count;
+} sigil_card_listing;
+
+/* Lists the saves on a memory card. The format is detected from the content.
+ * SIGIL_ERR_UNSUPPORTED_FORMAT when the stream is not a card sigil reads. */
+SIGIL_API int  sigil_card_list(const sigil_io *io, sigil_card_listing **out);
+SIGIL_API void sigil_card_listing_free(sigil_card_listing *listing);
 
 SIGIL_API const char *sigil_strerror(int code);
 SIGIL_API const char *sigil_version(void);

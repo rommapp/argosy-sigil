@@ -46,6 +46,28 @@ sigil_add_test(unit_gb)
 sigil_add_test(unit_snes)
 sigil_add_test(unit_save_unit)
 
+# Checks the save samples against their manifests. It hashes the files with
+# sigil's md5 compiled in directly, so it doesn't link the library it will
+# later be used to test.
+add_executable(integration_save_corpus integration_save_corpus.c ${CMAKE_SOURCE_DIR}/src/md5.c)
+target_include_directories(integration_save_corpus PRIVATE
+    ${CMAKE_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/src)
+target_compile_definitions(integration_save_corpus PRIVATE
+    SIGIL_SAVE_FIXTURES="${CMAKE_SOURCE_DIR}/tests/fixtures/saves")
+add_test(NAME integration_save_corpus COMMAND integration_save_corpus)
+set_tests_properties(integration_save_corpus PROPERTIES SKIP_RETURN_CODE 77)
+
+# Card tests read the save samples and reach the card internals, which the
+# static library tests are built against expose.
+foreach(t integration_card_ps1 integration_card_ps2 integration_card_gamecube
+          integration_card_dreamcast integration_card_saturn integration_card_segacd
+          integration_clock_gb)
+    sigil_add_test(${t})
+    target_include_directories(${t} PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_compile_definitions(${t} PRIVATE
+        SIGIL_SAVE_FIXTURES="${CMAKE_SOURCE_DIR}/tests/fixtures/saves")
+endforeach()
+
 # Fixtures have to produce what the extractors read, so these link the
 # compression and crypto helpers directly rather than relying on reaching them
 # through sigil. That indirection only ever worked for a static build; a shared
