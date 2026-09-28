@@ -134,6 +134,36 @@ member's `path` under the root. Unzip a `Folder` artifact from the
 root's parent of the key folder. `expected` says where a primary goes
 when the emulator has not created one yet.
 
+## Memory cards
+
+List the saves on a memory card. PS1 cards are read today: the raw card
+(`.mcr`, `.mcd`, `.srm`), DexDrive `.gme` and PSP or Vita `.vmp`.
+
+```kotlin
+Sigil.listCard(
+    path: String,               // required. The card file. Its format is detected from the content.
+): SigilCardListing             // Raises SigilException (unsupported format code) when the file is not
+                                //   a card sigil reads.
+
+data class SigilCardListing(
+    format: Format,             // Ps1Raw, Ps1Gme, Ps1Vmp.
+    totalBlocks: Int,
+    freeBlocks: Int,            // Blocks a new save can use.
+    freeSlots: Int,             // Directory slots a new save can use.
+    corruptCount: Int,          // Saves left out because their block chain is broken.
+    entries: List<SigilCardEntry>,  // Live saves, in directory order.
+)
+
+data class SigilCardEntry(
+    name: String,               // As stored on the card, e.g. "BASLUSP01041USCHRO00". Bytes outside
+                                //   printable ASCII read as '?'.
+    ownerId: String,            // Product code as extract reports it, e.g. "SLUS-01041". "" when the
+                                //   name carries none.
+    blocks: Int,
+    firstBlock: Int,
+)
+```
+
 ## Helpers
 
 ```kotlin

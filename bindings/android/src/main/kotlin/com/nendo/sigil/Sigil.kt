@@ -112,6 +112,41 @@ data class SigilSaveUnit(
     }
 }
 
+/** One save on a memory card. [ownerId] is the product code it carries, or empty when it has none. */
+data class SigilCardEntry(
+    val name: String,
+    val ownerId: String,
+    val blocks: Int,
+    val firstBlock: Int
+)
+
+/** The saves on a memory card and the space left on it. */
+data class SigilCardListing(
+    private val formatCode: Int,
+    val totalBlocks: Int,
+    val freeBlocks: Int,
+    val freeSlots: Int,
+    val corruptCount: Int,
+    val entries: List<SigilCardEntry>
+) {
+    val format: Format get() = Format.fromCode(formatCode)
+
+    enum class Format(val code: Int) {
+        Unknown(0),
+        Ps1Raw(1),
+        Ps1Gme(2),
+        Ps1Vmp(3),
+        Ps2(4),
+        GamecubeRaw(5),
+        DreamcastVmu(6),
+        SaturnBackup(7),
+        SegacdBram(8);
+        companion object {
+            fun fromCode(c: Int): Format = values().firstOrNull { it.code == c } ?: Unknown
+        }
+    }
+}
+
 /**
  * Sigil — extract platform-native title IDs from console ROM files, and
  * resolve the save unit an emulator keeps for one under a save root.
@@ -159,6 +194,7 @@ object Sigil {
         memberRoles: IntArray
     ): Array<String>
 
+    @JvmStatic private external fun nativeListCard(path: String): SigilCardListing
     @JvmStatic private external fun nativeLayoutSubdirs(layout: String): Array<String>
     @JvmStatic private external fun nativeContentStem(contentPath: String): String
     @JvmStatic private external fun nativePlatformSlug(slug: String?): String
@@ -248,6 +284,9 @@ object Sigil {
         )
         return saves.copy(contentHash = hashes[0], identityHash = hashes[1])
     }
+
+    /** The saves on the memory card at [path]. The card format is detected from its content. */
+    fun listCard(path: String): SigilCardListing = nativeListCard(path)
 
     /** Subfolders under the save root a layout writes into, so the caller knows what to list. */
     fun layoutSubdirs(layout: String): List<String> = nativeLayoutSubdirs(layout).toList()

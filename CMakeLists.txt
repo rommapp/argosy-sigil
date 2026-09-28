@@ -25,6 +25,7 @@ endif()
 option(SIGIL_BUILD_CLI      "Build sigil(1) CLI"                           ON)
 option(SIGIL_BUILD_TESTS    "Build tests"                                  ON)
 option(SIGIL_BUILD_SHARED   "Build libsigil as a shared library"           OFF)
+option(SIGIL_BUILD_FUZZERS  "Build libFuzzer targets (clang with libFuzzer)" OFF)
 
 # ---- Vendored deps -----------------------------------------------------------
 set(LIBCHDR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libchdr)
@@ -135,6 +136,14 @@ set(SIGIL_SOURCES
     src/zip_entries.c
     src/save_layout.c
     src/save_unit.c
+    src/card.c
+    src/card_ps1.c
+    src/card_ps2.c
+    src/card_gamecube.c
+    src/card_dreamcast.c
+    src/card_saturn.c
+    src/card_segacd.c
+    src/clock_gb.c
 )
 list(REMOVE_DUPLICATES SIGIL_SOURCES)
 
@@ -164,4 +173,27 @@ endif()
 if(SIGIL_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+# ---- Fuzzers -----------------------------------------------------------------
+# Every parser the RomM server runs on uploads gets a target here. With a
+# clang that ships libFuzzer, SIGIL_FUZZ_ENGINE=libfuzzer builds real fuzzers;
+# the default "mutate" engine builds a small random-mutation driver that works
+# with any compiler that has the address and undefined sanitizers.
+set(SIGIL_FUZZ_ENGINE "mutate" CACHE STRING "libfuzzer or mutate")
+if(SIGIL_BUILD_FUZZERS)
+    foreach(target fuzz_card fuzz_card_ps2 fuzz_card_gamecube fuzz_card_dreamcast
+                   fuzz_card_saturn fuzz_card_segacd)
+        if(SIGIL_FUZZ_ENGINE STREQUAL "libfuzzer")
+            add_executable(${target} fuzz/${target}.c)
+            set(sanitizers -fsanitize=fuzzer,address,undefined)
+        else()
+            add_executable(${target} fuzz/${target}.c fuzz/mutate_main.c)
+            set(sanitizers -fsanitize=address,undefined)
+        endif()
+        target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        target_link_libraries(${target} PRIVATE sigil)
+        target_compile_options(${target} PRIVATE ${sanitizers} -fno-omit-frame-pointer)
+        target_link_options(${target} PRIVATE ${sanitizers})
+    endforeach()
 endif()

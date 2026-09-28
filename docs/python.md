@@ -135,6 +135,35 @@ member's `path` under the root. Unzip a `folder` artifact from the
 root's parent of the key folder. `expected` says where a primary goes
 when the emulator has not created one yet.
 
+## Memory cards
+
+List the saves on a memory card. PS1 cards are read today: the raw card
+(`.mcr`, `.mcd`, `.srm`), DexDrive `.gme` and PSP or Vita `.vmp`.
+
+```python
+sigil.list_card(
+    path: str | PathLike,           # required. The card file. Its format is detected from the content.
+) -> SigilCardListing               # Raises SigilUnsupportedFormatError when the file is not a card
+                                    #   sigil reads.
+
+SigilCardListing(
+    format: str,                    # "ps1-raw", "ps1-gme", "ps1-vmp".
+    total_blocks: int,
+    free_blocks: int,               # Blocks a new save can use.
+    free_slots: int,                # Directory slots a new save can use.
+    corrupt_count: int,             # Saves left out because their block chain is broken.
+    entries: tuple[SigilCardEntry, ...],   # Live saves, in directory order.
+)
+
+SigilCardEntry(
+    name: str,                      # As stored on the card, e.g. "BASLUSP01041USCHRO00".
+    owner_id: str,                  # Product code as extract reports it, e.g. "SLUS-01041". "" when the
+                                    #   name carries none.
+    blocks: int,
+    first_block: int,
+)
+```
+
 ## Helpers
 
 ```python

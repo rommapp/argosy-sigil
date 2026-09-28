@@ -56,6 +56,19 @@ void sigil_io_close(sigil_io *io) {
     free(io);
 }
 
+int sigil_io_read_upto(const sigil_io *io, uint64_t off, void *buf, size_t len, size_t *got) {
+    if (!io || !io->read || !got) return SIGIL_ERR_INVALID_ARG;
+    uint8_t *p = (uint8_t *)buf;
+    *got = 0;
+    while (*got < len) {
+        int n = io->read(io->ctx, off + *got, p + *got, len - *got);
+        if (n < 0) return SIGIL_ERR_IO;
+        if (n == 0) break;
+        *got += (size_t)n;
+    }
+    return SIGIL_OK;
+}
+
 int sigil_io_read_exact(const sigil_io *io, uint64_t off, void *buf, size_t len) {
     if (!io || !io->read) return SIGIL_ERR_INVALID_ARG;
     uint8_t *p = (uint8_t *)buf;

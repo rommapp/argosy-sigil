@@ -37,6 +37,8 @@ _JNI_CLASSES = {
     "SigilResult": "g_result_class",
     "SigilSaveMember": "g_member_class",
     "SigilSaveUnit": "g_unit_class",
+    "SigilCardEntry": "g_card_entry_class",
+    "SigilCardListing": "g_card_listing_class",
     "SigilException": "g_exception_class",
 }
 
@@ -57,6 +59,7 @@ _API_SURFACE = {
     "layout subdirs": ("fun layoutSubdirs(", "def layout_subdirs(", "func LayoutSubdirs("),
     "content stem": ("fun contentStem(", "def content_stem(", "func ContentStem("),
     "list save root": ("fun listSaveRoot(", "def list_save_root(", "func ListSaveRoot("),
+    "list card": ("fun listCard(", "def list_card(", "func ListCard("),
 }
 
 _EXTRACT_OPTIONS = {
@@ -213,6 +216,36 @@ def test_jni_string_args_match_descriptors():
             f"{class_name}: {len(string_args)} jstring args feed a "
             f"{string_params}-String constructor"
         )
+
+
+def _c_card_formats() -> list[str]:
+    block = re.search(
+        r"typedef enum\s*\{(.*?)\}\s*sigil_card_format;", HEADER.read_text(), re.DOTALL
+    )
+    assert block, "sigil_card_format enum not found in sigil.h"
+    names = re.findall(r"SIGIL_CARD_FORMAT_(\w+)", block.group(1))
+    assert names and names[0] == "UNKNOWN", "sigil_card_format must start at UNKNOWN = 0"
+    return names
+
+
+def test_card_format_names_match_across_bindings():
+    """Each binding names a card format by its position in the C enum; a
+    format added in C and missed in a binding reads back as unknown."""
+    formats = _c_card_formats()
+    py_map = dict(re.findall(r'lib\.SIGIL_CARD_FORMAT_(\w+):\s*"([^"]+)"', PY_INIT.read_text()))
+    assert set(py_map) == set(formats), f"_CARD_FORMAT_NAMES differs from sigil_card_format: {py_map}"
+    for name, string in py_map.items():
+        assert string == _canonical_string(name), f"{name} maps to {string!r}"
+
+    go_names = re.findall(r"C\.SIGIL_CARD_FORMAT_(\w+)", GO.read_text())
+    assert set(go_names) == set(formats), "Go CardFormat constants differ from sigil_card_format"
+
+    kotlin = re.search(r"enum class Format\(val code: Int\)\s*\{(.*?);", KOTLIN.read_text(), re.DOTALL)
+    assert kotlin, "Kotlin SigilCardListing.Format enum not found"
+    entries = [(_pascal_to_upper_snake(n), int(v)) for n, v in re.findall(r"(\w+)\((\d+)\)", kotlin.group(1))]
+    assert entries == list(zip(formats, range(len(formats)))), (
+        f"Kotlin Format {entries} disagrees with sigil_card_format {formats}"
+    )
 
 
 def _jni_exception_thrown_on_failure() -> bool:

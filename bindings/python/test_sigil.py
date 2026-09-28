@@ -35,6 +35,49 @@ def test_nonexistent_path_raises_io_error(tmp_path):
     assert excinfo.value.code < 0
 
 
+def _ps1_card(saves):
+    """A raw PS1 card: `saves` is a list of (directory name, block count), laid out in order."""
+    card = bytearray(128 * 1024)
+    card[0:2] = b"MC"
+    for frame in range(1, 16):
+        card[frame * 128] = 0xA0
+        card[frame * 128 + 8 : frame * 128 + 10] = b"\xff\xff"
+    block = 1
+    for name, blocks in saves:
+        for i in range(blocks):
+            frame = (block + i) * 128
+            state = 0x51 if i == 0 else (0x53 if i == blocks - 1 else 0x52)
+            link = 0xFFFF if i == blocks - 1 else block + i  # next frame, zero-based
+            card[frame : frame + 4] = struct.pack("<I", state)
+            card[frame + 4 : frame + 8] = struct.pack("<I", blocks * 8192 if i == 0 else 0)
+            card[frame + 8 : frame + 10] = struct.pack("<H", link)
+            if i == 0:
+                card[frame + 10 : frame + 10 + len(name)] = name.encode("ascii")
+        block += blocks
+    return bytes(card)
+
+
+def test_list_card_reports_saves_owners_and_space(tmp_path):
+    path = tmp_path / "card.mcr"
+    path.write_bytes(_ps1_card([("BASLUSP01041CROSS", 2), ("OPTIONS0000", 1)]))
+    listing = sigil.list_card(path)
+    assert listing.format == "ps1-raw"
+    assert listing.total_blocks == 15
+    assert listing.free_slots == 12
+    assert listing.corrupt_count == 0
+    assert [(e.name, e.owner_id, e.blocks, e.first_block) for e in listing.entries] == [
+        ("BASLUSP01041CROSS", "SLUS-01041", 2, 1),
+        ("OPTIONS0000", "", 1, 3),
+    ]
+
+
+def test_list_card_rejects_a_file_that_is_not_a_card(tmp_path):
+    path = tmp_path / "save.mcs"
+    path.write_bytes(b"Q\0\0\0" + bytes(8316))
+    with pytest.raises(sigil.SigilUnsupportedFormatError):
+        sigil.list_card(path)
+
+
 def _write_xex_fixture(path):
     # Minimal XEX2: one optional header (exec info) pointing at 0x100,
     # title ID bytes at 0x10C. Mirrors tests/unit_xex.c.

@@ -142,6 +142,33 @@ member's `Path` under the root. Unzip a `Folder` artifact from the
 root's parent of the key folder. `Expected` says where a primary goes
 when the emulator has not created one yet.
 
+## Memory cards
+
+List the saves on a memory card. PS1 cards are read today: the raw card
+(`.mcr`, `.mcd`, `.srm`), DexDrive `.gme` and PSP or Vita `.vmp`.
+
+```go
+sigil.ListCard(
+    path string,        // required. The card file. Its format is detected from the content.
+) (*CardListing, error) // sigil.ErrUnsupportedFormat when the file is not a card sigil reads.
+
+type CardListing struct {
+    Format       CardFormat  // CardFormatPS1Raw, CardFormatPS1GME, CardFormatPS1VMP.
+    TotalBlocks  uint32
+    FreeBlocks   uint32      // Blocks a new save can use.
+    FreeSlots    uint32      // Directory slots a new save can use.
+    CorruptCount uint32      // Saves left out because their block chain is broken.
+    Entries      []CardEntry // Live saves, in directory order.
+}
+
+type CardEntry struct {
+    Name       string // As stored on the card, e.g. "BASLUSP01041USCHRO00".
+    OwnerID    string // Product code as Extract reports it, e.g. "SLUS-01041". "" when the name carries none.
+    Blocks     uint32
+    FirstBlock uint32
+}
+```
+
 ## Helpers
 
 ```go
