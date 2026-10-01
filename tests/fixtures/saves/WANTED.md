@@ -4,7 +4,7 @@ Cases no sample covers yet. The saves already gathered came from a RomM store an
 
 ## PS1 (`psx`)
 
-- A card with real saves written by pcsx_rearmed, Beetle PSX, SwanStation or DuckStation.
+- A card with real saves written by pcsx_rearmed, Beetle PSX or SwanStation. (DuckStation: `thps2-duckstation-mcd`.)
 - A card holding live saves from several different games.
 - A card with a deleted middle or last block (directory states 0xA2, 0xA3).
 - `.vgs`/`.mem` and `.psx` card wrappers, a headerless single save, a PocketStation save.
@@ -12,7 +12,8 @@ Cases no sample covers yet. The saves already gathered came from a RomM store an
 ## PS2 (`ps2`)
 
 - A `.ps2` file card written by PCSX2 with real saves, and a 16 MB or larger card.
-- A whole PCSX2 folder card, with `_pcsx2_superblock` and a save that has `_pcsx2_meta` files.
+- A whole PCSX2 folder card, with a save that has `_pcsx2_meta` files.
+- The `_pcsx2_superblock` PCSX2 writes when it formats a folder card, and the one AetherSX2 or ARMSX2 writes. sigil builds its own from mymc's blank card; a real one settles the card_flags byte (`0x2B` in the mymc samples, `0x52` in PCSX2's reference) and what follows the superblock page. The RomM store holds none, since uploads are single save folders.
 - A NetherSX2 save.
 
 ## PSP, Vita (`psp`, `psvita`)
