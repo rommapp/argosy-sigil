@@ -8,8 +8,13 @@ package sigil
 #cgo CFLAGS: -I${SRCDIR}/../../include
 #cgo LDFLAGS: -L${SRCDIR}/../../build -lsigil -lsigil_chdr -lsigil_zstd -lsigil_zlib -lsigil_lzma -lsigil_aes
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h>
+#endif
 #include "sigil.h"
 
 static sigil_io *sigil_go_open_member(void *ctx, const char *relative_path) {
@@ -26,6 +31,47 @@ static void sigil_go_set_open(sigil_save_request *req, char *root) {
 
 static int sigil_go_hash(sigil_save_unit *unit, char *root) {
     return sigil_save_hash(unit, sigil_go_open_member, root);
+}
+
+static int sigil_go_make_parents(char *path) {
+    for (char *p = path + 1; *p; p++) {
+        if (*p != '/') continue;
+        *p = '\0';
+#ifdef _WIN32
+        int rc = _mkdir(path);
+#else
+        int rc = mkdir(path, 0755);
+#endif
+        *p = '/';
+        if (rc != 0 && errno != EEXIST) return -1;
+    }
+    return 0;
+}
+
+static int sigil_go_write_member(void *ctx, const char *relative_path, const uint8_t *data, size_t len) {
+    char path[SIGIL_SAVE_PATH_MAX * 2];
+    int n = snprintf(path, sizeof(path), "%s/%s", (const char *)ctx, relative_path);
+    if (n <= 0 || (size_t)n >= sizeof(path) || sigil_go_make_parents(path) != 0) return -1;
+    FILE *f = fopen(path, "wb");
+    if (!f) return -1;
+    size_t wrote = fwrite(data, 1, len, f);
+    int closed = fclose(f);
+    return wrote == len && closed == 0 ? 0 : -1;
+}
+
+static int sigil_go_remove_member(void *ctx, const char *relative_path) {
+    char path[SIGIL_SAVE_PATH_MAX * 2];
+    int n = snprintf(path, sizeof(path), "%s/%s", (const char *)ctx, relative_path);
+    if (n <= 0 || (size_t)n >= sizeof(path)) return -1;
+    return remove(path) == 0 ? 0 : -1;
+}
+
+static void sigil_go_set_sync_io(sigil_sync_request *req, char *root) {
+    req->save.open = sigil_go_open_member;
+    req->save.open_ctx = root;
+    req->write = sigil_go_write_member;
+    req->remove = sigil_go_remove_member;
+    req->write_ctx = root;
 }
 */
 import "C"
@@ -199,6 +245,10 @@ var (
 	ErrNeedsKey          = errors.New("sigil: decryption key required")
 	ErrCrypto            = errors.New("sigil: crypto failure")
 	ErrOOM               = errors.New("sigil: out of memory")
+	ErrConflict          = errors.New("sigil: the saves changed locally since the last sync")
+	ErrExists            = errors.New("sigil: a save with that name already exists")
+	ErrNoSpace           = errors.New("sigil: not enough free space")
+	ErrUncollected       = errors.New("sigil: the volume holds saves not collected yet")
 )
 
 func errFromCode(rc C.int) error {
@@ -221,6 +271,14 @@ func errFromCode(rc C.int) error {
 		return ErrCrypto
 	case C.SIGIL_ERR_OOM:
 		return ErrOOM
+	case C.SIGIL_ERR_CONFLICT:
+		return ErrConflict
+	case C.SIGIL_ERR_EXISTS:
+		return ErrExists
+	case C.SIGIL_ERR_NO_SPACE:
+		return ErrNoSpace
+	case C.SIGIL_ERR_UNCOLLECTED:
+		return ErrUncollected
 	default:
 		return fmt.Errorf("sigil: error %d", int(rc))
 	}
@@ -437,7 +495,7 @@ func LayoutSubdirs(layout string) []string {
 	return subdirs
 }
 
-const subdirListDepth = 3
+const subdirListDepth = 4
 
 // ListSaveRoot returns the root-relative paths of the files directly in root
 // plus those under the layout's subfolders.
@@ -484,6 +542,75 @@ func listRecursive(dir, relative string, depth int, out *[]string) error {
 	return nil
 }
 
+// cAllocs tracks C memory a call hands to sigil, freed together afterwards.
+type cAllocs struct {
+	ptrs []unsafe.Pointer
+}
+
+func (a *cAllocs) alloc(size C.size_t) unsafe.Pointer {
+	p := C.calloc(1, size)
+	a.ptrs = append(a.ptrs, p)
+	return p
+}
+
+func (a *cAllocs) str(s string) *C.char {
+	p := C.CString(s)
+	a.ptrs = append(a.ptrs, unsafe.Pointer(p))
+	return p
+}
+
+func (a *cAllocs) strings(items []string) **C.char {
+	arr := (**C.char)(a.alloc(C.size_t(len(items)+1) * C.size_t(unsafe.Sizeof((*C.char)(nil)))))
+	for i, s := range items {
+		unsafe.Slice(arr, len(items))[i] = a.str(s)
+	}
+	return arr
+}
+
+func (a *cAllocs) free() {
+	for _, p := range a.ptrs {
+		C.free(p)
+	}
+	a.ptrs = nil
+}
+
+// fillSaveRequest fills creq for game running under core; every buffer it
+// points at is owned by a.
+func fillSaveRequest(a *cAllocs, creq *C.sigil_save_request, game *Result, core, contentPath string,
+	listing []string, options map[string]string) {
+	cresult := (*C.sigil_result)(a.alloc(C.sizeof_sigil_result))
+	cresult.struct_version = C.SIGIL_RESULT_V3
+	cresult.features = C.uint32_t(game.Features)
+	cresult.platform = C.sigil_platform(game.Platform)
+	copyChars(cresult.title_id[:], game.TitleID)
+	copyChars(cresult.save_id[:], game.SaveID)
+
+	creq.struct_version = C.SIGIL_SAVE_REQUEST_V1
+	creq.layout = a.str(core)
+	if game.PlatformSlug != "" {
+		creq.platform = a.str(game.PlatformSlug)
+	}
+	creq.content_path = a.str(contentPath)
+	creq.result = cresult
+	creq.features = C.uint32_t(game.Features)
+
+	keys := make([]string, 0, len(options))
+	for k := range options {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	coptions := (*C.sigil_save_option)(a.alloc(C.size_t(len(keys)+1) * C.sizeof_sigil_save_option))
+	copts := unsafe.Slice(coptions, len(keys))
+	for i, key := range keys {
+		copts[i].key = a.str(key)
+		copts[i].value = a.str(options[key])
+	}
+	creq.options = coptions
+	creq.option_count = C.size_t(len(keys))
+	creq.listing = a.strings(listing)
+	creq.listing_count = C.size_t(len(listing))
+}
+
 // LocateSaves returns the files under a save root that belong to game when
 // core runs contentPath. Names only; no file is read. opts may be nil.
 // docs/go.md defines every input.
@@ -502,59 +629,10 @@ func LocateSaves(game *Result, core, contentPath string, opts *LocateOptions) (*
 		}
 	}
 
-	var cstrings []*C.char
-	cstr := func(s string) *C.char {
-		p := C.CString(s)
-		cstrings = append(cstrings, p)
-		return p
-	}
-	defer func() {
-		for _, p := range cstrings {
-			C.free(unsafe.Pointer(p))
-		}
-	}()
-
-	cresult := (*C.sigil_result)(C.calloc(1, C.sizeof_sigil_result))
-	defer C.free(unsafe.Pointer(cresult))
-	cresult.struct_version = C.SIGIL_RESULT_V3
-	cresult.features = C.uint32_t(game.Features)
-	copyChars(cresult.title_id[:], game.TitleID)
-	copyChars(cresult.save_id[:], game.SaveID)
-
-	creq := (*C.sigil_save_request)(C.calloc(1, C.sizeof_sigil_save_request))
-	defer C.free(unsafe.Pointer(creq))
-	creq.struct_version = C.SIGIL_SAVE_REQUEST_V1
-	creq.layout = cstr(core)
-	if game.PlatformSlug != "" {
-		creq.platform = cstr(game.PlatformSlug)
-	}
-	creq.content_path = cstr(contentPath)
-	creq.result = cresult
-	creq.features = C.uint32_t(game.Features)
-
-	keys := make([]string, 0, len(opts.Options))
-	for k := range opts.Options {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	coptions := (*C.sigil_save_option)(C.calloc(C.size_t(len(keys)+1), C.sizeof_sigil_save_option))
-	defer C.free(unsafe.Pointer(coptions))
-	copts := unsafe.Slice(coptions, len(keys))
-	for i, key := range keys {
-		copts[i].key = cstr(key)
-		copts[i].value = cstr(opts.Options[key])
-	}
-	creq.options = coptions
-	creq.option_count = C.size_t(len(keys))
-
-	clisting := (**C.char)(C.calloc(C.size_t(len(listing)+1), C.size_t(unsafe.Sizeof((*C.char)(nil)))))
-	defer C.free(unsafe.Pointer(clisting))
-	paths := unsafe.Slice(clisting, len(listing))
-	for i, p := range listing {
-		paths[i] = cstr(p)
-	}
-	creq.listing = clisting
-	creq.listing_count = C.size_t(len(listing))
+	var a cAllocs
+	defer a.free()
+	creq := (*C.sigil_save_request)(a.alloc(C.sizeof_sigil_save_request))
+	fillSaveRequest(&a, creq, game, core, contentPath, listing, opts.Options)
 	C.sigil_go_set_open(creq, nil)
 
 	var cunit *C.sigil_save_unit
@@ -733,6 +811,194 @@ func ListCard(path string) (*CardListing, error) {
 		})
 	}
 	return listing, nil
+}
+
+// SyncOptions are the optional inputs to Collect and Restore. Listing
+// (root-relative paths) replaces listing the save root; GameIDs are every id
+// the game's saves may carry (all discs of a set); State is what the last call
+// returned for this game.
+type SyncOptions struct {
+	Listing        []string
+	Options        map[string]string
+	GameIDs        []string
+	State          []byte
+	Unmanaged      bool
+	OverwriteLocal bool
+	Claimed        []string    // Saturn, Sega CD: names from Unowned the user said belong to this game.
+	Companions     []Companion // Games whose saves this game reads, in the order they go on.
+}
+
+// Companion is a game whose saves this game reads, as a sequel reads its
+// prequel's. Unit is its unit from RomM for Restore, or nil to leave its
+// saves as they are.
+type Companion struct {
+	GameIDs []string
+	Unit    []byte
+}
+
+// CompanionResult is what Collect found of a companion's saves with the
+// game's, as the companion's unit. Data is nil when none are there.
+type CompanionResult struct {
+	Data         []byte
+	ContentHash  string
+	IdentityHash string
+	Changed      bool
+}
+
+// OverflowError is the ErrNoSpace Restore returns when the saves don't fit:
+// Name is the save that didn't, Blocks the blocks it lacked (0 when a
+// directory slot was missing instead).
+type OverflowError struct {
+	Name   string
+	Blocks uint32
+}
+
+func (e *OverflowError) Error() string {
+	return fmt.Sprintf("sigil: not enough free space for %s (%d blocks short)", e.Name, e.Blocks)
+}
+
+func (e *OverflowError) Unwrap() error { return ErrNoSpace }
+
+// SyncResult is what Collect or Restore produced. Store State and pass it to
+// the next call for this game.
+type SyncResult struct {
+	Artifact     string
+	Shape        SaveShape
+	Data         []byte
+	ContentHash  string
+	IdentityHash string
+	Changed      bool
+	Conflict     bool
+	State        []byte
+	Holding      []byte            // Saturn, Sega CD: zip of the saves on a shared volume with no known owner.
+	Unowned      []string          // The names of the saves in Holding.
+	RestoreAgain bool              // Unmanaged: the saves the last Restore wrote were overwritten.
+	Companions   []CompanionResult // Collect: one per SyncOptions.Companions, in order.
+}
+
+func runSync(unit []byte, game *Result, core, contentPath, saveRoot string, opts *SyncOptions) (*SyncResult, error) {
+	if game == nil || saveRoot == "" {
+		return nil, ErrInvalidArg
+	}
+	if opts == nil {
+		opts = &SyncOptions{}
+	}
+	listing := opts.Listing
+	if listing == nil {
+		var err error
+		if listing, err = ListSaveRoot(saveRoot, core); err != nil {
+			return nil, err
+		}
+	}
+
+	var a cAllocs
+	defer a.free()
+	creq := (*C.sigil_sync_request)(a.alloc(C.sizeof_sigil_sync_request))
+	creq.struct_version = C.SIGIL_SYNC_REQUEST_V1
+	fillSaveRequest(&a, &creq.save, game, core, contentPath, listing, opts.Options)
+	creq.game_ids = a.strings(opts.GameIDs)
+	creq.game_id_count = C.size_t(len(opts.GameIDs))
+	creq.claimed = a.strings(opts.Claimed)
+	creq.claimed_count = C.size_t(len(opts.Claimed))
+	if n := len(opts.Companions); n > 0 {
+		companions := (*C.sigil_sync_companion)(a.alloc(C.size_t(n) * C.sizeof_sigil_sync_companion))
+		slots := unsafe.Slice(companions, n)
+		for i := range slots {
+			k := &slots[i]
+			k.game_ids = a.strings(opts.Companions[i].GameIDs)
+			k.game_id_count = C.size_t(len(opts.Companions[i].GameIDs))
+			if unit := opts.Companions[i].Unit; unit != nil {
+				buf := a.alloc(C.size_t(len(unit) + 1))
+				copy(unsafe.Slice((*byte)(buf), len(unit)), unit)
+				k.unit = (*C.uint8_t)(buf)
+				k.unit_len = C.size_t(len(unit))
+			}
+		}
+		creq.companions = companions
+		creq.companion_count = C.size_t(n)
+	}
+	if opts.Unmanaged {
+		creq.mode = C.SIGIL_SYNC_UNMANAGED
+	}
+	if opts.OverwriteLocal {
+		creq.overwrite_local = 1
+	}
+	if len(opts.State) > 0 {
+		state := a.alloc(C.size_t(len(opts.State)))
+		copy(unsafe.Slice((*byte)(state), len(opts.State)), opts.State)
+		creq.state = (*C.uint8_t)(state)
+		creq.state_len = C.size_t(len(opts.State))
+	}
+	C.sigil_go_set_sync_io(creq, a.str(saveRoot))
+
+	var cres *C.sigil_sync_result
+	var rc C.int
+	if unit == nil {
+		rc = C.sigil_collect(creq, &cres)
+	} else {
+		cunit := a.alloc(C.size_t(len(unit) + 1))
+		copy(unsafe.Slice((*byte)(cunit), len(unit)), unit)
+		rc = C.sigil_restore(creq, (*C.uint8_t)(cunit), C.size_t(len(unit)), &cres)
+	}
+	if cres != nil {
+		defer C.sigil_sync_result_free(cres)
+	}
+	if rc == C.SIGIL_ERR_NO_SPACE && cres != nil {
+		return nil, &OverflowError{Name: C.GoString(&cres.overflow[0]), Blocks: uint32(cres.overflow_blocks)}
+	}
+	if err := errFromCode(rc); err != nil {
+		return nil, err
+	}
+	out := &SyncResult{
+		Artifact:     C.GoString(&cres.artifact[0]),
+		Shape:        SaveShape(cres.shape),
+		ContentHash:  C.GoString(&cres.content_hash[0]),
+		IdentityHash: C.GoString(&cres.identity_hash[0]),
+		Changed:      cres.changed != 0,
+		Conflict:     cres.conflict != 0,
+		RestoreAgain: cres.restore_again != 0,
+	}
+	if cres.data != nil {
+		out.Data = C.GoBytes(unsafe.Pointer(cres.data), C.int(cres.len))
+	}
+	if cres.state != nil {
+		out.State = C.GoBytes(unsafe.Pointer(cres.state), C.int(cres.state_len))
+	}
+	if cres.holding != nil {
+		out.Holding = C.GoBytes(unsafe.Pointer(cres.holding), C.int(cres.holding_len))
+	}
+	for _, name := range unsafe.Slice(cres.unowned, cres.unowned_count) {
+		out.Unowned = append(out.Unowned, C.GoString(&name[0]))
+	}
+	for _, c := range unsafe.Slice(cres.companions, cres.companion_count) {
+		result := CompanionResult{
+			ContentHash:  C.GoString(&c.content_hash[0]),
+			IdentityHash: C.GoString(&c.identity_hash[0]),
+			Changed:      c.changed != 0,
+		}
+		if c.data != nil {
+			result.Data = C.GoBytes(unsafe.Pointer(c.data), C.int(c.len))
+		}
+		out.Companions = append(out.Companions, result)
+	}
+	return out, nil
+}
+
+// Collect gathers game's saves under saveRoot into the unit that travels to
+// RomM. Store the returned State once the unit reached RomM. docs/go.md
+// defines every input.
+func Collect(game *Result, core, contentPath, saveRoot string, opts *SyncOptions) (*SyncResult, error) {
+	return runSync(nil, game, core, contentPath, saveRoot, opts)
+}
+
+// Restore puts unit back under saveRoot and reads it back. It returns
+// ErrConflict, writing nothing, when the saves there changed since the last
+// sync and opts.OverwriteLocal is false.
+func Restore(unit []byte, game *Result, core, contentPath, saveRoot string, opts *SyncOptions) (*SyncResult, error) {
+	if unit == nil {
+		return nil, ErrInvalidArg
+	}
+	return runSync(unit, game, core, contentPath, saveRoot, opts)
 }
 
 // Version returns the sigil C library version.

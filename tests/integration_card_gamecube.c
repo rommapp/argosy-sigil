@@ -392,7 +392,7 @@ static void check_same_identity_refused(const corpus_table *manifest) {
         } else {
             memcpy(copy, image, CARD_2MIB);
             b[0x07] ^= 0x01;
-            if (sigil_gamecube_inject(image, CARD_2MIB, b, b_len) != SIGIL_ERR_INVALID_ARG) fail("fzero-gx-dolphin-gci-set", "a second save of the same identity went on");
+            if (sigil_gamecube_inject(image, CARD_2MIB, b, b_len) != SIGIL_ERR_EXISTS) fail("fzero-gx-dolphin-gci-set", "a second save of the same identity went on");
             if (memcmp(copy, image, CARD_2MIB) != 0) fail("fzero-gx-dolphin-gci-set", "a refused inject changed the card");
         }
     }
@@ -423,7 +423,7 @@ static void check_no_room_for_blocks(const corpus_table *manifest) {
         }
         memcpy(copy, image, CARD_512KIB);
         if (strcmp(l->entries[9].name, "RogueLeader") != 0) fail("card-raw-usa", "directory order differs");
-        if (sigil_gamecube_inject(image, CARD_512KIB, saves.gci[9], saves.len[9]) != SIGIL_ERR_NOT_FOUND) fail("card-raw-usa", "a card without room took a save");
+        if (sigil_gamecube_inject(image, CARD_512KIB, saves.gci[9], saves.len[9]) != SIGIL_ERR_NO_SPACE) fail("card-raw-usa", "a card without room took a save");
         if (memcmp(copy, image, CARD_512KIB) != 0) fail("card-raw-usa", "a refused inject changed the card");
     }
     save_set_free(&saves);
@@ -448,7 +448,7 @@ static void check_no_room_in_directory(const corpus_table *manifest) {
         }
         snprintf((char *)gci + 0x08 + 8, 8, "full");
         memcpy(copy, image, CARD_2MIB);
-        if (sigil_gamecube_inject(image, CARD_2MIB, gci, len) != SIGIL_ERR_NOT_FOUND) fail("bleach-gc-jp-gci", "a full directory took a save");
+        if (sigil_gamecube_inject(image, CARD_2MIB, gci, len) != SIGIL_ERR_NO_SPACE) fail("bleach-gc-jp-gci", "a full directory took a save");
         if (memcmp(copy, image, CARD_2MIB) != 0) fail("bleach-gc-jp-gci", "a refused inject changed the card");
     }
     free(copy);

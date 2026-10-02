@@ -45,8 +45,8 @@ int sigil_bram_read_all(const sigil_io *io, size_t cap, uint8_t **out, size_t *l
 
 /**
  * A Saturn backup RAM volume held collapsed in memory: 32 KiB internal and
- * 4 MiB Yaba Sanshiro volumes use 64-byte blocks, 512 KiB carts 512-byte
- * blocks. Block 0 holds the "BackUpRam Format" signature and block 1 is
+ * 4 MiB Yaba Sanshiro volumes use 64-byte blocks, carts up to 2 MiB 512-byte
+ * blocks and 4 MiB carts 1024-byte blocks. Block 0 holds the "BackUpRam Format" signature and block 1 is
  * unused. Each save starts at an archive block naming it and listing its
  * other blocks; there is no directory.
  */
@@ -60,9 +60,21 @@ typedef struct {
 /**
  * Reads a Saturn volume in any stored form: raw, gzipped by standalone
  * Mednafen, or expanded by Yabause and Yaba Sanshiro. SIGIL_ERR_UNSUPPORTED_FORMAT
- * when the stream is not one; the collapsed size must be 32 KiB, 512 KiB or 4 MiB.
+ * when the stream is not one; the collapsed size must be 32 KiB or 4 MiB (internal
+ * memory) or 512 KiB, 1 MiB or 2 MiB (a cart). A 4 MiB cart reads only through
+ * sigil_saturn_volume_load_cart.
  */
 int sigil_saturn_volume_load(const sigil_io *io, sigil_saturn_volume *vol);
+
+/**
+ * Reads a volume known to be a backup cart: 512 KiB, 1 MiB or 2 MiB with
+ * 512-byte blocks, or 4 MiB with 1024-byte blocks, as the BIOS sizes them.
+ * SIGIL_ERR_UNSUPPORTED_FORMAT for any other size.
+ */
+int sigil_saturn_volume_load_cart(const sigil_io *io, sigil_saturn_volume *vol);
+
+/** Reads a volume known to be internal memory: 32 KiB, or Yaba Sanshiro's 4 MiB, 64-byte blocks. */
+int sigil_saturn_volume_load_internal(const sigil_io *io, sigil_saturn_volume *vol);
 
 /** Releases the volume's buffer. */
 void sigil_saturn_volume_free(sigil_saturn_volume *vol);
@@ -74,6 +86,9 @@ void sigil_saturn_volume_free(sigil_saturn_volume *vol);
  * `vol` receives a new buffer; release it with sigil_saturn_volume_free.
  */
 int sigil_saturn_volume_format(sigil_saturn_volume *vol, size_t size, const sigil_bram_storage *storage);
+
+/** As sigil_saturn_volume_format for a backup cart of 512 KiB, 1 MiB, 2 MiB or 4 MiB. */
+int sigil_saturn_volume_format_cart(sigil_saturn_volume *vol, size_t size, const sigil_bram_storage *storage);
 
 /** Writes the volume in the form it was read or formatted in; the caller frees `*out`. */
 int sigil_saturn_volume_write(const sigil_saturn_volume *vol, uint8_t **out, size_t *len);
@@ -110,7 +125,7 @@ int sigil_saturn_extract(const sigil_saturn_volume *vol, uint32_t first_block,
 /**
  * Adds the .BUP `bup` to the volume, taking the lowest free blocks, and sizes
  * it for this volume's block size whatever block count the .BUP records.
- * SIGIL_ERR_NOT_FOUND when the volume lacks room; SIGIL_ERR_INVALID_ARG when
+ * SIGIL_ERR_NO_SPACE when the volume lacks room; SIGIL_ERR_EXISTS when
  * a save of that name exists; SIGIL_ERR_UNSUPPORTED_FORMAT when `bup` isn't
  * one save. On any error the volume is left unchanged.
  */
@@ -125,5 +140,12 @@ int sigil_saturn_delete(sigil_saturn_volume *vol, uint32_t first_block);
  * header fields a volume doesn't keep are not compared.
  */
 int sigil_saturn_verify(const sigil_saturn_volume *vol, const uint8_t *bup, size_t len);
+
+/**
+ * The MD5 over a .BUP's name, comment, language, size and data. The dates
+ * and the block count, which depends on the volume's block size, leave it
+ * alone.
+ */
+void sigil_saturn_bup_md5(const uint8_t *bup, size_t len, char out[33]);
 
 #endif

@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "sigil.h"
+#include "save_name.h"
+#include <errno.h>
 #include <jni.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 static jclass g_result_class = NULL;
 static jmethodID g_result_ctor = NULL;
@@ -46,27 +50,37 @@ static void load_exception_class(JNIEnv *env) {
     if (g_exception_class) return;
     g_exception_class = global_class(env, "com/nendo/sigil/SigilException");
     if (!g_exception_class) return;
-    /* SigilException(code, message) */
-    g_exception_ctor = find_method(env, g_exception_class, "<init>", "(ILjava/lang/String;)V");
+    /* SigilException(code, message, overflow, overflowBlocks) */
+    g_exception_ctor = find_method(env, g_exception_class, "<init>", "(ILjava/lang/String;Ljava/lang/String;I)V");
 }
 
-static void throw_sigil(JNIEnv *env, int code) {
+/* Throws SigilException for `code`, naming the save that didn't fit and the
+ * blocks it lacked when `overflow` is given. */
+static void throw_sigil_overflow(JNIEnv *env, int code, const char *overflow, uint32_t blocks) {
     if ((*env)->ExceptionCheck(env)) return;
     load_exception_class(env);
     if (g_exception_class && g_exception_ctor) {
+        char escaped[3 * SIGIL_CARD_NAME_MAX + 1];
+        sigil_save_name_escape(overflow ? overflow : "", escaped, sizeof(escaped));
         jstring jmessage = (*env)->NewStringUTF(env, sigil_strerror(code));
-        jobject ex = (*env)->NewObject(env, g_exception_class, g_exception_ctor, (jint)code, jmessage);
+        jstring joverflow = (*env)->NewStringUTF(env, escaped);
+        jobject ex = (*env)->NewObject(env, g_exception_class, g_exception_ctor, (jint)code, jmessage, joverflow,
+                                       (jint)blocks);
         if (ex) {
             (*env)->Throw(env, (jthrowable)ex);
             (*env)->DeleteLocalRef(env, jmessage);
+            (*env)->DeleteLocalRef(env, joverflow);
             return;
         }
         (*env)->ExceptionClear(env);
         (*env)->DeleteLocalRef(env, jmessage);
+        (*env)->DeleteLocalRef(env, joverflow);
     }
     jclass fallback = find_class(env, "java/lang/IllegalStateException");
     if (fallback) (*env)->ThrowNew(env, fallback, sigil_strerror(code));
 }
+
+static void throw_sigil(JNIEnv *env, int code) { throw_sigil_overflow(env, code, NULL, 0); }
 
 static void throw_binding_broken(JNIEnv *env, const char *what) {
     if ((*env)->ExceptionCheck(env)) return;
@@ -87,6 +101,10 @@ static jclass g_card_entry_class = NULL;
 static jmethodID g_card_entry_ctor = NULL;
 static jclass g_card_listing_class = NULL;
 static jmethodID g_card_listing_ctor = NULL;
+static jclass g_sync_result_class = NULL;
+static jmethodID g_sync_result_ctor = NULL;
+static jclass g_companion_result_class = NULL;
+static jmethodID g_companion_result_ctor = NULL;
 
 static bool unit_classes_ready(void) {
     return g_member_class && g_member_ctor && g_unit_class && g_unit_ctor
@@ -139,6 +157,12 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
     g_card_listing_class = NULL;
     g_card_entry_ctor = NULL;
     g_card_listing_ctor = NULL;
+    if (g_sync_result_class) (*env)->DeleteGlobalRef(env, g_sync_result_class);
+    g_sync_result_class = NULL;
+    g_sync_result_ctor = NULL;
+    if (g_companion_result_class) (*env)->DeleteGlobalRef(env, g_companion_result_class);
+    g_companion_result_class = NULL;
+    g_companion_result_ctor = NULL;
 }
 
 JNIEXPORT jstring JNICALL
@@ -498,17 +522,10 @@ static void load_card_classes(JNIEnv *env) {
     if (!g_array_list_add) g_array_list_add = find_method(env, g_array_list_class, "add", "(Ljava/lang/Object;)Z");
 }
 
-/* NewStringUTF aborts under CheckJNI on bytes that aren't modified UTF-8, and
- * a card name is raw bytes, so anything outside printable ASCII becomes '?'. */
-static jstring ascii_string(JNIEnv *env, const char *raw) {
-    char clean[SIGIL_CARD_NAME_MAX];
-    size_t i = 0;
-    for (; raw[i] && i < sizeof(clean) - 1; i++) {
-        unsigned char c = (unsigned char)raw[i];
-        clean[i] = (c >= 0x20 && c < 0x7F) ? (char)c : '?';
-    }
-    clean[i] = '\0';
-    return (*env)->NewStringUTF(env, clean);
+static jstring save_name_string(JNIEnv *env, const char *raw) {
+    char escaped[3 * SIGIL_CARD_NAME_MAX + 1];
+    sigil_save_name_escape(raw, escaped, sizeof(escaped));
+    return (*env)->NewStringUTF(env, escaped);
 }
 
 JNIEXPORT jobject JNICALL
@@ -537,8 +554,8 @@ Java_com_nendo_sigil_Sigil_nativeListCard(JNIEnv *env, jclass clazz, jstring jpa
     if (entries) {
         for (size_t i = 0; i < listing->entry_count; i++) {
             const sigil_card_entry *e = &listing->entries[i];
-            jstring jname  = ascii_string(env, e->name);
-            jstring jowner = ascii_string(env, e->owner_id);
+            jstring jname  = save_name_string(env, e->name);
+            jstring jowner = save_name_string(env, e->owner_id);
             jobject je = (*env)->NewObject(env, g_card_entry_class, g_card_entry_ctor,
                                            jname, jowner, (jint)e->blocks, (jint)e->first_block);
             if (je) (*env)->CallBooleanMethod(env, entries, g_array_list_add, je);
@@ -553,6 +570,297 @@ Java_com_nendo_sigil_Sigil_nativeListCard(JNIEnv *env, jclass clazz, jstring jpa
     }
     sigil_card_listing_free(listing);
     if (!out && !(*env)->ExceptionCheck(env)) throw_sigil(env, SIGIL_ERR_OOM);
+    return out;
+}
+
+/* ---- sync ------------------------------------------------------------------ */
+
+static void load_sync_result_class(JNIEnv *env) {
+    if (g_sync_result_class && g_sync_result_ctor && g_companion_result_ctor && g_array_list_add) return;
+    if (!g_sync_result_class) g_sync_result_class = global_class(env, "com/nendo/sigil/SigilSyncResult");
+    if (!g_companion_result_class)
+        g_companion_result_class = global_class(env, "com/nendo/sigil/SigilCompanionResult");
+    if (!g_array_list_class) g_array_list_class = global_class(env, "java/util/ArrayList");
+    if (!g_sync_result_class || !g_companion_result_class || !g_array_list_class) return;
+    /* SigilSyncResult(artifact, shapeCode, data, contentHash, identityHash, changed, conflict, state,
+     *                 holding, unowned, restoreAgain, companions) */
+    g_sync_result_ctor = find_method(env, g_sync_result_class, "<init>",
+        "(Ljava/lang/String;I[BLjava/lang/String;Ljava/lang/String;ZZ[B[BLjava/util/List;ZLjava/util/List;)V");
+    /* SigilCompanionResult(data, contentHash, identityHash, changed) */
+    g_companion_result_ctor = find_method(env, g_companion_result_class, "<init>",
+        "([BLjava/lang/String;Ljava/lang/String;Z)V");
+    if (!g_array_list_ctor) g_array_list_ctor = find_method(env, g_array_list_class, "<init>", "()V");
+    if (!g_array_list_add) g_array_list_add = find_method(env, g_array_list_class, "add", "(Ljava/lang/Object;)Z");
+}
+
+static jobject name_list(JNIEnv *env, char (*items)[SIGIL_CARD_NAME_MAX], size_t count) {
+    jobject list = (*env)->NewObject(env, g_array_list_class, g_array_list_ctor);
+    if (!list) return NULL;
+    for (size_t i = 0; i < count; i++) {
+        jstring s = save_name_string(env, items[i]);
+        (*env)->CallBooleanMethod(env, list, g_array_list_add, s);
+        (*env)->DeleteLocalRef(env, s);
+    }
+    return list;
+}
+
+static int make_parents(char *path) {
+    for (char *p = path + 1; *p; p++) {
+        if (*p != '/') continue;
+        *p = '\0';
+        int rc = mkdir(path, 0755);
+        *p = '/';
+        if (rc != 0 && errno != EEXIST) return -1;
+    }
+    return 0;
+}
+
+static int write_member(void *ctx, const char *relative_path, const uint8_t *data, size_t len) {
+    open_ctx *o = (open_ctx *)ctx;
+    char path[SIGIL_SAVE_PATH_MAX * 2];
+    int n = snprintf(path, sizeof(path), "%s/%s", o->root, relative_path);
+    if (n <= 0 || (size_t)n >= sizeof(path) || make_parents(path) != 0) return -1;
+    FILE *f = fopen(path, "wb");
+    if (!f) return -1;
+    size_t wrote = fwrite(data, 1, len, f);
+    int closed = fclose(f);
+    return wrote == len && closed == 0 ? 0 : -1;
+}
+
+static int remove_member(void *ctx, const char *relative_path) {
+    open_ctx *o = (open_ctx *)ctx;
+    char path[SIGIL_SAVE_PATH_MAX * 2];
+    int n = snprintf(path, sizeof(path), "%s/%s", o->root, relative_path);
+    if (n <= 0 || (size_t)n >= sizeof(path)) return -1;
+    return unlink(path) == 0 ? 0 : -1;
+}
+
+static jbyteArray byte_array(JNIEnv *env, const uint8_t *data, size_t len) {
+    jbyteArray out = (*env)->NewByteArray(env, (jsize)len);
+    if (out && len) (*env)->SetByteArrayRegion(env, out, 0, (jsize)len, (const jbyte *)data);
+    return out;
+}
+
+typedef struct {
+    jobjectArray ids_array;
+    const char **ids;
+    jsize        id_count;
+    jbyteArray   unit_array;
+    jbyte       *unit;
+} borrowed_companion;
+
+/* Borrows each companion's ids and unit; NULL when the arrays disagree or memory runs out. */
+static sigil_sync_companion *borrow_companions(JNIEnv *env, jobjectArray jids, jobjectArray junits,
+                                               borrowed_companion **out_borrowed, jsize *out_count) {
+    *out_borrowed = NULL;
+    *out_count = 0;
+    jsize count = jids ? (*env)->GetArrayLength(env, jids) : 0;
+    jsize unit_count = junits ? (*env)->GetArrayLength(env, junits) : 0;
+    if (count != unit_count) return NULL;
+    sigil_sync_companion *companions = calloc((size_t)count + 1, sizeof(*companions));
+    borrowed_companion *borrowed = calloc((size_t)count + 1, sizeof(*borrowed));
+    if (!companions || !borrowed) { free(companions); free(borrowed); return NULL; }
+    *out_borrowed = borrowed;
+    for (jsize i = 0; i < count; i++) {
+        borrowed_companion *b = &borrowed[i];
+        b->ids_array = (jobjectArray)(*env)->GetObjectArrayElement(env, jids, i);
+        b->ids = borrow_strings(env, b->ids_array, &b->id_count);
+        b->unit_array = (jbyteArray)(*env)->GetObjectArrayElement(env, junits, i);
+        b->unit = b->unit_array ? (*env)->GetByteArrayElements(env, b->unit_array, NULL) : NULL;
+        *out_count = i + 1;
+        if (!b->ids || (b->unit_array && !b->unit)) { free(companions); return NULL; }
+        companions[i].game_ids = b->ids;
+        companions[i].game_id_count = (size_t)b->id_count;
+        companions[i].unit = (const uint8_t *)b->unit;
+        companions[i].unit_len = b->unit ? (size_t)(*env)->GetArrayLength(env, b->unit_array) : 0;
+    }
+    return companions;
+}
+
+static void release_companions(JNIEnv *env, borrowed_companion *borrowed, jsize count) {
+    if (!borrowed) return;
+    for (jsize i = 0; i < count; i++) {
+        borrowed_companion *b = &borrowed[i];
+        release_strings(env, b->ids_array, b->ids, b->id_count);
+        if (b->unit) (*env)->ReleaseByteArrayElements(env, b->unit_array, b->unit, JNI_ABORT);
+        if (b->ids_array) (*env)->DeleteLocalRef(env, b->ids_array);
+        if (b->unit_array) (*env)->DeleteLocalRef(env, b->unit_array);
+    }
+    free(borrowed);
+}
+
+static jobject companion_list(JNIEnv *env, const sigil_sync_companion_result *items, size_t count) {
+    jobject list = (*env)->NewObject(env, g_array_list_class, g_array_list_ctor);
+    if (!list) return NULL;
+    for (size_t i = 0; i < count; i++) {
+        const sigil_sync_companion_result *c = &items[i];
+        jbyteArray jdata  = c->data ? byte_array(env, c->data, c->len) : NULL;
+        jstring jhash     = (*env)->NewStringUTF(env, c->content_hash);
+        jstring jidentity = (*env)->NewStringUTF(env, c->identity_hash);
+        jobject item = (*env)->NewObject(env, g_companion_result_class, g_companion_result_ctor,
+                                         jdata, jhash, jidentity, c->changed ? JNI_TRUE : JNI_FALSE);
+        if (item) (*env)->CallBooleanMethod(env, list, g_array_list_add, item);
+        if (jdata) (*env)->DeleteLocalRef(env, jdata);
+        (*env)->DeleteLocalRef(env, jhash);
+        (*env)->DeleteLocalRef(env, jidentity);
+        if (!item || (*env)->ExceptionCheck(env)) return NULL;
+        (*env)->DeleteLocalRef(env, item);
+    }
+    return list;
+}
+
+JNIEXPORT jobject JNICALL
+Java_com_nendo_sigil_Sigil_nativeSync(JNIEnv *env, jclass clazz,
+                                       jbyteArray junit, jstring jroot, jstring jlayout,
+                                       jstring jplatform, jstring jcontent, jstring jtitle_id,
+                                       jstring jsave_id, jint features,
+                                       jobjectArray jopt_keys, jobjectArray jopt_values,
+                                       jobjectArray jlisting, jobjectArray jgame_ids,
+                                       jbyteArray jstate, jboolean unmanaged, jboolean overwrite_local,
+                                       jobjectArray jclaimed, jobjectArray jcompanion_ids,
+                                       jobjectArray jcompanion_units) {
+    (void)clazz;
+    if (!jroot || !jlayout || !jcontent) { throw_sigil(env, SIGIL_ERR_INVALID_ARG); return NULL; }
+
+    const char *root     = (*env)->GetStringUTFChars(env, jroot, NULL);
+    const char *layout   = (*env)->GetStringUTFChars(env, jlayout, NULL);
+    const char *platform = jplatform ? (*env)->GetStringUTFChars(env, jplatform, NULL) : NULL;
+    const char *content  = (*env)->GetStringUTFChars(env, jcontent, NULL);
+    const char *title_id = jtitle_id ? (*env)->GetStringUTFChars(env, jtitle_id, NULL) : NULL;
+    const char *save_id  = jsave_id ? (*env)->GetStringUTFChars(env, jsave_id, NULL) : NULL;
+
+    jsize key_count = 0, value_count = 0, listing_count = 0, id_count = 0, claimed_count = 0;
+    const char **keys    = borrow_strings(env, jopt_keys, &key_count);
+    const char **values  = borrow_strings(env, jopt_values, &value_count);
+    const char **listing = borrow_strings(env, jlisting, &listing_count);
+    const char **ids     = borrow_strings(env, jgame_ids, &id_count);
+    const char **claimed = borrow_strings(env, jclaimed, &claimed_count);
+    jbyte *state = jstate ? (*env)->GetByteArrayElements(env, jstate, NULL) : NULL;
+    jsize state_len = jstate ? (*env)->GetArrayLength(env, jstate) : 0;
+    jbyte *unit = junit ? (*env)->GetByteArrayElements(env, junit, NULL) : NULL;
+    jsize unit_len = junit ? (*env)->GetArrayLength(env, junit) : 0;
+
+    sigil_save_option *options = NULL;
+    size_t option_count = 0;
+    if (keys && values && key_count == value_count && key_count > 0) {
+        options = (sigil_save_option *)calloc((size_t)key_count, sizeof(*options));
+        if (options) {
+            for (jsize i = 0; i < key_count; i++) {
+                options[i].key = keys[i];
+                options[i].value = values[i];
+            }
+            option_count = (size_t)key_count;
+        }
+    }
+
+    sigil_result result;
+    memset(&result, 0, sizeof(result));
+    result.struct_version = SIGIL_RESULT_V3;
+    result.features = (uint32_t)features;
+    result.platform = sigil_platform_from_slug(platform);
+    if (title_id) strncpy(result.title_id, title_id, sizeof(result.title_id) - 1);
+    if (save_id)  strncpy(result.save_id, save_id, sizeof(result.save_id) - 1);
+
+    open_ctx octx = { root };
+    sigil_sync_request req;
+    memset(&req, 0, sizeof(req));
+    req.struct_version = SIGIL_SYNC_REQUEST_V1;
+    req.save.struct_version = SIGIL_SAVE_REQUEST_V1;
+    req.save.layout = layout;
+    req.save.platform = platform;
+    req.save.content_path = content;
+    req.save.result = &result;
+    req.save.features = (uint32_t)features;
+    req.save.options = options;
+    req.save.option_count = option_count;
+    req.save.listing = listing;
+    req.save.listing_count = (size_t)listing_count;
+    req.save.open = open_member;
+    req.save.open_ctx = &octx;
+    req.game_ids = ids;
+    req.game_id_count = (size_t)id_count;
+    char (*claim_bytes)[SIGIL_CARD_NAME_MAX] = calloc((size_t)claimed_count + 1, SIGIL_CARD_NAME_MAX);
+    const char **claim_names = (const char **)calloc((size_t)claimed_count + 1, sizeof(char *));
+    bool claims_valid = claim_bytes && claim_names;
+    for (jsize i = 0; i < claimed_count && claims_valid; i++) {
+        claims_valid = claimed[i] && sigil_save_name_unescape(claimed[i], claim_bytes[i], SIGIL_CARD_NAME_MAX);
+        claim_names[i] = claim_bytes[i];
+    }
+    req.claimed = claim_names;
+    req.claimed_count = (size_t)claimed_count;
+    borrowed_companion *borrowed = NULL;
+    jsize borrowed_count = 0;
+    sigil_sync_companion *companions = borrow_companions(env, jcompanion_ids, jcompanion_units,
+                                                         &borrowed, &borrowed_count);
+    bool companions_valid = companions != NULL;
+    req.companions = companions;
+    req.companion_count = companions ? (size_t)borrowed_count : 0;
+    req.mode = unmanaged ? SIGIL_SYNC_UNMANAGED : SIGIL_SYNC_MANAGED;
+    req.state = (const uint8_t *)state;
+    req.state_len = (size_t)state_len;
+    req.overwrite_local = overwrite_local ? 1 : 0;
+    req.write = write_member;
+    req.remove = remove_member;
+    req.write_ctx = &octx;
+
+    sigil_sync_result *r = NULL;
+    int rc = !claims_valid || !companions_valid ? SIGIL_ERR_INVALID_ARG
+           : unit ? sigil_restore(&req, (const uint8_t *)unit, (size_t)unit_len, &r) : sigil_collect(&req, &r);
+
+    jobject out = NULL;
+    bool binding_broken = false;
+    if (rc == SIGIL_OK && r) {
+        load_sync_result_class(env);
+        binding_broken = !g_sync_result_class || !g_sync_result_ctor || !g_companion_result_class
+                      || !g_companion_result_ctor || !g_array_list_ctor || !g_array_list_add;
+        if (!binding_broken) {
+            jstring jartifact = (*env)->NewStringUTF(env, r->artifact);
+            jstring jhash     = (*env)->NewStringUTF(env, r->content_hash);
+            jstring jidentity = (*env)->NewStringUTF(env, r->identity_hash);
+            jbyteArray jdata  = r->data ? byte_array(env, r->data, r->len) : NULL;
+            jbyteArray jnew   = byte_array(env, r->state, r->state_len);
+            jbyteArray jheld  = r->holding ? byte_array(env, r->holding, r->holding_len) : NULL;
+            jobject junowned  = name_list(env, r->unowned, r->unowned_count);
+            jobject jcompanions = junowned ? companion_list(env, r->companions, r->companion_count) : NULL;
+            if (jcompanions) {
+                out = (*env)->NewObject(env, g_sync_result_class, g_sync_result_ctor,
+                                        jartifact, (jint)r->shape, jdata, jhash, jidentity,
+                                        r->changed ? JNI_TRUE : JNI_FALSE, r->conflict ? JNI_TRUE : JNI_FALSE, jnew,
+                                        jheld, junowned, r->restore_again ? JNI_TRUE : JNI_FALSE, jcompanions);
+            }
+        }
+    }
+    char overflow[SIGIL_CARD_NAME_MAX] = "";
+    uint32_t overflow_blocks = 0;
+    if (rc == SIGIL_ERR_NO_SPACE && r) {
+        memcpy(overflow, r->overflow, sizeof(overflow));
+        overflow[sizeof(overflow) - 1] = '\0';
+        overflow_blocks = r->overflow_blocks;
+    }
+    sigil_sync_result_free(r);
+    release_companions(env, borrowed, borrowed_count);
+    free(companions);
+
+    free(options);
+    if (unit)  (*env)->ReleaseByteArrayElements(env, junit, unit, JNI_ABORT);
+    if (state) (*env)->ReleaseByteArrayElements(env, jstate, state, JNI_ABORT);
+    release_strings(env, jopt_keys, keys, key_count);
+    release_strings(env, jopt_values, values, value_count);
+    release_strings(env, jlisting, listing, listing_count);
+    release_strings(env, jgame_ids, ids, id_count);
+    release_strings(env, jclaimed, claimed, claimed_count);
+    free(claim_bytes);
+    free(claim_names);
+    (*env)->ReleaseStringUTFChars(env, jroot, root);
+    (*env)->ReleaseStringUTFChars(env, jlayout, layout);
+    if (platform) (*env)->ReleaseStringUTFChars(env, jplatform, platform);
+    (*env)->ReleaseStringUTFChars(env, jcontent, content);
+    if (title_id) (*env)->ReleaseStringUTFChars(env, jtitle_id, title_id);
+    if (save_id)  (*env)->ReleaseStringUTFChars(env, jsave_id, save_id);
+
+    if (rc != SIGIL_OK) throw_sigil_overflow(env, rc, overflow, overflow_blocks);
+    else if (binding_broken) throw_binding_broken(env, "SigilSyncResult");
+    else if (!out && !(*env)->ExceptionCheck(env)) throw_sigil(env, SIGIL_ERR_OOM);
     return out;
 }
 

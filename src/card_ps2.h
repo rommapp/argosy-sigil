@@ -91,8 +91,8 @@ int sigil_ps2_extract(const sigil_ps2_card *card, uint32_t first_cluster, sigil_
  * Writes `save` into the card's root, allocating the lowest free clusters in
  * the order the PS2 writes them: the root's next cluster when it needs one,
  * the folder's first cluster, then for each file its entry's cluster when
- * needed and its data. SIGIL_ERR_NOT_FOUND when the card lacks room;
- * SIGIL_ERR_INVALID_ARG when a folder with the same name exists. Either way
+ * needed and its data. SIGIL_ERR_NO_SPACE when the card lacks room;
+ * SIGIL_ERR_EXISTS when a folder with the same name exists. Either way
  * the card is left unchanged.
  */
 int sigil_ps2_inject(sigil_ps2_card *card, const sigil_ps2_save *save);
@@ -105,6 +105,29 @@ int sigil_ps2_delete(sigil_ps2_card *card, uint32_t first_cluster);
  * files equal it; SIGIL_ERR_NOT_FOUND otherwise.
  */
 int sigil_ps2_verify(const sigil_ps2_card *card, const sigil_ps2_save *save);
+
+/**
+ * The MD5 over the folder's name and each file's name, length and bytes in
+ * directory order. Timestamps, modes and cluster placement leave it alone.
+ */
+void sigil_ps2_save_md5(const sigil_ps2_save *save, char out[33]);
+
+#define PS2_FOLDER_SUPERBLOCK_SIZE 0x2000u
+
+/**
+ * The `_pcsx2_superblock` of an empty 8 MB folder card: the superblock page
+ * sigil_ps2_card_format writes, then zeros to the full erase block PCSX2
+ * reads.
+ */
+void sigil_ps2_folder_superblock(uint8_t out[PS2_FOLDER_SUPERBLOCK_SIZE]);
+
+/**
+ * True when PCSX2 reads `data` as a formatted folder card's superblock: all
+ * 0x2000 bytes present and byte 0x16 the 'o' of "Format". PCSX2 shows no
+ * saves on a card whose superblock is missing, empty or short, so a restore
+ * writes one when this is false.
+ */
+bool sigil_ps2_folder_superblock_usable(const uint8_t *data, size_t len);
 
 #define PS2_FOLDER_PATH_MAX 96
 

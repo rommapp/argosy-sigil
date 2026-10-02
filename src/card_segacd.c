@@ -589,13 +589,13 @@ int sigil_segacd_inject(sigil_segacd_volume *vol, const uint8_t *unit, size_t le
 
     uint32_t start = 1;
     for (uint32_t i = 0; i < c.files; i++) {
-        if (memcmp(entries[i].raw, unit + UNIT_NAME, SEGACD_NAME_LEN) == 0) rc = SIGIL_ERR_INVALID_ARG;
+        if (memcmp(entries[i].raw, unit + UNIT_NAME, SEGACD_NAME_LEN) == 0) rc = SIGIL_ERR_EXISTS;
         start = entries[i].start + entries[i].blocks;
     }
     free(entries);
     if (rc != SIGIL_OK) return rc;
     uint32_t cost = blocks + (c.files & 1u);
-    if (c.free < cost || start + blocks > data_end(vol, c.files + 1)) return SIGIL_ERR_NOT_FOUND;
+    if (c.free < cost || start + blocks > data_end(vol, c.files + 1)) return SIGIL_ERR_NO_SPACE;
 
     memcpy(vol->data + (size_t)start * SEGACD_BLOCK_SIZE, unit + SEGACD_UNIT_HEADER_SIZE,
            (size_t)blocks * SEGACD_BLOCK_SIZE);

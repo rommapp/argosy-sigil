@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "save_layout.h"
 
-#define M(t, r)                 { t, SIGIL_SAVE_ROLE_##r, NULL, NULL, false }
-#define M_OPT(t, r, k, v, d)    { t, SIGIL_SAVE_ROLE_##r, k, v, d }
-#define S(t)                    { t, NULL, NULL, false }
-#define S_OPT(t, k, v, d)       { t, k, v, d }
+#define M(t, r)                 { t, SIGIL_SAVE_ROLE_##r, NULL, NULL, false, SIGIL_DEVICE_NONE }
+#define M_OPT(t, r, k, v, d)    { t, SIGIL_SAVE_ROLE_##r, k, v, d, SIGIL_DEVICE_NONE }
+#define M_DEV(t, r, dev)        { t, SIGIL_SAVE_ROLE_##r, NULL, NULL, false, SIGIL_DEVICE_##dev }
+#define M_OPT_DEV(t, r, k, v, d, dev) { t, SIGIL_SAVE_ROLE_##r, k, v, d, SIGIL_DEVICE_##dev }
+#define S(t)                    { t, NULL, NULL, false, SIGIL_DEVICE_NONE, 0 }
+#define S_OPT(t, k, v, d)       { t, k, v, d, SIGIL_DEVICE_NONE, 0 }
+#define S_OPT_DEV(t, k, v, d, dev, region) { t, k, v, d, SIGIL_DEVICE_##dev, region }
+#define M_OPT2_DEV(t, r, k, v, d, k2, v2, d2, dev) { t, SIGIL_SAVE_ROLE_##r, k, v, d, SIGIL_DEVICE_##dev, k2, v2, d2 }
+#define S_OPT2_DEV(t, k, v, d, k2, v2, d2, dev)    { t, k, v, d, SIGIL_DEVICE_##dev, 0, k2, v2, d2 }
 #define COUNT(a)                (sizeof(a) / sizeof((a)[0]))
 
 static const sigil_layout_member LIBRETRO_DEFAULT_MEMBERS[] = {
@@ -17,15 +22,14 @@ static const sigil_layout_member SRM_ONLY_MEMBERS[] = {
 };
 
 static const sigil_layout_member GPGX_SEGACD_MEMBERS[] = {
-    M("{stem}.srm", PRIMARY),
-    M_OPT("{stem}.brm", SIDECAR, "genesis_plus_gx_system_bram", "per game", false),
-    M_OPT("{stem}_{cart_size}_cart.brm", SIDECAR, "genesis_plus_gx_cart_bram", "per game", false),
+    M_OPT_DEV("{stem}.brm", PRIMARY, "genesis_plus_gx_system_bram", "per game", false, INTERNAL),
+    M_OPT_DEV("{stem}_{cart_size}_cart.brm", SIDECAR, "genesis_plus_gx_cart_bram", "per game", false, CART),
 };
 static const sigil_layout_shared GPGX_SEGACD_SHARED[] = {
-    S_OPT("scd_E.brm", "genesis_plus_gx_system_bram", "per bios", true),
-    S_OPT("scd_U.brm", "genesis_plus_gx_system_bram", "per bios", true),
-    S_OPT("scd_J.brm", "genesis_plus_gx_system_bram", "per bios", true),
-    S_OPT("{cart_size}_cart.brm", "genesis_plus_gx_cart_bram", "per cart", true),
+    S_OPT_DEV("scd_E.brm", "genesis_plus_gx_system_bram", "per bios", true, INTERNAL, 'E'),
+    S_OPT_DEV("scd_U.brm", "genesis_plus_gx_system_bram", "per bios", true, INTERNAL, 'U'),
+    S_OPT_DEV("scd_J.brm", "genesis_plus_gx_system_bram", "per bios", true, INTERNAL, 'J'),
+    S_OPT_DEV("{cart_size}_cart.brm", "genesis_plus_gx_cart_bram", "per cart", true, CART, 0),
 };
 
 static const sigil_layout_member BEETLE_PSX_MEMBERS[] = {
@@ -38,17 +42,118 @@ static const sigil_layout_shared BEETLE_PSX_SHARED[] = {
     S_OPT("mednafen_psx_libretro_shared.1.mcr", "beetle_psx_hw_shared_memory_cards", "enabled", false),
 };
 
+/* `.srm` is always per game. The `.bkr` that save_method=mednafen uses, the
+ * `.smpc` and the cart `.bcr` move to the shared files with shared_int and
+ * shared_ext (sega.md section 1, Beetle Saturn rows). */
 static const sigil_layout_member BEETLE_SATURN_MEMBERS[] = {
-    M_OPT("{stem}.srm", PRIMARY, "beetle_saturn_save_method", "libretro", true),
-    M_OPT("{stem}.bkr", PRIMARY, "beetle_saturn_save_method", "mednafen", false),
-    M("{stem}.bcr", SIDECAR),
-    M("{stem}.smpc", SIDECAR),
+    M_OPT_DEV("{stem}.srm", PRIMARY, "beetle_saturn_save_method", "libretro", true, INTERNAL),
+    M_OPT2_DEV("{stem}.bkr", PRIMARY, "beetle_saturn_save_method", "mednafen", false,
+               "beetle_saturn_shared_int", "disabled", true, INTERNAL),
+    M_OPT_DEV("{stem}.bcr", SIDECAR, "beetle_saturn_shared_ext", "disabled", true, CART),
+    M_OPT("{stem}.smpc", SIDECAR, "beetle_saturn_shared_int", "disabled", true),
 };
 static const sigil_layout_shared BEETLE_SATURN_SHARED[] = {
-    S_OPT("mednafen_saturn_libretro_shared.bkr", "beetle_saturn_shared_int", "enabled", false),
+    S_OPT2_DEV("mednafen_saturn_libretro_shared.bkr", "beetle_saturn_shared_int", "enabled", false,
+               "beetle_saturn_save_method", "mednafen", false, INTERNAL),
     S_OPT("mednafen_saturn_libretro_shared.smpc", "beetle_saturn_shared_int", "enabled", false),
-    S_OPT("mednafen_saturn_libretro_shared.bcr", "beetle_saturn_shared_ext", "enabled", false),
+    S_OPT_DEV("mednafen_saturn_libretro_shared.bcr", "beetle_saturn_shared_ext", "enabled", false, CART, 0),
 };
+
+/* Kronos (libretro/yabause `kronos`): libretro.c configure_saturn_addon_cart
+ * and the bup_path in retro_load_game; the cart file is named by
+ * kronos_addon_cartridge, default 512K_backup_ram. */
+#define KRONOS_OWN(t, r, dev) M_OPT_DEV(t, r, "kronos_use_beetle_saves", "disabled", true, dev)
+#define KRONOS_CART(t, value, d) \
+    M_OPT2_DEV(t, SIDECAR, "kronos_use_beetle_saves", "disabled", true, "kronos_addon_cartridge", value, d, CART)
+static const sigil_layout_member KRONOS_MEMBERS[] = {
+    KRONOS_OWN("kronos/saturn/{stem}.ram", PRIMARY, INTERNAL),
+    M_OPT_DEV("{stem}.bkr", PRIMARY, "kronos_use_beetle_saves", "enabled", false, INTERNAL),
+    KRONOS_CART("kronos/saturn/{stem}-ext512K.ram", "512K_backup_ram", true),
+    KRONOS_CART("kronos/saturn/{stem}-ext1M.ram", "1M_backup_ram", false),
+    KRONOS_CART("kronos/saturn/{stem}-ext2M.ram", "2M_backup_ram", false),
+    KRONOS_CART("kronos/saturn/{stem}-ext4M.ram", "4M_backup_ram", false),
+    M_OPT_DEV("{stem}.bcr", SIDECAR, "kronos_use_beetle_saves", "enabled", false, CART),
+};
+static const char *const KRONOS_SUBDIRS[] = { "kronos/saturn" };
+
+/* yabause (libretro master) writes `{stem}.srm` itself, 64 KiB expanded with
+ * 0xFF filler (sega.md section 1). */
+static const sigil_layout_member YABAUSE_MEMBERS[] = {
+    { .template_ = "{stem}.srm", .role = SIGIL_SAVE_ROLE_PRIMARY, .device = SIGIL_DEVICE_INTERNAL,
+      .form = SIGIL_FORM_EXPANDED_FF, .new_size = 32768 },
+};
+
+/* Yaba Sanshiro keeps one memory-mapped backup.bin for every game, 8 MiB
+ * expanded with 0xFF filler. */
+static const sigil_layout_shared YABASANSHIRO_SHARED[] = {
+    { .template_ = "yabasanshiro/backup.bin", .device = SIGIL_DEVICE_INTERNAL, .form = SIGIL_FORM_EXPANDED_FF,
+      .new_size = 4u * 1024u * 1024u },
+};
+static const char *const YABASANSHIRO_SUBDIRS[] = { "yabasanshiro" };
+
+/* flycast libretro (flyinghead/flycast shell/libretro/oslib.cpp getVmuPath).
+ * reicast_per_content_vmus "VMU A1" keeps A1 per game in the save folder and
+ * the other ports shared in the system folder, outside the save root, so
+ * only A1 syncs in that mode; "All VMUs" keeps every port per game;
+ * "disabled" (default) shares every port as vmu_save_{port}.bin in the
+ * system folder's dc/, which a client passes as the save root. A per-game
+ * file is {gameId}.{port}.bin, or the legacy {stem}.{port}.bin flycast
+ * still reads. */
+#define FLY_OPT "reicast_per_content_vmus"
+#define FLY_ALL(port, dev) \
+    M_OPT_DEV("{dc_vmu_id}." port ".bin", SIDECAR, FLY_OPT, "All VMUs", false, dev), \
+    M_OPT_DEV("{stem}." port ".bin", SIDECAR, FLY_OPT, "All VMUs", false, dev)
+#define FLY_SHARED(port, dev) S_OPT_DEV("vmu_save_" port ".bin", FLY_OPT, "disabled", true, dev, 0)
+static const sigil_layout_member FLYCAST_MEMBERS[] = {
+    M_OPT_DEV("{dc_vmu_id}.A1.bin", PRIMARY, FLY_OPT, "VMU A1", false, VMU_A1),
+    M_OPT_DEV("{dc_vmu_id}.A1.bin", PRIMARY, FLY_OPT, "All VMUs", false, VMU_A1),
+    M_OPT_DEV("{stem}.A1.bin", PRIMARY, FLY_OPT, "VMU A1", false, VMU_A1),
+    M_OPT_DEV("{stem}.A1.bin", PRIMARY, FLY_OPT, "All VMUs", false, VMU_A1),
+    FLY_ALL("A2", VMU_A2), FLY_ALL("B1", VMU_B1), FLY_ALL("B2", VMU_B2), FLY_ALL("C1", VMU_C1),
+    FLY_ALL("C2", VMU_C2), FLY_ALL("D1", VMU_D1), FLY_ALL("D2", VMU_D2),
+};
+static const sigil_layout_shared FLYCAST_SHARED[] = {
+    FLY_SHARED("A1", VMU_A1), FLY_SHARED("A2", VMU_A2), FLY_SHARED("B1", VMU_B1), FLY_SHARED("B2", VMU_B2),
+    FLY_SHARED("C1", VMU_C1), FLY_SHARED("C2", VMU_C2), FLY_SHARED("D1", VMU_D1), FLY_SHARED("D2", VMU_D2),
+};
+
+/* Standalone flycast (core/oslib/oslib.cpp): PerGameVmu (default yes) keeps
+ * A1 as {gameId}_vmu_save_A1.bin, or the legacy {stem}_vmu_save_A1.bin; the
+ * other ports, and A1 with PerGameVmu off, are vmu_save_{port}.bin, all in
+ * the VMU folder. */
+static const sigil_layout_member FLYCAST_STANDALONE_MEMBERS[] = {
+    M_OPT_DEV("{dc_vmu_id}_vmu_save_A1.bin", PRIMARY, "PerGameVmu", "yes", true, VMU_A1),
+    M_OPT_DEV("{stem}_vmu_save_A1.bin", PRIMARY, "PerGameVmu", "yes", true, VMU_A1),
+};
+static const sigil_layout_shared FLYCAST_STANDALONE_SHARED[] = {
+    S_OPT_DEV("vmu_save_A1.bin", "PerGameVmu", "no", false, VMU_A1, 0),
+    S_OPT_DEV("vmu_save_A2.bin", NULL, NULL, false, VMU_A2, 0),
+    S_OPT_DEV("vmu_save_B1.bin", NULL, NULL, false, VMU_B1, 0),
+    S_OPT_DEV("vmu_save_B2.bin", NULL, NULL, false, VMU_B2, 0),
+    S_OPT_DEV("vmu_save_C1.bin", NULL, NULL, false, VMU_C1, 0),
+    S_OPT_DEV("vmu_save_C2.bin", NULL, NULL, false, VMU_C2, 0),
+    S_OPT_DEV("vmu_save_D1.bin", NULL, NULL, false, VMU_D1, 0),
+    S_OPT_DEV("vmu_save_D2.bin", NULL, NULL, false, VMU_D2, 0),
+};
+
+/* Dolphin (dolphin-emu Config/MainSettings.cpp GetGCIFolderPath,
+ * GetMemcardPath): slot A is the GCI folder {User}/GC/{region}/Card A by
+ * default (SlotA = 8 in Dolphin.ini), a raw card {User}/GC/MemoryCardA.{region}.raw
+ * with SlotA = 1, the name carrying .{blocks} for cards under 2043 blocks.
+ * The libretro core's User folder is the save folder's User/. */
+#define GC_FOLDER(t) { .template_ = t, .opt_key = "SlotA", .opt_value = "8", .opt_default = true, \
+                       .device = SIGIL_DEVICE_GC_FOLDER }
+#define GC_CARD(t)   { .template_ = t, .opt_key = "SlotA", .opt_value = "1", .opt_default = false, \
+                       .device = SIGIL_DEVICE_GC_CARD }
+#define GC_SLOT_A(user) \
+    GC_FOLDER(user "GC/{gc_region}/Card A/"), \
+    GC_CARD(user "GC/MemoryCardA.{gc_region}.raw"), GC_CARD(user "GC/MemoryCardA.{gc_region}.1019.raw"), \
+    GC_CARD(user "GC/MemoryCardA.{gc_region}.507.raw"), GC_CARD(user "GC/MemoryCardA.{gc_region}.251.raw"), \
+    GC_CARD(user "GC/MemoryCardA.{gc_region}.123.raw"), GC_CARD(user "GC/MemoryCardA.{gc_region}.59.raw")
+static const sigil_layout_shared DOLPHIN_SHARED[] = { GC_SLOT_A("User/") };
+static const sigil_layout_shared DOLPHIN_STANDALONE_SHARED[] = { GC_SLOT_A("") };
+static const char *const DOLPHIN_SUBDIRS[] = { "User/GC" };
+static const char *const DOLPHIN_STANDALONE_SUBDIRS[] = { "GC" };
 
 static const sigil_layout_member PCSX_REARMED_MEMBERS[] = {
     M("{stem}.srm", PRIMARY),
@@ -56,6 +161,24 @@ static const sigil_layout_member PCSX_REARMED_MEMBERS[] = {
 static const sigil_layout_shared PCSX_REARMED_SHARED[] = {
     S_OPT("pcsx-card2.mcd", "pcsx_rearmed_memcard2", "shared", true),
 };
+
+static const sigil_layout_member LRPS2_MEMBERS[] = {
+    M_OPT("{stem}.ps2", PRIMARY, "pcsx2_shared_memory_cards", "disabled", false),
+};
+static const sigil_layout_shared LRPS2_SHARED[] = {
+    S_OPT("Mcd001.ps2", "pcsx2_shared_memory_cards", "enabled", true),
+    S_OPT("Mcd002.ps2", "pcsx2_shared_memory_cards", "enabled", true),
+};
+
+/* Standalone PCSX2 and its forks (AetherSX2, NetherSX2, ARMSX2), rooted at
+ * the data folder that holds memcards/. Slots 1 and 2 default to Mcd001.ps2
+ * and Mcd002.ps2 (Pcsx2Config.cpp, MemoryCardFile.cpp); each is a file card,
+ * or a folder card when the name is a directory (MemoryCardFolder.cpp). */
+static const sigil_layout_shared PCSX2_STANDALONE_SHARED[] = {
+    S("memcards/Mcd001.ps2"),
+    S("memcards/Mcd002.ps2"),
+};
+static const char *const PCSX2_STANDALONE_SUBDIRS[] = { "memcards" };
 
 static const sigil_layout_member BEETLE_NGP_MEMBERS[] = {
     M("{stem}.flash", PRIMARY),
@@ -125,6 +248,7 @@ static const sigil_layout_member BSNES_SNES_MEMBERS[] = {
 #define ROW_SHARED(l, p, m, s)  { l, p, m, COUNT(m), s, COUNT(s), NULL, 0 }
 #define ROW_FULL(l, p, m, s, d) { l, p, m, COUNT(m), s, COUNT(s), d, COUNT(d) }
 #define ROW_DIRS(l, p, m, d)    { l, p, m, COUNT(m), NULL, 0, d, COUNT(d) }
+#define ROW_REGION(l, p, m, s, r) { l, p, m, COUNT(m), s, COUNT(s), NULL, 0, r }
 
 static const sigil_layout LIBRETRO_DEFAULT = ROW("libretro", NULL, LIBRETRO_DEFAULT_MEMBERS);
 
@@ -132,10 +256,22 @@ static const sigil_layout LAYOUTS[] = {
     ROW("vba_next", NULL, SRM_ONLY_MEMBERS),
     ROW("gpsp", NULL, SRM_ONLY_MEMBERS),
     ROW("bsnes", "snes", BSNES_SNES_MEMBERS),
-    ROW_SHARED("genesis_plus_gx", "segacd", GPGX_SEGACD_MEMBERS, GPGX_SEGACD_SHARED),
+    ROW_REGION("genesis_plus_gx", "segacd", GPGX_SEGACD_MEMBERS, GPGX_SEGACD_SHARED, "genesis_plus_gx_region_detect"),
     ROW_SHARED("mednafen_psx_hw", NULL, BEETLE_PSX_MEMBERS, BEETLE_PSX_SHARED),
     ROW_SHARED("pcsx_rearmed", NULL, PCSX_REARMED_MEMBERS, PCSX_REARMED_SHARED),
+    ROW_SHARED("pcsx2", NULL, LRPS2_MEMBERS, LRPS2_SHARED),
+    { "pcsx2_standalone", "ps2", NULL, 0, PCSX2_STANDALONE_SHARED, COUNT(PCSX2_STANDALONE_SHARED),
+      PCSX2_STANDALONE_SUBDIRS, COUNT(PCSX2_STANDALONE_SUBDIRS), NULL },
     ROW_SHARED("mednafen_saturn", NULL, BEETLE_SATURN_MEMBERS, BEETLE_SATURN_SHARED),
+    ROW_DIRS("kronos", "saturn", KRONOS_MEMBERS, KRONOS_SUBDIRS),
+    { "dolphin", "gamecube", NULL, 0, DOLPHIN_SHARED, COUNT(DOLPHIN_SHARED), DOLPHIN_SUBDIRS, COUNT(DOLPHIN_SUBDIRS), NULL },
+    { "dolphin_standalone", "gamecube", NULL, 0, DOLPHIN_STANDALONE_SHARED, COUNT(DOLPHIN_STANDALONE_SHARED),
+      DOLPHIN_STANDALONE_SUBDIRS, COUNT(DOLPHIN_STANDALONE_SUBDIRS), NULL },
+    ROW_SHARED("flycast", "dreamcast", FLYCAST_MEMBERS, FLYCAST_SHARED),
+    ROW_SHARED("flycast_standalone", "dreamcast", FLYCAST_STANDALONE_MEMBERS, FLYCAST_STANDALONE_SHARED),
+    ROW("yabause", "saturn", YABAUSE_MEMBERS),
+    { "yabasanshiro", "saturn", NULL, 0, YABASANSHIRO_SHARED, COUNT(YABASANSHIRO_SHARED),
+      YABASANSHIRO_SUBDIRS, COUNT(YABASANSHIRO_SUBDIRS), NULL },
     ROW("mednafen_ngp", NULL, BEETLE_NGP_MEMBERS),
     ROW_FULL("opera", NULL, OPERA_MEMBERS, OPERA_SHARED, OPERA_SUBDIRS),
     ROW("pokemini", NULL, POKEMINI_MEMBERS),
@@ -148,7 +284,7 @@ static const sigil_layout LAYOUTS[] = {
     ROW("nestopia", "fds", NESTOPIA_FDS_MEMBERS),
 };
 
-static const char *canonical_platform(const char *slug) {
+const char *sigil_layout_platform(const char *slug) {
     if (!slug) return NULL;
     if (strcmp(slug, "scd") == 0 || strcmp(slug, "sega_cd") == 0 || strcmp(slug, "sega-cd") == 0
         || strcmp(slug, "mega_cd") == 0 || strcmp(slug, "mega-cd") == 0 || strcmp(slug, "megacd") == 0) {
@@ -157,13 +293,15 @@ static const char *canonical_platform(const char *slug) {
     if (strcmp(slug, "sfc") == 0 || strcmp(slug, "sfam") == 0) return "snes";
     if (strcmp(slug, "ps1") == 0 || strcmp(slug, "playstation") == 0) return "psx";
     if (strcmp(slug, "famicom_disk_system") == 0 || strcmp(slug, "fds") == 0) return "fds";
+    if (strcmp(slug, "dc") == 0) return "dreamcast";
+    if (strcmp(slug, "ngc") == 0 || strcmp(slug, "gc") == 0) return "gamecube";
     return slug;
 }
 
 static bool platform_matches(const char *row_platform, const char *platform) {
     if (!row_platform) return true;
     if (!platform) return false;
-    return strcmp(row_platform, canonical_platform(platform)) == 0;
+    return strcmp(row_platform, sigil_layout_platform(platform)) == 0;
 }
 
 const sigil_layout *sigil_layout_find(const char *layout, const char *platform) {

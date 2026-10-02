@@ -432,10 +432,10 @@ static void check_refusals(void) {
     bool have_multi = load_sample(MULTI_TITLES, &multi);
     if (io && have_multi && sigil_segacd_volume_load_cart(io, &cart) == SIGIL_OK &&
         extract_named(&cart, "SFCD_DAT_01", &sfcd, &sfcd_len)) {
-        expect_refused("multi-titles-brm full", &multi, sfcd, sfcd_len, SIGIL_ERR_NOT_FOUND);
+        expect_refused("multi-titles-brm full", &multi, sfcd, sfcd_len, SIGIL_ERR_NO_SPACE);
     }
     if (have_multi && extract_named(&multi, "POPFUL_MAIL", &pm, &pm_len) && load_sample(POPFUL_CART, &popful)) {
-        expect_refused("popful-mail-cart-brm name", &popful, pm, pm_len, SIGIL_ERR_INVALID_ARG);
+        expect_refused("popful-mail-cart-brm name", &popful, pm, pm_len, SIGIL_ERR_EXISTS);
         uint8_t *bad = (uint8_t *)malloc(pm_len);
         if (bad) {
             memcpy(bad, pm, pm_len);

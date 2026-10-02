@@ -74,7 +74,7 @@ sigil.locate_saves(
                                                 #   subfolder when sort_savefiles_enable is on. Sigil lists
                                                 #   it and the subfolders the core writes into.
     listing: Iterable[str] = None,              # optional. Instead of save_root: every file directly in the
-                                                #   root plus every file under layout_subdirs(core), three
+                                                #   root plus every file under layout_subdirs(core), four
                                                 #   levels deep, as root-relative / paths. list_save_root
                                                 #   builds this.
     options: Mapping[str, str] = None,          # optional. Core option key to value, the strings the core
@@ -137,8 +137,10 @@ when the emulator has not created one yet.
 
 ## Memory cards
 
-List the saves on a memory card. PS1 cards are read today: the raw card
-(`.mcr`, `.mcd`, `.srm`), DexDrive `.gme` and PSP or Vita `.vmp`.
+List the saves on a memory card or backup RAM volume: PS1 cards (the raw
+card as `.mcr`, `.mcd` or `.srm`, DexDrive `.gme`, PSP or Vita `.vmp`),
+PS2 `.ps2` file cards, GameCube raw cards, Dreamcast VMUs, and Saturn and
+Sega CD backup RAM.
 
 ```python
 sigil.list_card(
@@ -147,7 +149,8 @@ sigil.list_card(
                                     #   sigil reads.
 
 SigilCardListing(
-    format: str,                    # "ps1-raw", "ps1-gme", "ps1-vmp".
+    format: str,                    # "ps1-raw", "ps1-gme", "ps1-vmp", "ps2", "gamecube-raw",
+                                    #   "dreamcast-vmu", "saturn-backup", "segacd-bram".
     total_blocks: int,
     free_blocks: int,               # Blocks a new save can use.
     free_slots: int,                # Directory slots a new save can use.
@@ -156,13 +159,80 @@ SigilCardListing(
 )
 
 SigilCardEntry(
-    name: str,                      # As stored on the card, e.g. "BASLUSP01041USCHRO00".
-    owner_id: str,                  # Product code as extract reports it, e.g. "SLUS-01041". "" when the
-                                    #   name carries none.
-    blocks: int,
+    name: str,                      # As stored on the card, e.g. "BASLUSP01041USCHRO00". Bytes that
+                                    #   aren't UTF-8 decode with surrogateescape.
+    owner_id: str,                  # The game id the save carries, as extract reports it: PS1 and PS2
+                                    #   "SLUS-01041", GameCube "47465A45". "" when the format has none.
+    blocks: int,                    # In the card's own block size.
     first_block: int,
 )
 ```
+
+## Sync
+
+`collect` gathers one game's saves into the unit that travels to RomM;
+`restore` puts a unit back and reads it back, removing files where a save
+folder holds a save the unit lacks. PS1 and PS2 memory cards, PCSX2 folder
+cards, GameCube cards and Dolphin's GCI folder, Saturn and Sega CD backup RAM, and
+Dreamcast VMUs work today. `restore` raises
+`SigilNotFoundError` for a unit holding none of the game's saves, and
+ignores other games' saves inside a unit. What a unit holds, how Saturn and
+Sega CD saves find their owner, and how genesis_plus_gx's region file is
+picked: [c.md](c.md), "Sync". For Saturn and Sega CD, build the game with
+`SigilResult.persisted("saturn", "", "", 0)` or `("segacd", ...)`.
+
+```python
+sigil.collect(
+    game: SigilResult, core: str, content_path: str, save_root: str | PathLike,
+    *,
+    listing: Iterable[str] | None = None,   # Root-relative paths; None lists save_root.
+    options: Mapping[str, str] | None = None,
+    game_ids: Iterable[str] = (),           # Every id the game's saves may carry: all discs of a set.
+    state: bytes | None = None,             # What the last call returned for this platform and emulator.
+    mode: "managed" | "unmanaged" = "managed",
+    claimed: Iterable[str] = (),            # Saturn, Sega CD: names from `unowned` the user gave this game.
+    companions: Iterable[SigilCompanion] = (),   # Games whose saves this game reads, in the order they go on.
+) -> SigilSyncResult
+
+sigil.restore(unit: bytes, ..., overwrite_local: bool = False) -> SigilSyncResult
+    # Raises SigilConflictError, writing nothing, when the saves under save_root changed since
+    #   the last sync, and SigilUncollectedError when a shared volume holds saves no collect
+    #   has passed on yet. SigilNoSpaceError carries `overflow`, the save that didn't fit, and
+    #   `overflow_blocks`, the blocks it lacked (0 when a directory slot ran out instead).
+
+SigilCompanion(
+    game_ids: tuple[str, ...],  # The companion's ids, as for game_ids.
+    unit: bytes | None = None,  # restore: its unit from RomM, or None to leave its saves as they are.
+)
+
+SigilCompanionResult(           # collect: one per companion, in request order.
+    data: bytes | None,         # The companion's unit. None when none of its saves are there.
+    content_hash: str,
+    identity_hash: str,
+    changed: bool,              # identity_hash differs from the companion's last sync.
+)
+
+SigilSyncResult(
+    artifact: str,              # File name the unit travels under.
+    shape: str,
+    data: bytes | None,         # collect: the unit. None when the game has no saves.
+    content_hash: str,          # RomM content_hash of the unit.
+    identity_hash: str,         # Over the saves themselves; placement and timestamps don't move it.
+    changed: bool,              # identity_hash differs from the last sync.
+    conflict: bool,
+    state: bytes,               # Store it once every upload succeeded; pass it back next time.
+    holding: bytes | None,      # Saturn, Sega CD: zip of the saves on a shared volume with no known
+                                #   owner. Upload it with the unit.
+    unowned: tuple[str, ...],   # The names of the saves in holding, decoded as SigilCardEntry.name
+                                #   is. Pass them to `claimed` as they are.
+    restore_again: bool,        # Unmanaged: the saves the last restore wrote were overwritten.
+                                #   Restore again instead of uploading.
+    companions: tuple[SigilCompanionResult, ...],
+)
+```
+
+A companion's saves go on the game's card beside the game's own and stay
+out of the game's unit; [c.md](c.md), "Sync", has the rules.
 
 ## Helpers
 

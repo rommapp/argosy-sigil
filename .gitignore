@@ -33,3 +33,4 @@ tests/*.log
 .cxx/
 bindings/android/build/
 bindings/android/.cxx/
+bindings/android/.gradle/

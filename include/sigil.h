@@ -34,6 +34,8 @@ extern "C" {
 #define SIGIL_SAVE_REQUEST_V1 1u
 #define SIGIL_SAVE_UNIT_V1    1u
 #define SIGIL_CARD_LISTING_V1 1u
+#define SIGIL_SYNC_REQUEST_V1 1u
+#define SIGIL_SYNC_RESULT_V1  1u
 #define SIGIL_SUPPORT_V1  1u
 #define SIGIL_OPTIONS_V1  1u
 
@@ -46,6 +48,10 @@ extern "C" {
 #define SIGIL_ERR_NEEDS_KEY           -6
 #define SIGIL_ERR_CRYPTO              -7
 #define SIGIL_ERR_OOM                 -8
+#define SIGIL_ERR_CONFLICT            -9   /* the saves on disk changed since the last sync */
+#define SIGIL_ERR_EXISTS              -10  /* a save with that name is already there */
+#define SIGIL_ERR_NO_SPACE            -11  /* the card or volume has too few free blocks or slots */
+#define SIGIL_ERR_UNCOLLECTED         -12  /* a shared volume holds saves no collect has passed on yet */
 
 /* SIGIL_FLAG_FILENAME_FALLBACK: when the binary parser fails, scan the
  * filename for community naming patterns ([ULUS10064] etc.). On by default
@@ -332,6 +338,105 @@ typedef struct {
  * SIGIL_ERR_UNSUPPORTED_FORMAT when the stream is not a card sigil reads. */
 SIGIL_API int  sigil_card_list(const sigil_io *io, sigil_card_listing **out);
 SIGIL_API void sigil_card_listing_free(sigil_card_listing *listing);
+
+/* ---- Sync (docs/save-roadmap.md, "Client interface") -------------------------
+ * collect gathers one game's saves off the emulator's files into the unit that
+ * travels to RomM; restore puts a unit back. sigil keeps what it must remember
+ * between calls in an opaque state blob the caller stores and passes back. */
+
+/* Writes one file of the save root; returns 0 on success. */
+typedef int (*sigil_save_write_fn)(void *ctx, const char *relative_path, const uint8_t *data, size_t len);
+
+/* Removes one file of the save root; returns 0 on success. */
+typedef int (*sigil_save_remove_fn)(void *ctx, const char *relative_path);
+
+typedef enum {
+    SIGIL_SYNC_MANAGED = 0,   /* the caller launches the game and calls collect after it closes */
+    SIGIL_SYNC_UNMANAGED      /* the game runs outside the caller, which syncs on its own schedule */
+} sigil_sync_mode;
+
+/* Another game whose saves the game reads, as a sequel reads its prequel's:
+ * its saves go on the game's card or volume beside the game's own. */
+typedef struct {
+    const char *const *game_ids;   /* the companion's ids, as for the game's own game_ids; at least one */
+    size_t             game_id_count;
+    const uint8_t     *unit;       /* restore: the companion's unit from RomM, or NULL to leave its saves as they are */
+    size_t             unit_len;
+} sigil_sync_companion;
+
+/* What collect found of a companion's saves on the game's cards or volumes. */
+typedef struct {
+    uint8_t *data;                 /* the companion's unit; NULL when none of its saves are there */
+    size_t   len;
+    char     content_hash[33];
+    char     identity_hash[33];
+    int      changed;              /* 1 when identity_hash differs from the companion's last sync */
+} sigil_sync_companion_result;
+
+typedef struct {
+    uint32_t              struct_version;   /* SIGIL_SYNC_REQUEST_V1 */
+    sigil_save_request    save;             /* the emulator, content, options and save root; save.open is required */
+    const char *const    *game_ids;         /* every id the game's saves may carry, as disc identification reports
+                                               them: all discs of a set, and PCSX2's memcardFilters for PS2 */
+    size_t                game_id_count;
+    int                   mode;             /* sigil_sync_mode */
+    const uint8_t        *state;            /* the blob the last call returned, or NULL */
+    size_t                state_len;
+    int                   overwrite_local;  /* restore: the user chose to replace saves that changed locally */
+    sigil_save_write_fn   write;            /* restore: writes a file of the save root */
+    void                 *write_ctx;
+    const char *const    *claimed;          /* Saturn, Sega CD, Dreamcast: names of saves with no known owner that
+                                               the user said belong to this game, as collect reported them in `unowned` */
+    size_t                claimed_count;
+    sigil_save_remove_fn  remove;           /* restore: removes a file of the save root, called with write_ctx.
+                                               Needed where saves are files of their own (Dolphin's GCI folder,
+                                               PCSX2 folder cards), so a save the unit lacks can go; restore refuses with
+                                               SIGIL_ERR_INVALID_ARG, writing nothing, when it must remove one and
+                                               this is NULL */
+    const sigil_sync_companion *companions; /* games whose saves this game reads, in the order they go on */
+    size_t                companion_count;
+} sigil_sync_request;
+
+typedef struct {
+    uint32_t  struct_version;                  /* SIGIL_SYNC_RESULT_V1 */
+    char      artifact[SIGIL_SAVE_ENTRY_MAX];  /* the file name the unit travels under */
+    int       shape;                           /* sigil_save_shape */
+    uint8_t  *data;                            /* collect: the unit to upload; NULL when the game has no saves */
+    size_t    len;
+    char      content_hash[33];                /* RomM content_hash of the unit */
+    char      identity_hash[33];               /* hash over the saves themselves, unmoved by timestamps and placement */
+    int       changed;                         /* 1 when identity_hash differs from the last sync */
+    int       conflict;                        /* restore: 1 when it wrote nothing because local saves changed */
+    uint8_t  *state;                           /* store it once every upload succeeded; pass it back next time */
+    size_t    state_len;
+    uint8_t  *holding;                         /* collect, Saturn and Sega CD: a zip of the saves on a shared volume
+                                                  with no known owner, "backup.ram" and "cart.ram"; NULL when none.
+                                                  Keep it wherever the user can claim them from */
+    size_t    holding_len;
+    char    (*unowned)[SIGIL_CARD_NAME_MAX];   /* the names of the saves in `holding`, for the user to claim */
+    size_t    unowned_count;
+    int       restore_again;                   /* collect, unmanaged: 1 when the saves the last restore wrote were
+                                                  overwritten, as a core does when it unloads after the restore */
+    sigil_sync_companion_result *companions;   /* collect: one per request companion, in request order */
+    size_t    companion_count;
+    char      overflow[SIGIL_CARD_NAME_MAX];   /* restore, SIGIL_ERR_NO_SPACE: the save that didn't fit */
+    uint32_t  overflow_blocks;                 /* blocks it lacked, in the card's block size; 0 when a directory
+                                                  slot was missing instead */
+} sigil_sync_result;
+
+/* Gathers the game's saves into one unit. */
+SIGIL_API int  sigil_collect(const sigil_sync_request *req, sigil_sync_result **out);
+/* Puts the unit `unit` back into the save root through req->write, then reads it back to verify.
+ * Returns SIGIL_ERR_CONFLICT, writing nothing, when the saves on disk changed since the last
+ * sync and req->overwrite_local is 0. Returns SIGIL_ERR_UNCOLLECTED, writing nothing, when a
+ * shared Saturn or Sega CD volume holds saves of other games, or with no known owner, that no
+ * collect has passed on yet: call collect for the game that ran last, then restore again.
+ * Returns SIGIL_ERR_NO_SPACE, writing nothing, when the saves don't fit; *out then names the
+ * save in `overflow`. Returns SIGIL_ERR_INVALID_ARG, writing nothing, for a GameCube companion
+ * whose save belongs to another Dolphin region than the game. */
+SIGIL_API int  sigil_restore(const sigil_sync_request *req, const uint8_t *unit, size_t unit_len,
+                             sigil_sync_result **out);
+SIGIL_API void sigil_sync_result_free(sigil_sync_result *result);
 
 SIGIL_API const char *sigil_strerror(int code);
 SIGIL_API const char *sigil_version(void);

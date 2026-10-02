@@ -311,6 +311,7 @@ static void check_inject_keeps_other_saves(const corpus_table *manifest) {
             }
         }
         if (sigil_ps1_verify(image, mcs, mcs_len) != SIGIL_OK) fail("gran-turismo-gme", "injected save did not verify");
+        if (sigil_ps1_inject(image, mcs, mcs_len) != SIGIL_ERR_EXISTS) fail("gran-turismo-gme", "a second copy of a save went in");
 
         const sigil_card_entry *gt = find_entry(after, "BASCUS-94194GT");
         if (!gt || sigil_ps1_delete(image, gt->first_block) != SIGIL_OK) {
@@ -341,7 +342,7 @@ static void check_full_card_refuses(const corpus_table *manifest) {
     uint8_t *copy = (uint8_t *)malloc(PS1_CARD_SIZE);
     if (mcs && image && copy && load_sample(manifest, "xenogears-full-mcd", image)) {
         memcpy(copy, image, PS1_CARD_SIZE);
-        if (sigil_ps1_inject(image, mcs, mcs_len) != SIGIL_ERR_NOT_FOUND) fail("xenogears-full-mcd", "full card took a save");
+        if (sigil_ps1_inject(image, mcs, mcs_len) != SIGIL_ERR_NO_SPACE) fail("xenogears-full-mcd", "full card took a save");
         if (memcmp(copy, image, PS1_CARD_SIZE) != 0) fail("xenogears-full-mcd", "a refused inject changed the card");
     }
     free(copy);

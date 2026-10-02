@@ -73,7 +73,7 @@ Sigil.locateSaves(
                                                 //   subfolder when sort_savefiles_enable is on. Sigil lists
                                                 //   it and the subfolders the core writes into.
     listing: List<String>? = null,              // optional. Instead of saveRoot: every file directly in the
-                                                //   root plus every file under layoutSubdirs(core), three
+                                                //   root plus every file under layoutSubdirs(core), four
                                                 //   levels deep, as root-relative / paths. listSaveRoot
                                                 //   builds this.
     options: Map<String, String> = emptyMap(),  // optional. Core option key to value, the strings the core
@@ -136,8 +136,10 @@ when the emulator has not created one yet.
 
 ## Memory cards
 
-List the saves on a memory card. PS1 cards are read today: the raw card
-(`.mcr`, `.mcd`, `.srm`), DexDrive `.gme` and PSP or Vita `.vmp`.
+List the saves on a memory card or backup RAM volume: PS1 cards (the raw
+card as `.mcr`, `.mcd` or `.srm`, DexDrive `.gme`, PSP or Vita `.vmp`),
+PS2 `.ps2` file cards, GameCube raw cards, Dreamcast VMUs, and Saturn and
+Sega CD backup RAM.
 
 ```kotlin
 Sigil.listCard(
@@ -146,7 +148,8 @@ Sigil.listCard(
                                 //   a card sigil reads.
 
 data class SigilCardListing(
-    format: Format,             // Ps1Raw, Ps1Gme, Ps1Vmp.
+    format: Format,             // Ps1Raw, Ps1Gme, Ps1Vmp, Ps2, GamecubeRaw, DreamcastVmu, SaturnBackup,
+                                //   SegacdBram.
     totalBlocks: Int,
     freeBlocks: Int,            // Blocks a new save can use.
     freeSlots: Int,             // Directory slots a new save can use.
@@ -156,13 +159,79 @@ data class SigilCardListing(
 
 data class SigilCardEntry(
     name: String,               // As stored on the card, e.g. "BASLUSP01041USCHRO00". Bytes outside
-                                //   printable ASCII read as '?'.
-    ownerId: String,            // Product code as extract reports it, e.g. "SLUS-01041". "" when the
-                                //   name carries none.
-    blocks: Int,
+                                //   printable ASCII, and '%', read as %XX.
+    ownerId: String,            // The game id the save carries, as extract reports it: PS1 and PS2
+                                //   "SLUS-01041", GameCube "47465A45". "" when the format has none.
+    blocks: Int,                // In the card's own block size.
     firstBlock: Int,
 )
 ```
+
+## Sync
+
+`collect` gathers one game's saves into the unit that travels to RomM;
+`restore` puts a unit back and reads it back, removing files where a save
+folder holds a save the unit lacks. PS1 and PS2 memory cards, PCSX2 folder
+cards, GameCube cards and Dolphin's GCI folder, Saturn and Sega CD backup RAM, and
+Dreamcast VMUs work today. `restore` raises `SigilException`
+with code `SigilException.NOT_FOUND` for a unit holding none of the game's
+saves, and ignores other games' saves inside a unit. What a unit holds, how
+Saturn and Sega CD saves find their owner, and how genesis_plus_gx's region
+file is picked: [c.md](c.md), "Sync". For Saturn and Sega CD, build the
+game with `SigilResult.persisted("saturn", "", "", 0)` or `("segacd", ...)`.
+
+```kotlin
+Sigil.collect(
+    game: SigilResult, core: String, contentPath: String, saveRoot: String,
+    listing: List<String>? = null,          // Root-relative paths; null lists saveRoot.
+    options: Map<String, String> = emptyMap(),
+    gameIds: List<String> = emptyList(),    // Every id the game's saves may carry: all discs of a set.
+    state: ByteArray? = null,               // What the last call returned for this platform and emulator.
+    unmanaged: Boolean = false,             // The game runs outside the caller.
+    claimed: List<String> = emptyList(),    // Saturn, Sega CD: names from `unowned` the user gave this game.
+    companions: List<SigilCompanion> = emptyList(),   // Games whose saves this game reads, in the order they go on.
+): SigilSyncResult
+
+Sigil.restore(unit: ByteArray, /* same inputs */, overwriteLocal: Boolean = false): SigilSyncResult
+    // Raises SigilException with code SigilException.CONFLICT, writing nothing, when the saves
+    //   under saveRoot changed since the last sync, and with SigilException.UNCOLLECTED when a
+    //   shared volume holds saves no collect has passed on yet. With SigilException.NO_SPACE,
+    //   `overflow` names the save that didn't fit and `overflowBlocks` the blocks it lacked
+    //   (0 when a directory slot ran out instead).
+
+class SigilCompanion(
+    gameIds: List<String>,      // The companion's ids, as for gameIds.
+    unit: ByteArray? = null,    // restore: its unit from RomM, or null to leave its saves as they are.
+)
+
+class SigilCompanionResult(     // collect: one per companion, in request order.
+    data: ByteArray?,           // The companion's unit. null when none of its saves are there.
+    contentHash: String,
+    identityHash: String,
+    changed: Boolean,           // identityHash differs from the companion's last sync.
+)
+
+class SigilSyncResult(
+    artifact: String,           // File name the unit travels under.
+    shape: SigilSaveUnit.Shape,
+    data: ByteArray?,           // collect: the unit. null when the game has no saves.
+    contentHash: String,        // RomM content_hash of the unit.
+    identityHash: String,       // Over the saves themselves; placement and timestamps don't move it.
+    changed: Boolean,           // identityHash differs from the last sync.
+    conflict: Boolean,
+    state: ByteArray,           // Store it once every upload succeeded; pass it back next time.
+    holding: ByteArray?,        // Saturn, Sega CD: zip of the saves on a shared volume with no known
+                                //   owner. Upload it with the unit.
+    unowned: List<String>,      // The names of the saves in holding, escaped as SigilCardEntry.name
+                                //   is. Pass them to `claimed` as they are.
+    restoreAgain: Boolean,      // Unmanaged: the saves the last restore wrote were overwritten.
+                                //   Restore again instead of uploading.
+    companions: List<SigilCompanionResult>,
+)
+```
+
+A companion's saves go on the game's card beside the game's own and stay
+out of the game's unit; [c.md](c.md), "Sync", has the rules.
 
 ## Helpers
 

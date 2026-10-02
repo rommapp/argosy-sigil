@@ -51,8 +51,9 @@ void sigil_ps1_format(uint8_t image[PS1_CARD_SIZE]);
 
 /**
  * Adds the .mcs save `mcs` to the card, taking the lowest free blocks.
- * SIGIL_ERR_NOT_FOUND when the card lacks room; SIGIL_ERR_UNSUPPORTED_FORMAT
- * when `mcs` isn't a single save. Either way the card is left unchanged.
+ * SIGIL_ERR_NO_SPACE when the card lacks room; SIGIL_ERR_EXISTS when a save
+ * with the same name is there; SIGIL_ERR_UNSUPPORTED_FORMAT when `mcs` isn't
+ * a single save. On any error the card is left unchanged.
  */
 int sigil_ps1_inject(uint8_t image[PS1_CARD_SIZE], const uint8_t *mcs, size_t len);
 

@@ -387,7 +387,7 @@ int sigil_gamecube_inject(uint8_t *image, size_t size, const uint8_t *gci, size_
     uint8_t bat[GC_BLOCK_SIZE];
     memcpy(dir, block_at(image, v.dir_block), GC_BLOCK_SIZE);
     memcpy(bat, block_at(image, v.bat_block), GC_BLOCK_SIZE);
-    if (find_identity(dir, gci) >= 0) return SIGIL_ERR_INVALID_ARG;
+    if (find_identity(dir, gci) >= 0) return SIGIL_ERR_EXISTS;
 
     int slot = -1;
     for (uint32_t i = 0; i < GC_DIR_ENTRIES && slot < 0; i++) {
@@ -398,7 +398,7 @@ int sigil_gamecube_inject(uint8_t *image, size_t size, const uint8_t *gci, size_
     for (uint32_t block = GC_SYSTEM_BLOCKS; block < v.total_blocks && found < blocks; block++) {
         if (bat_link(bat, block) == BAT_FREE) chosen[found++] = block;
     }
-    if (slot < 0 || found < blocks) return SIGIL_ERR_NOT_FOUND;
+    if (slot < 0 || found < blocks) return SIGIL_ERR_NO_SPACE;
 
     for (uint32_t i = 0; i < blocks; i++) {
         uint16_t link = i + 1 == blocks ? (uint16_t)BAT_CHAIN_END : (uint16_t)chosen[i + 1];

@@ -144,6 +144,9 @@ set(SIGIL_SOURCES
     src/card_saturn.c
     src/card_segacd.c
     src/clock_gb.c
+    src/sync.c
+    src/zip_mem.c
+    src/save_names.c
 )
 list(REMOVE_DUPLICATES SIGIL_SOURCES)
 
@@ -183,7 +186,7 @@ endif()
 set(SIGIL_FUZZ_ENGINE "mutate" CACHE STRING "libfuzzer or mutate")
 if(SIGIL_BUILD_FUZZERS)
     foreach(target fuzz_card fuzz_card_ps2 fuzz_card_gamecube fuzz_card_dreamcast
-                   fuzz_card_saturn fuzz_card_segacd)
+                   fuzz_card_saturn fuzz_card_segacd fuzz_sync fuzz_sync_volumes)
         if(SIGIL_FUZZ_ENGINE STREQUAL "libfuzzer")
             add_executable(${target} fuzz/${target}.c)
             set(sanitizers -fsanitize=fuzzer,address,undefined)
