@@ -233,6 +233,110 @@ void sigil_md5_update(sigil_md5 *m, const void *data, size_t len);
 void sigil_md5_final(sigil_md5 *m, uint8_t digest[16]);
 void sigil_md5_hex(const uint8_t digest[16], char out[33]);
 
+/** The MD5 of `len` bytes, as lowercase hex. */
+void sigil_md5_of(const void *data, size_t len, char out[33]);
+
+/** One named part of a unit and the MD5 of its bytes. */
+typedef struct {
+    char name[SIGIL_SAVE_PATH_MAX];
+    char md5[33];
+} sigil_named_md5;
+
+/**
+ * RomM's hash over named parts, as it hashes a zip: the MD5 of the lines
+ * "<name>:<md5>", sorted by name in byte order and joined with "\n". Sorts
+ * `items` in place.
+ */
+void sigil_named_hash(sigil_named_md5 *items, size_t count, char out[33]);
+
+/**
+ * The shared files the request's layout row applies, expanded, whether or
+ * not the listing holds them. Returns how many went into `out`.
+ */
+size_t sigil_save_shared_paths(const sigil_save_request *req, char (*out)[SIGIL_SAVE_PATH_MAX], size_t cap);
+
+/**
+ * The region letter that ends a GameCube game code, from the result's raw
+ * serial or else its hex title id; 0 when neither holds one.
+ */
+char sigil_gc_region_letter(const sigil_result *result);
+
+/**
+ * Dolphin's region folder for a GameCube region letter: E is USA, J (and K,
+ * which Dolphin files with Japan) is JAP, every other letter is a PAL release
+ * under EUR. Dolphin itself reads the disc's region field, which follows the
+ * letter.
+ */
+const char *sigil_gc_region_folder(char letter);
+
+/**
+ * One row of the save-name table: the start of the names a product writes
+ * to backup RAM or a VMU, for platforms whose saves carry no game id.
+ */
+typedef struct {
+    const char *platform;   /* "saturn", "segacd", "dreamcast" */
+    const char *code;       /* product code as the disc header spells it, trimmed */
+    const char *prefix;     /* every save name the product writes starts with this */
+} sigil_save_name_row;
+
+extern const sigil_save_name_row sigil_save_name_table[];
+extern const size_t sigil_save_name_table_count;
+
+/**
+ * True when `name` starts with a prefix `rows` give one of `ids` on
+ * `platform`, and with none that rows give another product: a name two
+ * products share can't be told apart and doesn't match. An id matches a
+ * row's code ignoring spaces, a leading Sega CD type ("GM ", "AI ") and a
+ * trailing version ("-00").
+ */
+bool sigil_save_names_match(const sigil_save_name_row *rows, size_t count, const char *platform, const char *name,
+                            const char *const *ids, size_t id_count);
+
+/** One file of a zip held in memory. */
+typedef struct {
+    char     name[SIGIL_SAVE_ENTRY_MAX];
+    uint8_t *data;
+    size_t   len;
+} sigil_zip_member;
+
+/**
+ * A zip of `members` in the given order, stored uncompressed with fixed
+ * times, so the same members always give the same bytes. `*out` is malloc'd.
+ */
+int sigil_zip_store(const sigil_zip_member *members, size_t count, uint8_t **out, size_t *len);
+
+/**
+ * Reads every file of the zip `zip`, stored or deflated, into `*out`, which
+ * the caller frees with sigil_zip_members_free. Folder entries are skipped.
+ * SIGIL_ERR_UNSUPPORTED_FORMAT when it isn't a zip, a member is encrypted,
+ * fails its CRC or is larger than `max_member` bytes.
+ */
+int sigil_zip_read_mem(const uint8_t *zip, size_t len, size_t max_member, sigil_zip_member **out, size_t *count);
+void sigil_zip_members_free(sigil_zip_member *members, size_t count);
+
+/** The one file holding a backup RAM device for the request's game. */
+typedef struct {
+    char path[SIGIL_SAVE_PATH_MAX];
+    int      device;     /* sigil_device in save_layout.h */
+    bool     per_game;   /* a file only this game uses, as opposed to one the core shares */
+    int      form;       /* sigil_volume_form of a file the core creates */
+    uint32_t new_size;   /* collapsed bytes of a file the core creates; 0 for the format's default */
+} sigil_volume_target;
+
+#define SIGIL_VOLUME_TARGETS_MAX 10
+
+/**
+ * The volume file for each device the request's layout row gives the game,
+ * in device order; `*count` is 0 for a row without volumes. Of several
+ * members for one device, the first present wins, else the first. A shared
+ * file the core picks by the disc's region comes from the row's region
+ * option when forced, else from the content file name's region tag, else
+ * from the only such file present. SIGIL_ERR_NOT_FOUND when none of those
+ * settles it.
+ */
+int sigil_save_volume_targets(const sigil_save_request *req, sigil_volume_target out[SIGIL_VOLUME_TARGETS_MAX],
+                              size_t *count);
+
 /* Feeds every file entry of a zip presented as a stream to `on_entry`, in
  * central-directory order. The callback receives the entry name and the md5
  * hex of its uncompressed bytes. SIGIL_ERR_UNSUPPORTED_FORMAT when the stream

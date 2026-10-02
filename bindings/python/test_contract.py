@@ -25,6 +25,7 @@ JNI = ROOT / "bindings" / "android" / "src" / "main" / "cpp" / "sigil_jni.c"
 _JVM_DESCRIPTORS = {
     "String": "Ljava/lang/String;",
     "List": "Ljava/util/List;",
+    "ByteArray": "[B",
     "Int": "I",
     "Long": "J",
     "Boolean": "Z",
@@ -39,6 +40,8 @@ _JNI_CLASSES = {
     "SigilSaveUnit": "g_unit_class",
     "SigilCardEntry": "g_card_entry_class",
     "SigilCardListing": "g_card_listing_class",
+    "SigilSyncResult": "g_sync_result_class",
+    "SigilCompanionResult": "g_companion_result_class",
     "SigilException": "g_exception_class",
 }
 
@@ -60,6 +63,8 @@ _API_SURFACE = {
     "content stem": ("fun contentStem(", "def content_stem(", "func ContentStem("),
     "list save root": ("fun listSaveRoot(", "def list_save_root(", "func ListSaveRoot("),
     "list card": ("fun listCard(", "def list_card(", "func ListCard("),
+    "collect": ("fun collect(", "def collect(", "func Collect("),
+    "restore": ("fun restore(", "def restore(", "func Restore("),
 }
 
 _EXTRACT_OPTIONS = {
@@ -92,6 +97,20 @@ _UNIT_FIELDS = {
     "artifact": ("artifact", "artifact", "Artifact"),
     "content hash": ("contentHash", "content_hash", "ContentHash"),
     "identity hash": ("identityHash", "identity_hash", "IdentityHash"),
+}
+
+_SYNC_FIELDS = {
+    "claimed": ("claimed", "claimed", "Claimed"),
+    "overwrite local": ("overwriteLocal", "overwrite_local", "OverwriteLocal"),
+    "holding": ("holding", "holding", "Holding"),
+    "unowned": ("unowned", "unowned", "Unowned"),
+    "restore again": ("restoreAgain", "restore_again", "RestoreAgain"),
+    "state": ("state", "state", "State"),
+    "conflict": ("conflict", "conflict", "Conflict"),
+    "companions": ("companions", "companions", "Companions"),
+    "companion game ids": ("gameIds", "game_ids", "GameIDs"),
+    "overflow": ("overflow", "overflow", "OverflowError"),
+    "overflow blocks": ("overflowBlocks", "overflow_blocks", "Blocks: uint32(cres.overflow_blocks)"),
 }
 
 GO = ROOT / "bindings" / "go" / "sigil.go"
@@ -248,6 +267,18 @@ def test_card_format_names_match_across_bindings():
     )
 
 
+def test_every_error_code_has_an_error_in_each_binding():
+    """A code with no mapping reaches Python as the bare base class and Go as
+    a formatted number, so a caller can't match on it."""
+    codes = re.findall(r"#define SIGIL_ERR_(\w+)\s+-\d+", HEADER.read_text())
+    assert codes, "no SIGIL_ERR_* codes in sigil.h"
+    py = PY_INIT.read_text()
+    go = GO.read_text()
+    for code in codes:
+        assert f"lib.SIGIL_ERR_{code}:" in py, f"_ERROR_CLASSES lacks SIGIL_ERR_{code}"
+        assert f"case C.SIGIL_ERR_{code}:" in go, f"errFromCode lacks SIGIL_ERR_{code}"
+
+
 def _jni_exception_thrown_on_failure() -> bool:
     return "throw_sigil(env, rc)" in JNI.read_text()
 
@@ -277,6 +308,24 @@ def test_every_binding_returns_every_result_field():
 
 def test_every_binding_returns_every_save_unit_field():
     _assert_each_binding_has(_UNIT_FIELDS, "save unit field")
+
+
+def test_every_binding_carries_every_sync_field():
+    _assert_each_binding_has(_SYNC_FIELDS, "sync field")
+
+
+def test_every_binding_lists_the_save_root_to_the_same_depth():
+    """A PCSX2 folder card's _pcsx2_meta files sit four levels under memcards/;
+    a binding that lists less deep loses them."""
+    sources = {
+        "kotlin": (r"SUBDIR_LIST_DEPTH\s*=\s*(\d+)", KOTLIN),
+        "python": (r"_SUBDIR_LIST_DEPTH\s*=\s*(\d+)", PY_INIT),
+        "go": (r"subdirListDepth\s*=\s*(\d+)", GO),
+    }
+    for language, (pattern, path) in sources.items():
+        match = re.search(pattern, path.read_text())
+        assert match, f"{language} listing depth not found"
+        assert int(match.group(1)) == 4, f"{language} lists {match.group(1)} levels deep"
 
 
 def _keep_rule_patterns() -> list[re.Pattern[str]]:

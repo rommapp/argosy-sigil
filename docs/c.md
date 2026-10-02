@@ -91,7 +91,7 @@ typedef struct {
                                              only the keys the row names are read. */
     size_t option_count;
     const char *const *listing;           /* required. Every file directly in the save root plus every file
-                                             under sigil_save_layout_subdirs(layout), three levels deep, as
+                                             under sigil_save_layout_subdirs(layout), four levels deep, as
                                              root-relative / paths. The root: the directory the emulator
                                              writes this game's save into; RetroArch: savefile_directory,
                                              plus the core-named subfolder when sort_savefiles_enable is on. */
@@ -168,8 +168,10 @@ when the emulator has not created one yet.
 
 ## Memory cards
 
-List the saves on a memory card. PS1 cards are read today: the raw card
-(`.mcr`, `.mcd`, `.srm`), DexDrive `.gme` and PSP or Vita `.vmp`.
+List the saves on a memory card or backup RAM volume: PS1 cards (the raw
+card as `.mcr`, `.mcd` or `.srm`, DexDrive `.gme`, PSP or Vita `.vmp`),
+PS2 `.ps2` file cards, GameCube raw cards, Dreamcast VMUs, and Saturn and
+Sega CD backup RAM.
 
 ```c
 int sigil_card_list(
@@ -179,7 +181,8 @@ int sigil_card_list(
 
 typedef struct {
     uint32_t struct_version;
-    int format;                     /* SIGIL_CARD_FORMAT_PS1_RAW, _PS1_GME, _PS1_VMP. */
+    int format;                     /* SIGIL_CARD_FORMAT_PS1_RAW, _PS1_GME, _PS1_VMP, _PS2, _GAMECUBE_RAW,
+                                       _DREAMCAST_VMU, _SATURN_BACKUP, _SEGACD_BRAM. */
     uint32_t total_blocks;
     uint32_t free_blocks;           /* Blocks a new save can use. */
     uint32_t free_slots;            /* Directory slots a new save can use. */
@@ -189,13 +192,161 @@ typedef struct {
 } sigil_card_listing;
 
 typedef struct {
-    char name[32];                  /* As stored on the card, e.g. "BASLUSP01041USCHRO00". */
-    char owner_id[16];              /* Product code as disc identification reports it, e.g. "SLUS-01041".
-                                       "" when the name carries none. */
-    uint32_t blocks;
+    char name[64];                  /* As stored on the card, e.g. "BASLUSP01041USCHRO00". */
+    char owner_id[16];              /* The game id the save carries, as disc identification reports it:
+                                       PS1 and PS2 "SLUS-01041", GameCube "47465A45". "" when the
+                                       format has none. */
+    uint32_t blocks;                /* In the card's own block size. */
     uint32_t first_block;
 } sigil_card_entry;
 ```
+
+## Sync
+
+`sigil_collect` gathers one game's saves into the unit that travels to RomM;
+`sigil_restore` puts a unit back and reads it back. PS1 and PS2 memory
+cards, PCSX2 folder cards, GameCube cards and Dolphin's GCI folder, Saturn
+and Sega CD backup RAM, and Dreamcast VMUs work today. On PS1 and PS2 the
+unit is one per-game card: a raw PS1 card, or an 8 MB `.ps2` card with ECC.
+A PCSX2 folder card gives the same unit as a file card: restore unpacks it
+into the game's save folders, removes files of the game's folders the unit
+lacks (through `remove`), and writes a formatted `_pcsx2_superblock` when
+the one there is missing or unreadable. On
+GameCube it is the game's saves as `.gci` files named as Dolphin names
+them (`<maker>-<gamecode>-<file>.gci`, escaped): the one file, or a zip
+of them named `<stem>.zip`. It is the same whether they came off a raw
+card or a GCI folder, and restore puts them into either; F-Zero GX's save
+is bound to the target card's serial on a raw card, as Dolphin binds it.
+On Saturn and Sega CD it is the game's internal
+volume (`backup.ram`) when it has internal saves alone, else a zip named
+`<stem>.zip` holding `backup.ram` and `cart.ram` as present. On Dreamcast
+it is the game's VMU A1 (`vmu_A1.bin`) when it has saves there alone, else
+a zip of `vmu_A1.bin` to `vmu_D2.bin` as present. The member name, not the
+size, says which device a volume is, since a 4 MiB Saturn volume can be
+Yaba Sanshiro's internal memory or a 32 Mbit cart. Every
+volume in a unit is raw, whatever form the emulator stores it in; restore
+writes each file back in the emulator's form (gzip, byte expansion), and a
+file the emulator hasn't created yet in the form and size its layout row
+names.
+
+```c
+typedef struct {
+    uint32_t struct_version;          /* SIGIL_SYNC_REQUEST_V1 */
+    sigil_save_request save;          /* As for sigil_save_resolve. save.open is required. */
+    const char *const *game_ids;      /* Every id the game's saves may carry: all discs of a set. */
+    size_t game_id_count;
+    int mode;                         /* SIGIL_SYNC_MANAGED or _UNMANAGED. */
+    const uint8_t *state;             /* The blob the last call returned for this platform and emulator. */
+    size_t state_len;
+    int overwrite_local;              /* restore: the user chose to replace saves that changed locally. */
+    sigil_save_write_fn write;        /* restore: writes one file of the save root, returns 0 on success. */
+    void *write_ctx;
+    const char *const *claimed;       /* Saturn, Sega CD, Dreamcast: names from `unowned` the user gave
+                                         this game. */
+    size_t claimed_count;
+    sigil_save_remove_fn remove;      /* restore: removes one file of the save root (called with write_ctx).
+                                         Dolphin's GCI folder and PCSX2 folder cards need it to drop a
+                                         save the unit lacks; restore refuses with SIGIL_ERR_INVALID_ARG,
+                                         writing nothing, when it must remove a file and this is NULL. */
+    const sigil_sync_companion *companions;   /* Games whose saves this game reads, in the order they go on. */
+    size_t companion_count;
+} sigil_sync_request;
+
+typedef struct {
+    const char *const *game_ids;      /* The companion's ids, as for the game's own game_ids. */
+    size_t game_id_count;
+    const uint8_t *unit;              /* restore: the companion's unit from RomM, or NULL to leave its saves
+                                         as they are. */
+    size_t unit_len;
+} sigil_sync_companion;
+
+int sigil_collect(const sigil_sync_request *req, sigil_sync_result **out);
+int sigil_restore(const sigil_sync_request *req, const uint8_t *unit, size_t unit_len,
+                  sigil_sync_result **out);   /* SIGIL_ERR_CONFLICT, writing nothing, when the saves on
+                                                 disk changed since the last sync. SIGIL_ERR_UNCOLLECTED,
+                                                 writing nothing, when a shared volume holds saves no
+                                                 collect has passed on yet. */
+void sigil_sync_result_free(sigil_sync_result *result);
+
+typedef struct {
+    uint32_t struct_version;
+    char artifact[256];               /* File name the unit travels under. */
+    int shape;
+    uint8_t *data;                    /* collect: the unit. NULL when the game has no saves. */
+    size_t len;
+    char content_hash[33];            /* RomM content_hash of the unit. */
+    char identity_hash[33];           /* Over the saves themselves; placement and timestamps don't move it. */
+    int changed;                      /* identity_hash differs from the last sync. */
+    int conflict;                     /* restore wrote nothing because local saves changed. */
+    uint8_t *state;                   /* Store it once every upload succeeded; pass it back next time. */
+    size_t state_len;
+    uint8_t *holding;                 /* collect, Saturn and Sega CD: zip of the saves on a shared volume
+                                         with no known owner. NULL when there are none. */
+    size_t holding_len;
+    char (*unowned)[64];              /* The names of the saves in holding. */
+    size_t unowned_count;
+    int restore_again;                /* collect, unmanaged: the saves the last restore wrote were
+                                         overwritten. Restore again instead of uploading. */
+    sigil_sync_companion_result *companions;   /* collect: one per request companion, in request order. */
+    size_t companion_count;
+    char overflow[64];                /* restore, SIGIL_ERR_NO_SPACE: the save that didn't fit. */
+    uint32_t overflow_blocks;         /* The blocks it lacked; 0 when a directory slot ran out instead. */
+} sigil_sync_result;
+
+typedef struct {
+    uint8_t *data;                    /* The companion's unit; NULL when none of its saves are there. */
+    size_t len;
+    char content_hash[33];
+    char identity_hash[33];
+    int changed;                      /* identity_hash differs from the companion's last sync. */
+} sigil_sync_companion_result;
+```
+
+A game that reads an earlier title's save, as a sequel reads its prequel's,
+lists that title in `companions`. Restore puts each companion's saves on the
+game's card, volume or GCI folder beside the game's own. A companion without
+a unit keeps the saves it already has there. Collect leaves companion saves
+out of the game's unit and hash, and returns each companion's saves as its
+own unit, with `changed` against that companion's last sync. On GameCube a
+companion from another Dolphin region than the game is refused with
+`SIGIL_ERR_INVALID_ARG`. When restore returns `SIGIL_ERR_NO_SPACE` it still
+sets `*out`, naming the save that didn't fit in `overflow`; free it as usual.
+
+A game's saves are the ones carrying one of its ids, on its own card and on
+the shared cards beside it. Restore puts each save back on the card it was
+on, or on the game's own card when it is new; it never touches another
+game's save, and refuses with `SIGIL_ERR_NO_SPACE` before writing when the
+saves don't fit. A unit holding none of the game's saves is refused with
+`SIGIL_ERR_NOT_FOUND`. Saves of other games inside a unit are ignored.
+
+Saturn, Sega CD and Dreamcast saves carry no game id. Every save on a
+per-game volume (Beetle Saturn's `<stem>.srm` and `.bcr`, genesis_plus_gx
+with `system_bram` = `per game`, flycast's per-game VMUs) is the game's. On
+a shared volume (genesis_plus_gx's default `scd_U.brm`, Beetle's shared
+volumes, Yaba Sanshiro's `backup.bin`, flycast's `vmu_save_A1.bin`) a save
+belongs to the game the user claimed it for, else to the game the state
+learned it belongs to, else, in managed mode, to the game the volume was
+last swapped in for, else to the game the save-name table gives it by one
+of the ids in `title_id` or `game_ids` (`src/save_names.c`; Saturn and
+Sega CD product codes as the disc header spells them, Dreamcast product
+numbers). The rest come back in `holding`, which the client
+keeps where the user can claim them; `holding` and the unit both go up
+before the state is stored.
+
+In managed mode, restore swaps each shared volume for one holding only the
+game's saves, keeping the file's form (gzip, byte expansion). It refuses
+with `SIGIL_ERR_UNCOLLECTED` while the volume holds a save that isn't in
+the last holding unit or doesn't match its game's last collect: call
+collect for the game that ran last, upload, then restore again. In
+unmanaged mode, restore never swaps. It replaces only the game's saves,
+and only when the volume is as the last collect saw it; a collect that
+then finds the old saves back sets `restore_again`.
+
+genesis_plus_gx picks `scd_E`, `scd_U` or `scd_J` by the disc's region.
+sigil takes the region from `genesis_plus_gx_region_detect` when it is
+forced, else from the content file name's first region tag, such as
+`(USA)`, else from the only one of the three files present. Otherwise
+collect and restore return `SIGIL_ERR_NOT_FOUND`.
 
 ## Helpers
 

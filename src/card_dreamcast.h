@@ -58,9 +58,9 @@ void sigil_dreamcast_format(uint8_t image[VMU_CARD_SIZE]);
 /**
  * Adds the .dci file `dci` to the VMU. A game file takes the contiguous
  * blocks from block 0; a data file takes free blocks from the top of the user
- * area down. SIGIL_ERR_NOT_FOUND when the VMU lacks the blocks or a directory
+ * area down. SIGIL_ERR_NO_SPACE when the VMU lacks the blocks or a directory
  * slot, or already holds a game file and `dci` is another;
- * SIGIL_ERR_INVALID_ARG when a file with the same name exists;
+ * SIGIL_ERR_EXISTS when a file with the same name exists;
  * SIGIL_ERR_UNSUPPORTED_FORMAT when `dci` isn't a single file. On any error
  * the VMU is left unchanged.
  */

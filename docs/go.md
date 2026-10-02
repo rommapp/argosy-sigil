@@ -82,7 +82,7 @@ type LocateOptions struct {
                                 //   sort_savefiles_enable is on. Sigil lists it and the subfolders the
                                 //   core writes into.
     Listing  []string           // optional. Instead of SaveRoot: every file directly in the root plus
-                                //   every file under LayoutSubdirs(core), three levels deep, as
+                                //   every file under LayoutSubdirs(core), four levels deep, as
                                 //   root-relative / paths. ListSaveRoot builds this.
     Options  map[string]string  // optional. Core option key to value, the strings the core defines
                                 //   and RetroArch writes to <core>.opt, never display labels:
@@ -144,8 +144,10 @@ when the emulator has not created one yet.
 
 ## Memory cards
 
-List the saves on a memory card. PS1 cards are read today: the raw card
-(`.mcr`, `.mcd`, `.srm`), DexDrive `.gme` and PSP or Vita `.vmp`.
+List the saves on a memory card or backup RAM volume: PS1 cards (the raw
+card as `.mcr`, `.mcd` or `.srm`, DexDrive `.gme`, PSP or Vita `.vmp`),
+PS2 `.ps2` file cards, GameCube raw cards, Dreamcast VMUs, and Saturn and
+Sega CD backup RAM.
 
 ```go
 sigil.ListCard(
@@ -153,7 +155,9 @@ sigil.ListCard(
 ) (*CardListing, error) // sigil.ErrUnsupportedFormat when the file is not a card sigil reads.
 
 type CardListing struct {
-    Format       CardFormat  // CardFormatPS1Raw, CardFormatPS1GME, CardFormatPS1VMP.
+    Format       CardFormat  // CardFormatPS1Raw, CardFormatPS1GME, CardFormatPS1VMP, CardFormatPS2,
+                             //   CardFormatGameCubeRaw, CardFormatDreamcastVMU, CardFormatSaturnBackup,
+                             //   CardFormatSegaCDBRAM.
     TotalBlocks  uint32
     FreeBlocks   uint32      // Blocks a new save can use.
     FreeSlots    uint32      // Directory slots a new save can use.
@@ -163,11 +167,78 @@ type CardListing struct {
 
 type CardEntry struct {
     Name       string // As stored on the card, e.g. "BASLUSP01041USCHRO00".
-    OwnerID    string // Product code as Extract reports it, e.g. "SLUS-01041". "" when the name carries none.
-    Blocks     uint32
+    OwnerID    string // The game id the save carries, as Extract reports it: PS1 and PS2 "SLUS-01041",
+                      //   GameCube "47465A45". "" when the format has none.
+    Blocks     uint32 // In the card's own block size.
     FirstBlock uint32
 }
 ```
+
+## Sync
+
+`Collect` gathers one game's saves into the unit that travels to RomM;
+`Restore` puts a unit back and reads it back, removing files where a save
+folder holds a save the unit lacks. PS1 and PS2 memory cards, PCSX2 folder
+cards, GameCube cards and Dolphin's GCI folder, Saturn and Sega CD backup RAM, and
+Dreamcast VMUs work today. `Restore` returns
+`sigil.ErrNotFound` for a unit holding none of the game's saves, and
+ignores other games' saves inside a unit. What a unit holds, how Saturn and
+Sega CD saves find their owner, and how genesis_plus_gx's region file is
+picked: [c.md](c.md), "Sync". For Saturn and Sega CD, build the game with
+`PersistedResult("saturn", "", "", 0)` or `("segacd", ...)`.
+
+```go
+sigil.Collect(game *Result, core, contentPath, saveRoot string, opts *SyncOptions) (*SyncResult, error)
+sigil.Restore(unit []byte, game *Result, core, contentPath, saveRoot string, opts *SyncOptions) (*SyncResult, error)
+    // sigil.ErrConflict, writing nothing, when the saves under saveRoot changed since the last sync.
+    // sigil.ErrUncollected, writing nothing, when a shared volume holds saves no collect has
+    //   passed on yet. *sigil.OverflowError, which matches sigil.ErrNoSpace, when the saves
+    //   don't fit: Name is the save that didn't, Blocks the blocks it lacked (0 when a
+    //   directory slot ran out instead).
+
+type Companion struct {
+    GameIDs []string // The companion's ids, as for GameIDs.
+    Unit    []byte   // Restore: its unit from RomM, or nil to leave its saves as they are.
+}
+
+type CompanionResult struct {
+    Data         []byte // The companion's unit. nil when none of its saves are there.
+    ContentHash  string
+    IdentityHash string
+    Changed      bool   // IdentityHash differs from the companion's last sync.
+}
+
+type SyncOptions struct {
+    Listing        []string          // Root-relative paths; nil lists saveRoot.
+    Options        map[string]string // The core's current option values.
+    GameIDs        []string          // Every id the game's saves may carry: all discs of a set.
+    State          []byte            // What the last call returned for this platform and emulator.
+    Unmanaged      bool              // The game runs outside the caller.
+    OverwriteLocal bool              // Restore: the user chose to replace saves that changed locally.
+    Claimed        []string          // Saturn, Sega CD: names from Unowned the user gave this game.
+    Companions     []Companion       // Games whose saves this game reads, in the order they go on.
+}
+
+type SyncResult struct {
+    Artifact     string    // File name the unit travels under.
+    Shape        SaveShape
+    Data         []byte    // Collect: the unit. nil when the game has no saves.
+    ContentHash  string    // RomM content_hash of the unit.
+    IdentityHash string    // Over the saves themselves; placement and timestamps don't move it.
+    Changed      bool      // IdentityHash differs from the last sync.
+    Conflict     bool
+    State        []byte    // Store it once every upload succeeded; pass it back next time.
+    Holding      []byte    // Saturn, Sega CD: zip of the saves on a shared volume with no known
+                           //   owner. Upload it with the unit.
+    Unowned      []string  // The names of the saves in Holding, for the user to claim.
+    RestoreAgain bool      // Unmanaged: the saves the last Restore wrote were overwritten.
+                           //   Restore again instead of uploading.
+    Companions   []CompanionResult // Collect: one per SyncOptions.Companions, in order.
+}
+```
+
+A companion's saves go on the game's card beside the game's own and stay
+out of the game's unit; [c.md](c.md), "Sync", has the rules.
 
 ## Helpers
 

@@ -339,14 +339,14 @@ int sigil_dreamcast_inject(uint8_t image[VMU_CARD_SIZE], const uint8_t *dci, siz
     if (blocks == 0) return SIGIL_ERR_UNSUPPORTED_FORMAT;
     vmu_layout l;
     if (!read_layout(image, &l)) return SIGIL_ERR_INVALID_ARG;
-    if (name_taken(image, &l, dci + ENTRY_NAME)) return SIGIL_ERR_INVALID_ARG;
+    if (name_taken(image, &l, dci + ENTRY_NAME)) return SIGIL_ERR_EXISTS;
     uint32_t chosen[VMU_BLOCKS];
-    if (!choose_blocks(image, &l, dci[0] == VMU_TYPE_GAME, blocks, chosen)) return SIGIL_ERR_NOT_FOUND;
+    if (!choose_blocks(image, &l, dci[0] == VMU_TYPE_GAME, blocks, chosen)) return SIGIL_ERR_NO_SPACE;
     size_t slot = SIZE_MAX;
     for (uint32_t s = 0; s < slot_count(&l) && slot == SIZE_MAX; s++) {
         if (image[slot_offset(&l, s)] == VMU_TYPE_EMPTY) slot = slot_offset(&l, s);
     }
-    if (slot == SIZE_MAX) return SIGIL_ERR_NOT_FOUND;
+    if (slot == SIZE_MAX) return SIGIL_ERR_NO_SPACE;
 
     for (uint32_t i = 0; i < blocks; i++) {
         reverse_groups(block_mut(image, chosen[i]), dci + sigil_dreamcast_dci_size(i), VMU_BLOCK_SIZE);

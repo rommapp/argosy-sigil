@@ -60,8 +60,8 @@ int sigil_gamecube_format(uint8_t *image, size_t size, bool shift_jis);
  * Adds the .gci save `gci` to the card, taking the first free directory slot
  * and the lowest free blocks, and writes the new directory and allocation
  * table to both copies. The save's bytes go on the card unchanged apart from
- * its first-block field. SIGIL_ERR_NOT_FOUND when the card lacks room;
- * SIGIL_ERR_INVALID_ARG when a save with the same game code, maker code and
+ * its first-block field. SIGIL_ERR_NO_SPACE when the card lacks room;
+ * SIGIL_ERR_EXISTS when a save with the same game code, maker code and
  * file name is already there; SIGIL_ERR_UNSUPPORTED_FORMAT when `gci` isn't a
  * single .gci save. In every failure the card is left unchanged.
  */

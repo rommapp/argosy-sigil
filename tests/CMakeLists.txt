@@ -61,7 +61,9 @@ set_tests_properties(integration_save_corpus PROPERTIES SKIP_RETURN_CODE 77)
 # static library tests are built against expose.
 foreach(t integration_card_ps1 integration_card_ps2 integration_card_gamecube
           integration_card_dreamcast integration_card_saturn integration_card_segacd
-          integration_clock_gb)
+          integration_clock_gb integration_sync_ps1 integration_sync_ps2
+          integration_sync_volumes integration_sync_dreamcast integration_sync_gamecube
+          integration_sync_companions)
     sigil_add_test(${t})
     target_include_directories(${t} PRIVATE ${CMAKE_SOURCE_DIR}/src)
     target_compile_definitions(${t} PRIVATE
@@ -75,6 +77,13 @@ endforeach()
 target_link_libraries(unit_zip PRIVATE sigil_zlib)
 target_link_libraries(unit_zar PRIVATE sigil_zstd_compress)
 target_link_libraries(unit_switch_cnmt PRIVATE sigil_aes)
+
+sigil_add_test(unit_save_names)
+target_include_directories(unit_save_names PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+# The JNI binding's name escaping is plain C, tested here without a JDK.
+sigil_add_test(unit_jni_names)
+target_include_directories(unit_jni_names PRIVATE ${CMAKE_SOURCE_DIR}/bindings/android/src/main/cpp)
 
 # save_id case is emitted by the extractors AND by the filename fallback, so
 # these carry assertions against both paths.

@@ -3,6 +3,7 @@
 
 import hashlib
 import struct
+from pathlib import Path
 
 import pytest
 
@@ -76,6 +77,195 @@ def test_list_card_rejects_a_file_that_is_not_a_card(tmp_path):
     path.write_bytes(b"Q\0\0\0" + bytes(8316))
     with pytest.raises(sigil.SigilUnsupportedFormatError):
         sigil.list_card(path)
+
+
+_CROSS = sigil.SigilResult.persisted("psx", "SLUS-01041", "SLUS-01041", 0)
+
+
+def test_collect_gathers_only_the_games_saves(tmp_path):
+    (tmp_path / "Chrono Cross.srm").write_bytes(_ps1_card([("BASLUSP01041CROSS", 2), ("BASCUS-94426SLOTS", 1)]))
+    result = sigil.collect(_CROSS, "pcsx_rearmed", "Chrono Cross.cue", tmp_path)
+    assert result.artifact == "Chrono Cross.srm"
+    assert result.shape == "single"
+    assert result.changed
+    assert result.data is not None
+    unit = tmp_path / "unit.srm"
+    unit.write_bytes(result.data)
+    assert [e.name for e in sigil.list_card(unit).entries] == ["BASLUSP01041CROSS"]
+
+
+def test_restore_writes_the_unit_and_refuses_over_unsynced_changes(tmp_path):
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    target.mkdir()
+    (source / "Chrono Cross.srm").write_bytes(_ps1_card([("BASLUSP01041CROSS", 2)]))
+    unit = sigil.collect(_CROSS, "pcsx_rearmed", "Chrono Cross.cue", source)
+    assert unit.data is not None
+
+    restored = sigil.restore(unit.data, _CROSS, "pcsx_rearmed", "Chrono Cross.cue", target)
+    assert restored.identity_hash == unit.identity_hash
+    assert [e.name for e in sigil.list_card(target / "Chrono Cross.srm").entries] == ["BASLUSP01041CROSS"]
+
+    (target / "Chrono Cross.srm").write_bytes(_ps1_card([("BASLUSP01041OTHER", 1)]))
+    with pytest.raises(sigil.SigilConflictError):
+        sigil.restore(unit.data, _CROSS, "pcsx_rearmed", "Chrono Cross.cue", target)
+    forced = sigil.restore(unit.data, _CROSS, "pcsx_rearmed", "Chrono Cross.cue", target, overwrite_local=True)
+    assert forced.identity_hash == unit.identity_hash
+
+
+_MC01 = Path(__file__).resolve().parents[2] / "tests/fixtures/saves/ps2/files/mymc-mc01/mc01.ps2"
+_REZ = sigil.SigilResult.persisted("ps2", "SCES-50501", "SCES-50501", 0)
+
+
+@pytest.mark.skipif(not _MC01.exists(), reason="PS2 save samples missing")
+def test_ps2_shared_card_round_trips_through_collect_and_restore(tmp_path):
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    target.mkdir()
+    (source / "Mcd001.ps2").write_bytes(_MC01.read_bytes())
+    unit = sigil.collect(_REZ, "pcsx2", "Rez.iso", source)
+    assert unit.artifact == "Rez.ps2"
+    assert unit.data is not None and len(unit.data) == 8650752
+    card = tmp_path / "unit.ps2"
+    card.write_bytes(unit.data)
+    assert [e.name for e in sigil.list_card(card).entries] == ["BESCES-50501REZ"]
+
+    restored = sigil.restore(unit.data, _REZ, "pcsx2", "Rez.iso", target)
+    assert restored.identity_hash == unit.identity_hash
+    assert [e.name for e in sigil.list_card(target / "Mcd001.ps2").entries] == ["BESCES-50501REZ"]
+
+
+_MULTI_BRM = Path(__file__).resolve().parents[2] / "tests/fixtures/saves/segacd/files/multi-titles-brm/Multiple titles.brm"
+_LUNAR = sigil.SigilResult.persisted("segacd", "", "", 0)
+
+
+@pytest.mark.skipif(not _MULTI_BRM.exists(), reason="Sega CD save samples missing")
+def test_segacd_shared_volume_holds_unclaimed_saves_back(tmp_path):
+    (tmp_path / "scd_U.brm").write_bytes(_MULTI_BRM.read_bytes())
+    held = sigil.collect(_LUNAR, "genesis_plus_gx", "Lunar (USA).cue", tmp_path)
+    assert held.data is None
+    assert held.holding is not None and held.holding[:4] == b"PK\x03\x04"
+    assert "SFCD_DAT_09" in held.unowned
+
+    claimed = sigil.collect(_LUNAR, "genesis_plus_gx", "Lunar (USA).cue", tmp_path, claimed=["SFCD_DAT_09"])
+    assert claimed.artifact == "backup.ram"
+    assert "SFCD_DAT_09" not in claimed.unowned
+    assert claimed.data is not None
+    unit = tmp_path / "unit.brm"
+    unit.write_bytes(claimed.data)
+    assert [e.name for e in sigil.list_card(unit).entries] == ["SFCD_DAT_09"]
+
+    with pytest.raises(sigil.SigilUncollectedError):
+        sigil.restore(claimed.data, _LUNAR, "genesis_plus_gx", "Lunar (USA).cue", tmp_path)
+
+
+_HYPER_DUEL = Path(__file__).resolve().parents[2] / "tests/fixtures/saves/saturn/files/hyper-duel-bkr/Hyper Duel (Japan).bkr"
+
+
+@pytest.mark.skipif(not _HYPER_DUEL.exists(), reason="Saturn save samples missing")
+def test_a_save_name_with_raw_bytes_can_be_claimed(tmp_path):
+    volume = bytearray(_HYPER_DUEL.read_bytes())
+    at = volume.find(b"HYPERDUEL_0")
+    assert at > 0
+    volume[at + 9] = 0xB1
+    (tmp_path / "mednafen_saturn_libretro_shared.bkr").write_bytes(bytes(volume))
+    game = sigil.SigilResult.persisted("saturn", "", "", 0)
+    shared = {"beetle_saturn_save_method": "mednafen", "beetle_saturn_shared_int": "enabled"}
+
+    held = sigil.collect(game, "mednafen_saturn", "Hyper Duel (Japan).cue", tmp_path, options=shared)
+    assert len(held.unowned) == 1
+    claimed = sigil.collect(game, "mednafen_saturn", "Hyper Duel (Japan).cue", tmp_path, options=shared,
+                            claimed=held.unowned)
+    assert claimed.data is not None
+    assert claimed.unowned == ()
+    unit = tmp_path / "unit.bkr"
+    unit.write_bytes(claimed.data)
+    assert tuple(e.name for e in sigil.list_card(unit).entries) == held.unowned
+
+
+_FZERO_DIR = Path(__file__).resolve().parents[2] / "tests/fixtures/saves/ngc/files/fzero-gx-dolphin-gci-set"
+_FZERO = sigil.SigilResult.persisted("gamecube", "47465A45", "GFZE", 0)
+
+
+@pytest.mark.skipif(not _FZERO_DIR.exists(), reason="GameCube save samples missing")
+def test_gamecube_folder_restore_removes_saves_the_unit_lacks(tmp_path):
+    card_a = tmp_path / "User" / "GC" / "USA" / "Card A"
+    card_a.mkdir(parents=True)
+    for gci in _FZERO_DIR.glob("*.gci"):
+        if gci.name != "8P-GFZE-fzc.dat.gci":
+            (card_a / gci.name).write_bytes(gci.read_bytes())
+    smaller = sigil.collect(_FZERO, "dolphin", "F-Zero GX (USA).rvz", tmp_path)
+    assert smaller.shape == "multi"
+
+    (card_a / "8P-GFZE-fzc.dat.gci").write_bytes((_FZERO_DIR / "8P-GFZE-fzc.dat.gci").read_bytes())
+    sigil.restore(smaller.data, _FZERO, "dolphin", "F-Zero GX (USA).rvz", tmp_path, overwrite_local=True)
+    assert not (card_a / "8P-GFZE-fzc.dat.gci").exists()
+    assert not (card_a / "8P-GFZE-f_zero.dat0.gci").exists()
+    assert len(list(card_a.glob("*.gci"))) == 4
+
+
+_ACE_DIR = Path(__file__).resolve().parents[2] / "tests/fixtures/saves/ps2/files/ace-combat-04-aethersx2/BASLUS-20152AC04"
+_ACE = sigil.SigilResult.persisted("ps2", "SLUS-20152", "SLUS-20152", 0)
+
+
+@pytest.mark.skipif(not _ACE_DIR.exists(), reason="PS2 save samples missing")
+def test_pcsx2_folder_card_syncs_through_the_default_listing(tmp_path):
+    source = tmp_path / "source" / "memcards" / "Mcd001.ps2" / "BASLUS-20152AC04"
+    source.mkdir(parents=True)
+    for f in _ACE_DIR.iterdir():
+        (source / f.name).write_bytes(f.read_bytes())
+    unit = sigil.collect(_ACE, "pcsx2_standalone", "Ace Combat 04 (USA).iso", tmp_path / "source")
+    assert unit.artifact == "Ace Combat 04 (USA).ps2"
+    assert unit.data is not None
+
+    card = tmp_path / "target" / "memcards" / "Mcd001.ps2"
+    card.mkdir(parents=True)
+    (card / "_pcsx2_superblock").write_bytes(b"")
+    restored = sigil.restore(unit.data, _ACE, "pcsx2_standalone", "Ace Combat 04 (USA).iso", tmp_path / "target")
+    assert restored.identity_hash == unit.identity_hash
+    assert (card / "_pcsx2_superblock").stat().st_size == 0x2000
+    assert (card / "BASLUS-20152AC04" / "_pcsx2_index").exists()
+
+    meta = card / "BASLUS-20152AC04" / "_pcsx2_meta"
+    meta.mkdir()
+    (meta / "icon.sys").write_bytes(b"\0" * 512)
+    listed = sigil.list_save_root(tmp_path / "target", "pcsx2_standalone")
+    assert "memcards/Mcd001.ps2/BASLUS-20152AC04/_pcsx2_meta/icon.sys" in listed
+
+
+def test_companion_saves_go_on_the_card_and_come_back_as_their_unit(tmp_path):
+    prequel = sigil.SigilResult.persisted("psx", "SLUS-00453", "SLUS-00453", 0)
+    sequel = sigil.SigilResult.persisted("psx", "SLUS-01334", "SLUS-01334", 0)
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "Prequel.srm").write_bytes(_ps1_card([("BASLUS-00453LEGENDS", 1)]))
+    (src / "Sequel.srm").write_bytes(_ps1_card([("BASLUS-01334LEGENDS2", 1)]))
+    first = sigil.collect(prequel, "pcsx_rearmed", "Prequel.cue", src)
+    second = sigil.collect(sequel, "pcsx_rearmed", "Sequel.cue", src)
+
+    target = tmp_path / "target"
+    target.mkdir()
+    companion = sigil.SigilCompanion(game_ids=("SLUS-00453",), unit=first.data)
+    restored = sigil.restore(second.data, sequel, "pcsx_rearmed", "Sequel.cue", target, companions=[companion])
+    names = sorted(e.name for e in sigil.list_card(target / "Sequel.srm").entries)
+    assert names == ["BASLUS-00453LEGENDS", "BASLUS-01334LEGENDS2"]
+
+    back = sigil.collect(sequel, "pcsx_rearmed", "Sequel.cue", target, state=restored.state,
+                         companions=[sigil.SigilCompanion(game_ids=("SLUS-00453",))])
+    assert back.identity_hash == second.identity_hash
+    assert len(back.companions) == 1
+    assert back.companions[0].identity_hash == first.identity_hash
+    assert not back.companions[0].changed
+
+    full = tmp_path / "full"
+    full.mkdir()
+    (full / "Sequel.srm").write_bytes(_ps1_card([("BASLUS-99999OTHER", 15)]))
+    with pytest.raises(sigil.SigilNoSpaceError) as excinfo:
+        sigil.restore(second.data, sequel, "pcsx_rearmed", "Sequel.cue", full, overwrite_local=True)
+    assert excinfo.value.overflow == "BASLUS-01334LEGENDS2"
+    assert excinfo.value.overflow_blocks == 1
 
 
 def _write_xex_fixture(path):
@@ -200,9 +390,9 @@ def test_option_gated_sidecar_and_shared_files():
         options={"genesis_plus_gx_system_bram": "per game"},
     )
 
-    assert [m.path for m in default.members] == ["game.srm"]
+    assert [m.path for m in default.members] == []
     assert default.unkeyed == ("scd_U.brm",)
-    assert [m.path for m in per_game.members] == ["game.srm", "game.brm"]
+    assert [m.path for m in per_game.members] == ["game.brm"]
     assert per_game.unkeyed == ()
 
 

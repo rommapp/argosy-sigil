@@ -149,6 +149,51 @@ static void check_format_matches_mymc(const corpus_table *manifest) {
     free(blank);
 }
 
+/* A folder card's superblock is the first erase block of mymc's blank card,
+ * pages without their spare bytes, and PCSX2 reads it as formatted. */
+static void check_folder_superblock(const corpus_table *manifest) {
+    uint8_t super[PS2_FOLDER_SUPERBLOCK_SIZE];
+    sigil_ps2_folder_superblock(super);
+    if (!sigil_ps2_folder_superblock_usable(super, sizeof(super))) fail("folder superblock", "PCSX2 would read it as unformatted");
+
+    size_t len = 0;
+    uint8_t *blank = load_sample_bytes(manifest, "mymc-mc02", &len);
+    if (blank) {
+        const size_t stride = 512 + 16;
+        for (size_t page = 0; page < PS2_FOLDER_SUPERBLOCK_SIZE / 512; page++) {
+            if (len < (page + 1) * stride || memcmp(super + page * 512, blank + page * stride, 512) != 0) {
+                fail("folder superblock", "differs from the first block of mymc's blank card");
+                break;
+            }
+        }
+        free(blank);
+    }
+
+    for (size_t r = 0; r < manifest->nrows; r++) {
+        const char *path = corpus_get(manifest, r, "path");
+        const char *base = strrchr(path, '/');
+        if (strcmp(base ? base + 1 : path, "_pcsx2_superblock") != 0) continue;
+        char full[1024];
+        size_t real_len = 0;
+        uint8_t *real = corpus_sample_path("ps2", corpus_get(manifest, r, "id"), path, full, sizeof(full)) == 0
+                            ? corpus_read_file(full, &real_len) : NULL;
+        if (!real) continue;
+        if (!sigil_ps2_folder_superblock_usable(real, real_len)) fail(corpus_get(manifest, r, "id"), "an emulator's superblock reads as unusable");
+        if (real_len < 0x16 || memcmp(real, super, 0x16) != 0) fail(corpus_get(manifest, r, "id"), "an emulator's superblock magic differs from sigil's");
+        free(real);
+    }
+
+    uint8_t *copy = (uint8_t *)malloc(sizeof(super));
+    memcpy(copy, super, sizeof(super));
+    if (sigil_ps2_folder_superblock_usable(NULL, 0)) fail("folder superblock", "a missing file reads as usable");
+    if (sigil_ps2_folder_superblock_usable(copy, 0)) fail("folder superblock", "an empty file reads as usable");
+    if (sigil_ps2_folder_superblock_usable(copy, 512)) fail("folder superblock", "the superblock page alone reads as usable");
+    if (sigil_ps2_folder_superblock_usable(copy, sizeof(super) - 1)) fail("folder superblock", "a short file reads as usable");
+    copy[0x16] = 0;
+    if (sigil_ps2_folder_superblock_usable(copy, sizeof(super))) fail("folder superblock", "an unformatted block reads as usable");
+    free(copy);
+}
+
 /* Writing a loaded card back reproduces the file, spare bytes included, which
  * pins the ECC against real pages. */
 static void check_write_reproduces_file(const corpus_table *manifest) {
@@ -204,7 +249,7 @@ static bool build_from(const sigil_ps2_card *source, const sigil_card_listing *l
         ok = sigil_ps2_extract(source, listing->entries[i].first_block, &save) == SIGIL_OK;
         if (ok) {
             ok = sigil_ps2_inject(built, &save) == SIGIL_OK && sigil_ps2_verify(built, &save) == SIGIL_OK &&
-                 sigil_ps2_inject(built, &save) == SIGIL_ERR_INVALID_ARG;
+                 sigil_ps2_inject(built, &save) == SIGIL_ERR_EXISTS;
             sigil_ps2_save_free(&save);
         }
     }
@@ -303,7 +348,7 @@ static void check_full_card_refuses(const corpus_table *manifest) {
         size_t size = sigil_ps2_card_file_size(&card);
         uint8_t *before = (uint8_t *)malloc(size), *after = (uint8_t *)malloc(size);
         if (big && before && after && sigil_ps2_card_write(&card, before) == SIGIL_OK) {
-            if (sigil_ps2_inject(&card, &save) != SIGIL_ERR_NOT_FOUND) fail("mymc-mc01", "an oversized save went in");
+            if (sigil_ps2_inject(&card, &save) != SIGIL_ERR_NO_SPACE) fail("mymc-mc01", "an oversized save went in");
             if (sigil_ps2_card_write(&card, after) != SIGIL_OK || memcmp(before, after, size) != 0) {
                 fail("mymc-mc01", "a refused inject changed the card");
             }
@@ -503,6 +548,7 @@ int main(void) {
         else if (strcmp(kind, "wrapped") == 0) check_not_card(id, file);
     }
     check_format_matches_mymc(&manifest);
+    check_folder_superblock(&manifest);
     check_write_reproduces_file(&manifest);
     check_rebuild(&manifest, &entries);
     check_delete_and_restore(&manifest);

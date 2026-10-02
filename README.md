@@ -135,8 +135,8 @@ and reports what the cart holds in `features` (see
 the emulator names the save after the content file.
 
 The slugs are stable. Argosy's shorter internal identifiers (`dc`,
-`ngc`, `gc`, `vita`, `n3ds`, `nsw`, `x360`, `xbx`, `sfc`, `sfam`)
-resolve as aliases of the canonical slugs above.
+`ngc`, `gc`, `vita`, `n3ds`, `nsw`, `x360`, `xbx`, `sfc`, `sfam`) and
+`ps1`, `playstation` resolve as aliases of the canonical slugs above.
 
 A `.zip` holding any of the formats above is read in place, with no
 extraction step: sigil opens the archive's member, resolves the platform
@@ -307,6 +307,12 @@ spelling: `128k` to `128Kbit`, `256k` to `256Kbit`, `512k` to `512Kbit`,
 `4Mbit`. `{nvram_version}` is `opera_nvram_version` (default `0`).
 `{left_index}` and `{right_index}` are `beetle_psx_hw_memcard_left_index`
 (default `0`) and `beetle_psx_hw_memcard_right_index` (default `1`).
+`{dc_vmu_id}` is the Dreamcast product number (`title_id`) with each of
+` /\:*?|<>` replaced by `_`, as flycast names a per-game VMU.
+`{gc_region}` is Dolphin's GameCube region folder from the region letter
+ending the game code: `E` gives `USA`, `J` and `K` give `JAP`, any other
+letter `EUR`. Dolphin reads the disc's region field, which follows the
+letter on retail discs.
 
 Every row was read from the core's source or its libretro docs page; the
 names are the core's literals.
@@ -316,10 +322,19 @@ names are the core's literals.
 | default | any | `{stem}.srm` primary; `{stem}.rtc` rtc | | RetroArch `save.c` |
 | `vba_next`, `gpsp` | any | `{stem}.srm` primary | | no RTC region (`libretro.c` memory maps) |
 | `bsnes` | `snes` | `{stem}.srm` primary | | `program.cpp`: `.rtc` only for Game Boy carts; SNES clock chips persist nothing |
-| `genesis_plus_gx` | `segacd` | `{stem}.srm` primary; `{stem}.brm` sidecar when `genesis_plus_gx_system_bram` = `per game`; `{stem}_{cart_size}_cart.brm` sidecar when `genesis_plus_gx_cart_bram` = `per game` | `scd_E.brm`, `scd_U.brm`, `scd_J.brm` when `system_bram` = `per bios` (default); `{cart_size}_cart.brm` when `cart_bram` = `per cart` (default) | `libretro/libretro.c` `check_variables`, `bram_save` |
+| `genesis_plus_gx` | `segacd` | `{stem}.brm` primary when `genesis_plus_gx_system_bram` = `per game`; `{stem}_{cart_size}_cart.brm` sidecar when `genesis_plus_gx_cart_bram` = `per game`. No `.srm`: the core writes none for a disc | `scd_E.brm`, `scd_U.brm`, `scd_J.brm` when `system_bram` = `per bios` (default), one per disc region; `{cart_size}_cart.brm` when `cart_bram` = `per cart` (default) | `libretro/libretro.c` `check_variables`, `bram_load`, `bram_save` |
 | `mednafen_psx_hw` | any | `{stem}.srm` primary when `beetle_psx_hw_use_mednafen_memcard0_method` = `libretro` (default); `{stem}.{left_index}.mcr` primary when `mednafen`; `{stem}.{right_index}.mcr` sidecar when `beetle_psx_hw_enable_memcard1` = `enabled` | `mednafen_psx_libretro_shared.0.mcr`, `.1.mcr` when `beetle_psx_hw_shared_memory_cards` = `enabled` | commit `707d1be`; docs.libretro.com/library/beetle_psx_hw |
 | `pcsx_rearmed` | any | `{stem}.srm` primary | `pcsx-card2.mcd` when `pcsx_rearmed_memcard2` = `shared` (default) | observed on device |
-| `mednafen_saturn` | any | `{stem}.srm` primary when `beetle_saturn_save_method` = `libretro` (default); `{stem}.bkr` primary when `mednafen`; `{stem}.bcr` sidecar; `{stem}.smpc` sidecar | `mednafen_saturn_libretro_shared.bkr`, `.smpc` when `beetle_saturn_shared_int` = `enabled`; `.bcr` when `beetle_saturn_shared_ext` = `enabled` | `mednafen/ss/ss.c` |
+| `pcsx2` | any | `{stem}.ps2` primary when `pcsx2_shared_memory_cards` = `disabled` | `Mcd001.ps2`, `Mcd002.ps2` when `enabled` (default). The core keeps them in `<system>/pcsx2/memcards/`, so pass that folder as the save root | libretro/ps2 `libretro/main.cpp`, `pcsx2/VMManager.cpp` |
+| `pcsx2_standalone` | `ps2` | | `memcards/Mcd001.ps2`, `memcards/Mcd002.ps2`, each a file card or a folder card (a directory of save folders and `_pcsx2_superblock`). Covers PCSX2, AetherSX2, NetherSX2 and ARMSX2; the save root is the folder that holds `memcards/` | PCSX2 `pcsx2/Pcsx2Config.cpp`, `pcsx2/SIO/Memcard/MemoryCardFolder.cpp`; subdir `memcards` |
+| `mednafen_saturn` | any | `{stem}.srm` primary when `beetle_saturn_save_method` = `libretro` (default); `{stem}.bkr` primary when `mednafen` and `beetle_saturn_shared_int` = `disabled` (default); `{stem}.bcr` sidecar when `beetle_saturn_shared_ext` = `disabled` (default); `{stem}.smpc` sidecar when `shared_int` = `disabled` | `mednafen_saturn_libretro_shared.bkr` when `shared_int` = `enabled` and `save_method` = `mednafen`; `.smpc` when `shared_int` = `enabled`; `.bcr` when `shared_ext` = `enabled` | `mednafen/ss/ss.c`, `libretro.c`; sega.md section 1 |
+| `kronos` | `saturn` | `kronos/saturn/{stem}.ram` primary when `kronos_use_beetle_saves` = `disabled` (default); `{stem}.bkr` primary when `enabled`; `kronos/saturn/{stem}-ext512K.ram`, `-ext1M.ram`, `-ext2M.ram` or `-ext4M.ram` sidecar by `kronos_addon_cartridge` (`512K_backup_ram` default, `1M_`, `2M_`, `4M_backup_ram`); `{stem}.bcr` sidecar when `kronos_use_beetle_saves` = `enabled` | | libretro/yabause `kronos` `libretro.c` `configure_saturn_addon_cart`; subdir `kronos/saturn` |
+| `yabause` | `saturn` | `{stem}.srm` primary, 64 KiB byte-expanded | | `libretro.c` (master); the core writes the file itself |
+| `yabasanshiro` | `saturn` | | `yabasanshiro/backup.bin`, one 8 MiB byte-expanded volume for every game | libretro/yabause `yabasanshiro` `libretro.c`; subdir `yabasanshiro` |
+| `dolphin` | `gamecube` | | `User/GC/{gc_region}/Card A/`, one `.gci` file per save, when Dolphin.ini's `SlotA` = `8` (default); `User/GC/MemoryCardA.{gc_region}.raw` when `SlotA` = `1`, or `.1019.raw`, `.507.raw`, `.251.raw`, `.123.raw`, `.59.raw` for smaller cards | dolphin-emu `Config/MainSettings.cpp` `GetGCIFolderPath`, `GetMemcardPath`; the libretro core's User folder is the save folder's `User/`; subdir `User/GC` |
+| `dolphin_standalone` | `gamecube` | | as `dolphin`, rooted at Dolphin's User folder (`GC/{gc_region}/Card A/`, `GC/MemoryCardA.{gc_region}.raw`) | subdir `GC` |
+| `flycast` | `dreamcast` | `{dc_vmu_id}.A1.bin` primary when `reicast_per_content_vmus` = `VMU A1` or `All VMUs`, else the legacy `{stem}.A1.bin` when only that exists; `{dc_vmu_id}.{A2..D2}.bin` (or legacy `{stem}.{port}.bin`) sidecars when `All VMUs` | `vmu_save_{A1..D2}.bin` when `disabled` (default). The core keeps them in `<system>/dc/`, so pass that folder as the save root. Under `VMU A1` the other ports stay there too and don't sync | flyinghead/flycast `shell/libretro/oslib.cpp` `getVmuPath` |
+| `flycast_standalone` | `dreamcast` | `{dc_vmu_id}_vmu_save_A1.bin` primary, or the legacy `{stem}_vmu_save_A1.bin`, when `PerGameVmu` = `yes` (default) | `vmu_save_A1.bin` when `PerGameVmu` = `no`; `vmu_save_{A2..D2}.bin` | flycast `core/oslib/oslib.cpp`; the save root is the VMU folder |
 | `mednafen_ngp` | any | `{stem}.flash` primary | | `mednafen/ngp/system.c` `system_io_flash_write` |
 | `opera` | any | `opera/per_game/{stem}.{nvram_version}.srm` primary when `opera_nvram_storage` = `per game` (default) | `opera/shared/nvram.{nvram_version}.srm` when `shared` | `opera_lr_nvram.c`; subdirs `opera/per_game`, `opera/shared` |
 | `pokemini` | any | `{stem}.eep` primary | | `libretro.c`, written at unload |
@@ -334,7 +349,8 @@ names are the core's literals.
 Row platforms use the slugs in the platform table plus `segacd` and
 `fds`. Callers may pass their own forms: `scd`, `sega_cd`, `sega-cd`,
 `mega_cd`, `mega-cd`, `megacd` resolve to `segacd`; `sfc`, `sfam` to
-`snes`; `ps1`, `playstation` to `psx`; `famicom_disk_system` to `fds`.
+`snes`; `ps1`, `playstation` to `psx`; `famicom_disk_system` to `fds`;
+`dc` to `dreamcast`; `ngc`, `gc` to `gamecube`.
 
 Folder members are archived from the folder's parent, so the zip holds
 `<folder>/<file>` the way a zipped save folder does.

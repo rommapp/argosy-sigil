@@ -297,6 +297,8 @@ int sigil_ps2_save_data(const sigil_ps2_card *card, uint32_t first_cluster,
 #define PS2_FORMAT_BACKUP2      1022u
 #define PS2_CARD_TYPE           2u
 #define PS2_CARD_FLAGS          0x2Bu
+#define PS2_FORMATTED_AT        0x16u
+#define PS2_FORMATTED_BYTE      0x6Fu
 #define PS2_MODE_ROOT_SELF      0x8427u
 #define PS2_MODE_ROOT_PARENT    0xA426u
 
@@ -313,6 +315,35 @@ static void write_dir_entry(uint8_t *e, uint16_t mode, uint32_t length, uint32_t
     sigil_write_le32(e + PS2_ENTRY_CLUSTER, cluster);
     memcpy(e + 0x18, tod, PS2_TOD_SIZE);
     memcpy(e + PS2_ENTRY_NAME, name, strlen(name));
+}
+
+/* The superblock page of an empty 8 MB card, over zeroed bytes. */
+static void write_superblock(uint8_t *super) {
+    memcpy(super, PS2_MAGIC, PS2_MAGIC_LEN);
+    memcpy(super + PS2_MAGIC_LEN, "1.2.0.0", 7);
+    sigil_write_le16(super + 0x28, PS2_PAGE_LEN);
+    sigil_write_le16(super + 0x2A, PS2_PAGES_PER_CLUSTER);
+    sigil_write_le16(super + 0x2C, PS2_PAGES_PER_BLOCK);
+    sigil_write_le16(super + 0x2E, 0xFF00);
+    sigil_write_le32(super + 0x30, PS2_FORMAT_CLUSTERS);
+    sigil_write_le32(super + 0x34, PS2_FORMAT_ALLOC_OFFSET);
+    sigil_write_le32(super + 0x38, PS2_FORMAT_ALLOC_END);
+    sigil_write_le32(super + 0x3C, 0);
+    sigil_write_le32(super + 0x40, PS2_FORMAT_BACKUP1);
+    sigil_write_le32(super + 0x44, PS2_FORMAT_BACKUP2);
+    sigil_write_le32(super + 0x50, PS2_FORMAT_IFC);
+    memset(super + 0xD0, 0xFF, 0x80);
+    super[0x150] = PS2_CARD_TYPE;
+    super[0x151] = PS2_CARD_FLAGS;
+}
+
+void sigil_ps2_folder_superblock(uint8_t out[PS2_FOLDER_SUPERBLOCK_SIZE]) {
+    memset(out, 0, PS2_FOLDER_SUPERBLOCK_SIZE);
+    write_superblock(out);
+}
+
+bool sigil_ps2_folder_superblock_usable(const uint8_t *data, size_t len) {
+    return data && len >= PS2_FOLDER_SUPERBLOCK_SIZE && data[PS2_FORMATTED_AT] == PS2_FORMATTED_BYTE;
 }
 
 int sigil_ps2_card_format(sigil_ps2_card *card, const uint8_t tod[PS2_TOD_SIZE]) {
@@ -333,23 +364,7 @@ int sigil_ps2_card_format(sigil_ps2_card *card, const uint8_t tod[PS2_TOD_SIZE])
     if (!card->clusters || !card->spare || !card->dirty) { sigil_ps2_card_free(card); return SIGIL_ERR_OOM; }
     memset(card->dirty, 1, pages);
 
-    uint8_t *super = cluster_mut(card, 0);
-    memcpy(super, PS2_MAGIC, PS2_MAGIC_LEN);
-    memcpy(super + PS2_MAGIC_LEN, "1.2.0.0", 7);
-    sigil_write_le16(super + 0x28, PS2_PAGE_LEN);
-    sigil_write_le16(super + 0x2A, PS2_PAGES_PER_CLUSTER);
-    sigil_write_le16(super + 0x2C, PS2_PAGES_PER_BLOCK);
-    sigil_write_le16(super + 0x2E, 0xFF00);
-    sigil_write_le32(super + 0x30, PS2_FORMAT_CLUSTERS);
-    sigil_write_le32(super + 0x34, PS2_FORMAT_ALLOC_OFFSET);
-    sigil_write_le32(super + 0x38, PS2_FORMAT_ALLOC_END);
-    sigil_write_le32(super + 0x3C, 0);
-    sigil_write_le32(super + 0x40, PS2_FORMAT_BACKUP1);
-    sigil_write_le32(super + 0x44, PS2_FORMAT_BACKUP2);
-    sigil_write_le32(super + 0x50, PS2_FORMAT_IFC);
-    memset(super + 0xD0, 0xFF, 0x80);
-    super[0x150] = PS2_CARD_TYPE;
-    super[0x151] = PS2_CARD_FLAGS;
+    write_superblock(cluster_mut(card, 0));
 
     uint32_t per_cluster = card->cluster_size / 4;
     uint32_t fat_clusters = PS2_FORMAT_ALLOC_OFFSET - PS2_FORMAT_FAT_FIRST;
@@ -631,9 +646,9 @@ int sigil_ps2_inject(sigil_ps2_card *card, const sigil_ps2_save *save) {
     if (!card || !card->clusters || !card->dirty || !save) return SIGIL_ERR_INVALID_ARG;
     uint32_t root_count = root_entry_count(card);
     if (root_count < 2) return SIGIL_ERR_UNSUPPORTED_FORMAT;
-    if (name_in_root(card, save->entry, root_count)) return SIGIL_ERR_INVALID_ARG;
+    if (name_in_root(card, save->entry, root_count)) return SIGIL_ERR_EXISTS;
     uint32_t slot = root_slot_for_new(card, root_count);
-    if (clusters_needed(card, save, slot, root_count) > free_clusters(card)) return SIGIL_ERR_NOT_FOUND;
+    if (clusters_needed(card, save, slot, root_count) > free_clusters(card)) return SIGIL_ERR_NO_SPACE;
 
     uint32_t max_chain = card->alloc_end;
     uint32_t *root_chain = (uint32_t *)malloc((size_t)max_chain * sizeof(uint32_t));
@@ -643,11 +658,11 @@ int sigil_ps2_inject(sigil_ps2_card *card, const sigil_ps2_save *save) {
     cluster_allocator a = { card, 0 };
     int rc = SIGIL_OK;
 
-    if (slot == root_count && !reserve_entry(&a, root_chain, &root_len, root_count)) rc = SIGIL_ERR_NOT_FOUND;
+    if (slot == root_count && !reserve_entry(&a, root_chain, &root_len, root_count)) rc = SIGIL_ERR_NO_SPACE;
     uint32_t dir_len = 0;
     if (rc == SIGIL_OK) {
         uint32_t first;
-        if (!allocate(&a, 0, false, &first)) rc = SIGIL_ERR_NOT_FOUND;
+        if (!allocate(&a, 0, false, &first)) rc = SIGIL_ERR_NO_SPACE;
         else {
             dir_chain[dir_len++] = first;
             uint8_t *c = relative_cluster(card, first);
@@ -668,13 +683,13 @@ int sigil_ps2_inject(sigil_ps2_card *card, const sigil_ps2_save *save) {
     }
     for (size_t i = 0; i < save->file_count && rc == SIGIL_OK; i++) {
         uint32_t index = (uint32_t)i + 2;
-        if (!reserve_entry(&a, dir_chain, &dir_len, index)) { rc = SIGIL_ERR_NOT_FOUND; break; }
+        if (!reserve_entry(&a, dir_chain, &dir_len, index)) { rc = SIGIL_ERR_NO_SPACE; break; }
         const sigil_ps2_file *f = &save->files[i];
         uint32_t length = sigil_read_le32(f->entry + PS2_ENTRY_LENGTH);
         uint32_t first = 0, prev = 0;
         for (uint32_t k = 0; k < clusters_for(length, card->cluster_size); k++) {
             uint32_t n;
-            if (!allocate(&a, prev, k > 0, &n)) { rc = SIGIL_ERR_NOT_FOUND; break; }
+            if (!allocate(&a, prev, k > 0, &n)) { rc = SIGIL_ERR_NO_SPACE; break; }
             if (k == 0) first = n;
             uint8_t *c = relative_cluster(card, n);
             size_t at = (size_t)k * card->cluster_size;
@@ -756,6 +771,23 @@ int sigil_ps2_verify(const sigil_ps2_card *card, const sigil_ps2_save *save) {
     }
     free(root);
     return rc;
+}
+
+void sigil_ps2_save_md5(const sigil_ps2_save *save, char out[33]) {
+    sigil_md5 m;
+    sigil_md5_init(&m);
+    sigil_md5_update(&m, save->entry + PS2_ENTRY_NAME, PS2_NAME_LEN);
+    for (size_t i = 0; i < save->file_count; i++) {
+        const sigil_ps2_file *f = &save->files[i];
+        uint8_t len[4];
+        memcpy(len, f->entry + PS2_ENTRY_LENGTH, sizeof(len));
+        sigil_md5_update(&m, f->entry + PS2_ENTRY_NAME, PS2_NAME_LEN);
+        sigil_md5_update(&m, len, sizeof(len));
+        sigil_md5_update(&m, f->data, sigil_read_le32(len));
+    }
+    uint8_t digest[16];
+    sigil_md5_final(&m, digest);
+    sigil_md5_hex(digest, out);
 }
 
 /* ---- PCSX2 folder cards ---------------------------------------------------- */

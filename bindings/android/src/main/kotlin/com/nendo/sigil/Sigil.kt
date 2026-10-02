@@ -63,8 +63,24 @@ data class SigilResult(
     }
 }
 
-/** A failed sigil call; [code] is the C error code and the message is `sigil_strerror` for it. */
-class SigilException(val code: Int, message: String) : Exception(message)
+/**
+ * A failed sigil call; [code] is the C error code and the message is `sigil_strerror` for it.
+ * With [NO_SPACE] from restore, [overflow] names the save that didn't fit and [overflowBlocks]
+ * the blocks it lacked (0 when a directory slot was missing instead).
+ */
+class SigilException(val code: Int, message: String, val overflow: String = "", val overflowBlocks: Int = 0) :
+    Exception(message) {
+    companion object {
+        /** Nothing identified the file, or a unit holds none of the game's saves. */
+        const val NOT_FOUND = -5
+        /** The saves on disk changed since the last sync; restore wrote nothing. */
+        const val CONFLICT = -9
+        const val EXISTS = -10
+        const val NO_SPACE = -11
+        /** A shared volume holds saves no collect has passed on yet; restore wrote nothing. */
+        const val UNCOLLECTED = -12
+    }
+}
 
 /** One file of a save unit. [path] is relative to the save root; [entry] is its archive name. */
 data class SigilSaveMember(
@@ -112,7 +128,10 @@ data class SigilSaveUnit(
     }
 }
 
-/** One save on a memory card. [ownerId] is the product code it carries, or empty when it has none. */
+/**
+ * One save on a memory card. [ownerId] is the product code it carries, or empty when it has none.
+ * [name] holds the stored bytes with those outside printable ASCII, and '%', written as %XX.
+ */
 data class SigilCardEntry(
     val name: String,
     val ownerId: String,
@@ -146,6 +165,48 @@ data class SigilCardListing(
         }
     }
 }
+
+/**
+ * What [Sigil.collect] or [Sigil.restore] produced. Store [state] and pass it to the next call
+ * for this game.
+ *
+ * [holding] is, for Saturn and Sega CD, a zip of the saves on a shared volume with no known
+ * owner, and [unowned] their names, with bytes outside printable ASCII, and '%', written as
+ * %XX. Pass a name back in `claimed` as it is.
+ * [restoreAgain] is true in unmanaged mode when the saves the last restore wrote were
+ * overwritten: restore again instead of uploading.
+ * [companions] has one entry per request companion, in request order.
+ */
+class SigilSyncResult(
+    val artifact: String,
+    private val shapeCode: Int,
+    val data: ByteArray?,
+    val contentHash: String,
+    val identityHash: String,
+    val changed: Boolean,
+    val conflict: Boolean,
+    val state: ByteArray,
+    val holding: ByteArray?,
+    val unowned: List<String>,
+    val restoreAgain: Boolean,
+    val companions: List<SigilCompanionResult>
+) {
+    val shape: SigilSaveUnit.Shape get() = SigilSaveUnit.Shape.fromCode(shapeCode)
+}
+
+/**
+ * A game whose saves this game reads, as a sequel reads its prequel's. [unit] is its unit from
+ * RomM for restore, or null to leave its saves as they are.
+ */
+class SigilCompanion(val gameIds: List<String>, val unit: ByteArray? = null)
+
+/** What collect found of a companion's saves with the game's; [data] is null when none are there. */
+class SigilCompanionResult(
+    val data: ByteArray?,
+    val contentHash: String,
+    val identityHash: String,
+    val changed: Boolean
+)
 
 /**
  * Sigil — extract platform-native title IDs from console ROM files, and
@@ -195,6 +256,27 @@ object Sigil {
     ): Array<String>
 
     @JvmStatic private external fun nativeListCard(path: String): SigilCardListing
+
+    @JvmStatic private external fun nativeSync(
+        unit: ByteArray?,
+        rootPath: String,
+        layout: String,
+        platformSlug: String?,
+        contentPath: String,
+        titleId: String?,
+        saveId: String?,
+        features: Int,
+        optionKeys: Array<String>,
+        optionValues: Array<String>,
+        listing: Array<String>,
+        gameIds: Array<String>,
+        state: ByteArray?,
+        unmanaged: Boolean,
+        overwriteLocal: Boolean,
+        claimed: Array<String>,
+        companionIds: Array<Array<String>>,
+        companionUnits: Array<ByteArray?>
+    ): SigilSyncResult
     @JvmStatic private external fun nativeLayoutSubdirs(layout: String): Array<String>
     @JvmStatic private external fun nativeContentStem(contentPath: String): String
     @JvmStatic private external fun nativePlatformSlug(slug: String?): String
@@ -285,6 +367,91 @@ object Sigil {
         return saves.copy(contentHash = hashes[0], identityHash = hashes[1])
     }
 
+    /**
+     * [game]'s saves under [saveRoot] gathered into the unit that travels to RomM. Store the
+     * result's state once the unit, its holding unit and each changed companion unit reached
+     * RomM; docs/kotlin.md defines every input.
+     */
+    fun collect(
+        game: SigilResult,
+        core: String,
+        contentPath: String,
+        saveRoot: String,
+        listing: List<String>? = null,
+        options: Map<String, String> = emptyMap(),
+        gameIds: List<String> = emptyList(),
+        state: ByteArray? = null,
+        unmanaged: Boolean = false,
+        claimed: List<String> = emptyList(),
+        companions: List<SigilCompanion> = emptyList()
+    ): SigilSyncResult =
+        sync(null, game, core, contentPath, saveRoot, listing, options, gameIds, state, unmanaged, false, claimed,
+            companions)
+
+    /**
+     * Puts [unit], and each companion's unit given, back under [saveRoot] and reads them back.
+     * Raises [SigilException] with [SigilException.CONFLICT], writing nothing, when the saves
+     * there changed since the last sync and [overwriteLocal] is false; with
+     * [SigilException.UNCOLLECTED] when a shared Saturn or Sega CD volume holds saves no collect
+     * has passed on yet; and with [SigilException.NO_SPACE], naming the save that didn't fit,
+     * when they don't fit.
+     */
+    fun restore(
+        unit: ByteArray,
+        game: SigilResult,
+        core: String,
+        contentPath: String,
+        saveRoot: String,
+        listing: List<String>? = null,
+        options: Map<String, String> = emptyMap(),
+        gameIds: List<String> = emptyList(),
+        state: ByteArray? = null,
+        unmanaged: Boolean = false,
+        overwriteLocal: Boolean = false,
+        claimed: List<String> = emptyList(),
+        companions: List<SigilCompanion> = emptyList()
+    ): SigilSyncResult =
+        sync(unit, game, core, contentPath, saveRoot, listing, options, gameIds, state, unmanaged, overwriteLocal,
+            claimed, companions)
+
+    private fun sync(
+        unit: ByteArray?,
+        game: SigilResult,
+        core: String,
+        contentPath: String,
+        saveRoot: String,
+        listing: List<String>?,
+        options: Map<String, String>,
+        gameIds: List<String>,
+        state: ByteArray?,
+        unmanaged: Boolean,
+        overwriteLocal: Boolean,
+        claimed: List<String>,
+        companions: List<SigilCompanion>
+    ): SigilSyncResult {
+        val paths = listing ?: listSaveRoot(java.io.File(saveRoot), core)
+        return nativeSync(
+            unit,
+            saveRoot,
+            core,
+            game.platformSlug,
+            contentPath,
+            game.titleId.ifEmpty { null },
+            game.saveId.ifEmpty { null },
+            game.features,
+            options.keys.toTypedArray(),
+            options.values.toTypedArray(),
+            paths.toTypedArray(),
+            gameIds.toTypedArray(),
+            state,
+            unmanaged,
+            overwriteLocal,
+            claimed.toTypedArray(),
+            companions.map { it.gameIds.toTypedArray() }.toTypedArray(),
+            companions.map { it.unit }.toTypedArray()
+        )
+    }
+
     /** The saves on the memory card at [path]. The card format is detected from its content. */
     fun listCard(path: String): SigilCardListing = nativeListCard(path)
 
@@ -313,5 +480,5 @@ object Sigil {
         }
     }
 
-    private const val SUBDIR_LIST_DEPTH = 3
+    private const val SUBDIR_LIST_DEPTH = 4
 }

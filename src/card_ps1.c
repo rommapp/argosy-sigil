@@ -199,13 +199,19 @@ int sigil_ps1_inject(uint8_t image[PS1_CARD_SIZE], const uint8_t *mcs, size_t le
     if (!image) return SIGIL_ERR_INVALID_ARG;
     uint32_t blocks = mcs_blocks(mcs, len);
     if (blocks == 0) return SIGIL_ERR_UNSUPPORTED_FORMAT;
+    for (uint32_t block = 1; block <= PS1_DATA_BLOCKS; block++) {
+        if (frame_state(image, block) == PS1_STATE_FIRST &&
+            memcmp(frame_at(image, block) + 0x0A, mcs + 0x0A, PS1_NAME_LEN) == 0) {
+            return SIGIL_ERR_EXISTS;
+        }
+    }
 
     uint32_t chosen[PS1_DATA_BLOCKS];
     uint32_t found = 0;
     for (uint32_t block = 1; block <= PS1_DATA_BLOCKS && found < blocks; block++) {
         if (frame_is_free(image, block)) chosen[found++] = block;
     }
-    if (found < blocks) return SIGIL_ERR_NOT_FOUND;
+    if (found < blocks) return SIGIL_ERR_NO_SPACE;
 
     for (uint32_t i = 0; i < blocks; i++) {
         uint8_t *f = frame_mut(image, chosen[i]);

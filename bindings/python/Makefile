@@ -6,16 +6,18 @@ SIGIL_ROOT := $(abspath ../..)
 BUILD_DIR  := $(SIGIL_ROOT)/build-python
 PYTHON     ?= python3
 
-.PHONY: all build test contract clean
+.PHONY: all build lib test contract clean
 
 all: build
 
-$(BUILD_DIR)/libsigil.a:
+# Always handed to cmake, which knows when a C source changed; make would
+# only see that the archive exists.
+lib:
 	cmake -B $(BUILD_DIR) -S $(SIGIL_ROOT) \
 		-DSIGIL_BUILD_CLI=OFF -DSIGIL_BUILD_TESTS=OFF
 	cmake --build $(BUILD_DIR) --target sigil
 
-build: $(BUILD_DIR)/libsigil.a
+build: lib
 	$(PYTHON) build_sigil.py
 
 test: build

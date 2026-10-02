@@ -177,13 +177,19 @@ static bool magic_at(const uint8_t *buf, size_t len, size_t stride) {
     return true;
 }
 
-static uint32_t block_size_for(size_t size) {
-    switch (size) {
-    case SATURN_INTERNAL_SIZE:     return 64u;
-    case SATURN_CART_SIZE:         return 512u;
-    case SATURN_YABASANSHIRO_SIZE: return 64u;
-    default:                       return 0;
-    }
+enum { AS_ANY, AS_CART, AS_INTERNAL };
+
+/* Block sizes the BIOS gives each device: 64 bytes for internal memory of
+ * any size, 512 for backup carts up to 16 Mbit and 1024 for 32 Mbit (Kronos
+ * bios.c GetDeviceStats). A 4 MiB file is Yaba Sanshiro's internal volume
+ * unless read as a cart. */
+static uint32_t block_size_for(size_t size, int as) {
+    bool internal = size == SATURN_INTERNAL_SIZE || size == SATURN_YABASANSHIRO_SIZE;
+    bool cart = size == SATURN_CART_SIZE || size == 2u * SATURN_CART_SIZE || size == 4u * SATURN_CART_SIZE ||
+                size == 8u * SATURN_CART_SIZE;
+    if (as == AS_CART) return !cart ? 0 : size == 8u * SATURN_CART_SIZE ? 1024u : 512u;
+    if (internal) return 64u;
+    return as == AS_ANY && cart ? 512u : 0;
 }
 
 static int read_file(const sigil_io *io, sigil_saturn_volume *vol, uint8_t **buf, size_t *len) {
@@ -204,7 +210,7 @@ static int read_file(const sigil_io *io, sigil_saturn_volume *vol, uint8_t **buf
     return rc;
 }
 
-int sigil_saturn_volume_load(const sigil_io *io, sigil_saturn_volume *vol) {
+static int load_as(const sigil_io *io, sigil_saturn_volume *vol, int as) {
     if (!io || !io->read || !vol) return SIGIL_ERR_INVALID_ARG;
     memset(vol, 0, sizeof(*vol));
 
@@ -224,13 +230,17 @@ int sigil_saturn_volume_load(const sigil_io *io, sigil_saturn_volume *vol) {
         if (!sigil_bram_collapse(buf, len, &vol->storage)) { free(buf); return SIGIL_ERR_UNSUPPORTED_FORMAT; }
         len /= 2;
     }
-    uint32_t block_size = block_size_for(len);
+    uint32_t block_size = block_size_for(len, as);
     if (!magic_at(buf, len, 1) || block_size == 0) { free(buf); return SIGIL_ERR_UNSUPPORTED_FORMAT; }
     vol->data = buf;
     vol->size = len;
     vol->block_size = block_size;
     return SIGIL_OK;
 }
+
+int sigil_saturn_volume_load(const sigil_io *io, sigil_saturn_volume *vol) { return load_as(io, vol, AS_ANY); }
+int sigil_saturn_volume_load_cart(const sigil_io *io, sigil_saturn_volume *vol) { return load_as(io, vol, AS_CART); }
+int sigil_saturn_volume_load_internal(const sigil_io *io, sigil_saturn_volume *vol) { return load_as(io, vol, AS_INTERNAL); }
 
 void sigil_saturn_volume_free(sigil_saturn_volume *vol) {
     if (!vol) return;
@@ -239,8 +249,8 @@ void sigil_saturn_volume_free(sigil_saturn_volume *vol) {
     vol->size = 0;
 }
 
-int sigil_saturn_volume_format(sigil_saturn_volume *vol, size_t size, const sigil_bram_storage *storage) {
-    uint32_t block_size = block_size_for(size);
+static int format_as(sigil_saturn_volume *vol, size_t size, const sigil_bram_storage *storage, int as) {
+    uint32_t block_size = block_size_for(size, as);
     if (!vol || !storage || block_size == 0) return SIGIL_ERR_INVALID_ARG;
     uint8_t *data = (uint8_t *)calloc(1, size);
     if (!data) return SIGIL_ERR_OOM;
@@ -250,6 +260,14 @@ int sigil_saturn_volume_format(sigil_saturn_volume *vol, size_t size, const sigi
     vol->block_size = block_size;
     vol->storage = *storage;
     return SIGIL_OK;
+}
+
+int sigil_saturn_volume_format(sigil_saturn_volume *vol, size_t size, const sigil_bram_storage *storage) {
+    return format_as(vol, size, storage, AS_ANY);
+}
+
+int sigil_saturn_volume_format_cart(sigil_saturn_volume *vol, size_t size, const sigil_bram_storage *storage) {
+    return format_as(vol, size, storage, AS_CART);
 }
 
 int sigil_saturn_volume_write(const sigil_saturn_volume *vol, uint8_t **out, size_t *len) {
@@ -539,6 +557,21 @@ int sigil_saturn_extract(const sigil_saturn_volume *vol, uint32_t first_block,
     return SIGIL_OK;
 }
 
+void sigil_saturn_bup_md5(const uint8_t *bup, size_t len, char out[33]) {
+    sigil_md5 m;
+    sigil_md5_init(&m);
+    if (len >= SATURN_BUP_HEADER_SIZE) {
+        sigil_md5_update(&m, bup + BUP_NAME, SATURN_NAME_LEN);
+        sigil_md5_update(&m, bup + BUP_COMMENT, SATURN_COMMENT_LEN);
+        sigil_md5_update(&m, bup + BUP_LANGUAGE, 1);
+        sigil_md5_update(&m, bup + BUP_SIZE, 4);
+        sigil_md5_update(&m, bup + SATURN_BUP_HEADER_SIZE, len - SATURN_BUP_HEADER_SIZE);
+    }
+    uint8_t digest[16];
+    sigil_md5_final(&m, digest);
+    sigil_md5_hex(digest, out);
+}
+
 static bool bup_valid(const uint8_t *bup, size_t len) {
     if (!bup || len < SATURN_BUP_HEADER_SIZE || memcmp(bup, BUP_MAGIC, 4) != 0) return false;
     if (bup[BUP_NAME] == 0) return false;
@@ -586,7 +619,7 @@ int sigil_saturn_inject(sigil_saturn_volume *vol, const uint8_t *bup, size_t len
     if (rc != SIGIL_OK) return rc;
     name_ctx names = { bup + BUP_NAME, false };
     map_scan(vol, &m, name_visit, &names);
-    if (names.found) { map_close(&m); return SIGIL_ERR_INVALID_ARG; }
+    if (names.found) { map_close(&m); return SIGIL_ERR_EXISTS; }
 
     uint32_t *chosen = (uint32_t *)malloc((size_t)m.blocks * sizeof(uint32_t));
     if (!chosen) { map_close(&m); return SIGIL_ERR_OOM; }
@@ -595,7 +628,7 @@ int sigil_saturn_inject(sigil_saturn_volume *vol, const uint8_t *bup, size_t len
         if (m.owner[block] == 0) chosen[found++] = block;
     }
     map_close(&m);
-    if (found < need) { free(chosen); return SIGIL_ERR_NOT_FOUND; }
+    if (found < need) { free(chosen); return SIGIL_ERR_NO_SPACE; }
 
     size_t stream_len = SATURN_FIELDS_LEN + (size_t)need * 2 + size;
     uint8_t *stream = (uint8_t *)calloc(1, stream_len);

@@ -54,6 +54,8 @@ static const platform_slug PLATFORM_ALIASES[] = {
     { SIGIL_PLATFORM_XBOX,      "xbx"  },
     { SIGIL_PLATFORM_SNES,      "sfc"  },
     { SIGIL_PLATFORM_SNES,      "sfam" },
+    { SIGIL_PLATFORM_PSX,       "ps1" },
+    { SIGIL_PLATFORM_PSX,       "playstation" },
 };
 static const size_t PLATFORM_ALIAS_COUNT = sizeof(PLATFORM_ALIASES) / sizeof(PLATFORM_ALIASES[0]);
 
@@ -88,6 +90,10 @@ const char *sigil_strerror(int code) {
     case SIGIL_ERR_NEEDS_KEY:            return "decryption key required";
     case SIGIL_ERR_CRYPTO:               return "crypto failure";
     case SIGIL_ERR_OOM:                  return "out of memory";
+    case SIGIL_ERR_CONFLICT:             return "the saves changed locally since the last sync";
+    case SIGIL_ERR_EXISTS:               return "a save with that name already exists";
+    case SIGIL_ERR_NO_SPACE:             return "not enough free space";
+    case SIGIL_ERR_UNCOLLECTED:          return "the volume holds saves not collected yet";
     default:                             return "unknown error";
     }
 }

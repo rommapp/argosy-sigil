@@ -38,6 +38,10 @@ ffibuilder.cdef(
 #define SIGIL_ERR_NEEDS_KEY ...
 #define SIGIL_ERR_CRYPTO ...
 #define SIGIL_ERR_OOM ...
+#define SIGIL_ERR_CONFLICT ...
+#define SIGIL_ERR_EXISTS ...
+#define SIGIL_ERR_NO_SPACE ...
+#define SIGIL_ERR_UNCOLLECTED ...
 
 #define SIGIL_FLAG_FILENAME_FALLBACK ...
 #define SIGIL_FLAG_3DS_ALLOW_HOMEBREW ...
@@ -235,6 +239,78 @@ typedef struct {
 
 int  sigil_card_list(const sigil_io *io, sigil_card_listing **out);
 void sigil_card_listing_free(sigil_card_listing *listing);
+
+#define SIGIL_SYNC_REQUEST_V1 ...
+#define SIGIL_SYNC_RESULT_V1 ...
+
+typedef int (*sigil_save_write_fn)(void *ctx, const char *relative_path, const uint8_t *data, size_t len);
+typedef int (*sigil_save_remove_fn)(void *ctx, const char *relative_path);
+
+typedef enum {
+    SIGIL_SYNC_MANAGED,
+    SIGIL_SYNC_UNMANAGED,
+    ...
+} sigil_sync_mode;
+
+typedef struct {
+    const char *const *game_ids;
+    size_t             game_id_count;
+    const uint8_t     *unit;
+    size_t             unit_len;
+} sigil_sync_companion;
+
+typedef struct {
+    uint8_t *data;
+    size_t   len;
+    char     content_hash[33];
+    char     identity_hash[33];
+    int      changed;
+} sigil_sync_companion_result;
+
+typedef struct {
+    uint32_t              struct_version;
+    sigil_save_request    save;
+    const char *const    *game_ids;
+    size_t                game_id_count;
+    int                   mode;
+    const uint8_t        *state;
+    size_t                state_len;
+    int                   overwrite_local;
+    sigil_save_write_fn   write;
+    void                 *write_ctx;
+    const char *const    *claimed;
+    size_t                claimed_count;
+    sigil_save_remove_fn  remove;
+    const sigil_sync_companion *companions;
+    size_t                companion_count;
+} sigil_sync_request;
+
+typedef struct {
+    uint32_t  struct_version;
+    char      artifact[...];
+    int       shape;
+    uint8_t  *data;
+    size_t    len;
+    char      content_hash[33];
+    char      identity_hash[33];
+    int       changed;
+    int       conflict;
+    uint8_t  *state;
+    size_t    state_len;
+    uint8_t  *holding;
+    size_t    holding_len;
+    char    (*unowned)[64];
+    size_t    unowned_count;
+    int       restore_again;
+    sigil_sync_companion_result *companions;
+    size_t    companion_count;
+    char      overflow[64];
+    uint32_t  overflow_blocks;
+} sigil_sync_result;
+
+int  sigil_collect(const sigil_sync_request *req, sigil_sync_result **out);
+int  sigil_restore(const sigil_sync_request *req, const uint8_t *unit, size_t unit_len, sigil_sync_result **out);
+void sigil_sync_result_free(sigil_sync_result *result);
 
 const char *sigil_strerror(int code);
 const char *sigil_version(void);

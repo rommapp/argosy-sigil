@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "sigil_internal.h"
+#include <stdlib.h>
 
 static const uint32_t MD5_K[64] = {
     0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
@@ -117,4 +118,32 @@ void sigil_md5_hex(const uint8_t digest[16], char out[33]) {
         out[i * 2 + 1] = hex[digest[i] & 0xF];
     }
     out[32] = '\0';
+}
+
+void sigil_md5_of(const void *data, size_t len, char out[33]) {
+    sigil_md5 m;
+    uint8_t digest[16];
+    sigil_md5_init(&m);
+    sigil_md5_update(&m, data, len);
+    sigil_md5_final(&m, digest);
+    sigil_md5_hex(digest, out);
+}
+
+static int compare_named(const void *a, const void *b) {
+    return strcmp(((const sigil_named_md5 *)a)->name, ((const sigil_named_md5 *)b)->name);
+}
+
+void sigil_named_hash(sigil_named_md5 *items, size_t count, char out[33]) {
+    if (count > 0) qsort(items, count, sizeof(*items), compare_named);
+    sigil_md5 m;
+    sigil_md5_init(&m);
+    for (size_t i = 0; i < count; i++) {
+        if (i > 0) sigil_md5_update(&m, "\n", 1);
+        sigil_md5_update(&m, items[i].name, strlen(items[i].name));
+        sigil_md5_update(&m, ":", 1);
+        sigil_md5_update(&m, items[i].md5, 32);
+    }
+    uint8_t digest[16];
+    sigil_md5_final(&m, digest);
+    sigil_md5_hex(digest, out);
 }

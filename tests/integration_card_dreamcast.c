@@ -412,10 +412,10 @@ static void check_game_rules(const corpus_table *manifest) {
             const sigil_card_entry *e = find_entry(l, "PACIT_NM.VMU");
             if (!e || e->first_block != 0) fail("pacit-game-and-data-vmu", "game file does not start at block 0");
             memcpy(copy, image, VMU_CARD_SIZE);
-            if (sigil_dreamcast_inject(image, other, other_len) != SIGIL_ERR_NOT_FOUND) {
+            if (sigil_dreamcast_inject(image, other, other_len) != SIGIL_ERR_NO_SPACE) {
                 fail("chao-adv2-game-vmu", "a second game file went in");
             }
-            if (sigil_dreamcast_inject(image, data, data_len) != SIGIL_ERR_INVALID_ARG) {
+            if (sigil_dreamcast_inject(image, data, data_len) != SIGIL_ERR_EXISTS) {
                 fail("pacit-game-and-data-vmu", "a repeated name went in");
             }
             if (memcmp(copy, image, VMU_CARD_SIZE) != 0) fail("pacit-game-and-data-vmu", "a refused inject changed the VMU");
@@ -437,7 +437,7 @@ static void check_full_card_refuses(const corpus_table *manifest) {
     uint8_t *copy = (uint8_t *)malloc(VMU_CARD_SIZE);
     if (dci && image && copy && load_sample(manifest, "chao-adv2-game-vmu", image)) {
         memcpy(copy, image, VMU_CARD_SIZE);
-        if (sigil_dreamcast_inject(image, dci, len) != SIGIL_ERR_NOT_FOUND) fail("chao-adv2-game-vmu", "full VMU took a save");
+        if (sigil_dreamcast_inject(image, dci, len) != SIGIL_ERR_NO_SPACE) fail("chao-adv2-game-vmu", "full VMU took a save");
         if (memcmp(copy, image, VMU_CARD_SIZE) != 0) fail("chao-adv2-game-vmu", "a refused inject changed the VMU");
     }
     free(copy);

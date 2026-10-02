@@ -446,16 +446,16 @@ static void check_refusals(void) {
     sigil_saturn_volume vol = {0};
 
     if (sf31 && load_volume("sf3-scn3-bkr", "Shining Force III Scenario 3 (English v25.1).bkr", &vol)) {
-        expect_refused("sf3-scn3-bkr", &vol, sf31, sf31_len, SIGIL_ERR_NOT_FOUND);
+        expect_refused("sf3-scn3-bkr", &vol, sf31, sf31_len, SIGIL_ERR_NO_SPACE);
         sigil_saturn_volume_free(&vol);
     }
     if (tgk && sigil_saturn_volume_format(&vol, SATURN_INTERNAL_SIZE, &raw) == SIGIL_OK) {
-        expect_refused("TGKRPLY_RP1.BUP", &vol, tgk, tgk_len, SIGIL_ERR_NOT_FOUND);
+        expect_refused("TGKRPLY_RP1.BUP", &vol, tgk, tgk_len, SIGIL_ERR_NO_SPACE);
         sigil_saturn_volume_free(&vol);
     }
     if (pz && pz1 && sigil_saturn_volume_format(&vol, SATURN_INTERNAL_SIZE, &raw) == SIGIL_OK) {
         if (sigil_saturn_inject(&vol, pz, pz_len) != SIGIL_OK) fail("PANDRA_ZWEI.BUP", "inject failed");
-        expect_refused("PANDRA_ZWEI_01.BUP", &vol, pz1, pz1_len, SIGIL_ERR_INVALID_ARG);
+        expect_refused("PANDRA_ZWEI_01.BUP", &vol, pz1, pz1_len, SIGIL_ERR_EXISTS);
         sigil_saturn_volume_free(&vol);
     }
     if (pz) {
@@ -543,6 +543,80 @@ static void check_corrupt_list(void) {
     }
 }
 
+static int load_bytes_as(const uint8_t *data, size_t len, int how, sigil_saturn_volume *vol) {
+    mem_ctx m = { data, len };
+    sigil_io io = { mem_read, mem_size, NULL, &m };
+    if (how == 1) return sigil_saturn_volume_load_cart(&io, vol);
+    if (how == 2) return sigil_saturn_volume_load_internal(&io, vol);
+    return sigil_saturn_volume_load(&io, vol);
+}
+
+/* Backup carts of 8, 16 and 32 Mbit, as Kronos offers them: the BIOS gives a
+ * 32 Mbit cart 1024-byte blocks and the others 512 (Kronos bios.c
+ * GetDeviceStats). A 4 MiB file is a 32 Mbit cart only when read as one;
+ * read as internal memory it is Yaba Sanshiro's extended volume. */
+static void check_cart_sizes(void) {
+    sigil_saturn_volume cart;
+    if (!load_volume("rayman-bkr-bcr", "Rayman (USA) (R2)-cart.bcr", &cart)) { fail("cart sizes", "sample missing"); return; }
+    sigil_card_listing *l = NULL;
+    uint8_t *bup = NULL;
+    size_t bup_len = 0;
+    if (sigil_saturn_list(&cart, &l) != SIGIL_OK || l->entry_count == 0 ||
+        sigil_saturn_extract(&cart, l->entries[0].first_block, &bup, &bup_len) != SIGIL_OK) {
+        fail("cart sizes", "sample save didn't extract");
+        sigil_card_listing_free(l);
+        sigil_saturn_volume_free(&cart);
+        return;
+    }
+    sigil_bram_storage raw;
+    memset(&raw, 0, sizeof(raw));
+    raw.filler = -1;
+    static const struct { size_t size; uint32_t block; } SIZES[] = {
+        { 512u * 1024u, 512 }, { 1024u * 1024u, 512 }, { 2048u * 1024u, 512 }, { 4096u * 1024u, 1024 },
+    };
+    for (size_t i = 0; i < 4; i++) {
+        sigil_saturn_volume v, back;
+        uint8_t *bytes = NULL;
+        size_t len = 0;
+        if (sigil_saturn_volume_format_cart(&v, SIZES[i].size, &raw) != SIGIL_OK || v.block_size != SIZES[i].block) {
+            fail("cart sizes", "a cart formatted with the wrong block size");
+            continue;
+        }
+        if (sigil_saturn_inject(&v, bup, bup_len) != SIGIL_OK || sigil_saturn_volume_write(&v, &bytes, &len) != SIGIL_OK) {
+            fail("cart sizes", "a save didn't go on the cart");
+        } else if (load_bytes_as(bytes, len, 1, &back) != SIGIL_OK || back.block_size != SIZES[i].block ||
+                   sigil_saturn_verify(&back, bup, bup_len) != SIGIL_OK) {
+            fail("cart sizes", "a cart didn't read back as a cart");
+        } else {
+            sigil_saturn_volume_free(&back);
+            if (SIZES[i].size < 4096u * 1024u) {
+                if (load_bytes_as(bytes, len, 0, &back) != SIGIL_OK || back.block_size != SIZES[i].block) fail("cart sizes", "an unambiguous cart didn't read without a hint");
+                else sigil_saturn_volume_free(&back);
+            } else if (load_bytes_as(bytes, len, 2, &back) != SIGIL_OK || back.block_size != 64) {
+                fail("cart sizes", "4 MiB read as internal memory didn't get 64-byte blocks");
+            } else {
+                sigil_saturn_volume_free(&back);
+            }
+        }
+        g_volumes++;
+        free(bytes);
+        sigil_saturn_volume_free(&v);
+    }
+    uint8_t *internal = NULL;
+    size_t internal_len = 0;
+    sigil_saturn_volume v, back;
+    if (sigil_saturn_volume_format(&v, SATURN_INTERNAL_SIZE, &raw) == SIGIL_OK && sigil_saturn_volume_write(&v, &internal, &internal_len) == SIGIL_OK) {
+        if (load_bytes_as(internal, internal_len, 1, &back) != SIGIL_ERR_UNSUPPORTED_FORMAT) fail("cart sizes", "internal memory read as a cart");
+        else if (load_bytes_as(internal, internal_len, 2, &back) != SIGIL_OK) fail("cart sizes", "internal memory didn't read as internal");
+        else sigil_saturn_volume_free(&back);
+        sigil_saturn_volume_free(&v);
+    }
+    free(internal);
+    free(bup);
+    sigil_card_listing_free(l);
+    sigil_saturn_volume_free(&cart);
+}
+
 int main(void) {
     char path[1024];
     corpus_table manifest, entries;
@@ -572,6 +646,7 @@ int main(void) {
     check_refusals();
     check_inject_and_delete();
     check_corrupt_list();
+    check_cart_sizes();
     corpus_free(&manifest);
     corpus_free(&entries);
 

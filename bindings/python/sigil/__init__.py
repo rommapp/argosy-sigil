@@ -15,7 +15,16 @@ __all__ = [
     "PLATFORM_AUTO",
     "SigilCardEntry",
     "SigilCardListing",
+    "SigilConflictError",
     "SigilCryptoError",
+    "SigilExistsError",
+    "SigilNoSpaceError",
+    "SigilCompanion",
+    "SigilCompanionResult",
+    "SigilSyncResult",
+    "SigilUncollectedError",
+    "collect",
+    "restore",
     "SigilError",
     "SigilIOError",
     "SigilInvalidArgError",
@@ -84,6 +93,26 @@ class SigilOOMError(SigilError):
     pass
 
 
+class SigilConflictError(SigilError):
+    """The saves on disk changed since the last sync; restore wrote nothing."""
+
+
+class SigilExistsError(SigilError):
+    pass
+
+
+class SigilNoSpaceError(SigilError):
+    """The saves don't fit. After restore, `overflow` names the save that didn't fit and
+    `overflow_blocks` the blocks it lacked (0 when a directory slot was missing instead)."""
+
+    overflow: str = ""
+    overflow_blocks: int = 0
+
+
+class SigilUncollectedError(SigilError):
+    """A shared volume holds saves no collect has passed on yet; restore wrote nothing."""
+
+
 _ERROR_CLASSES = {
     lib.SIGIL_ERR_INVALID_ARG: SigilInvalidArgError,
     lib.SIGIL_ERR_IO: SigilIOError,
@@ -93,6 +122,10 @@ _ERROR_CLASSES = {
     lib.SIGIL_ERR_NEEDS_KEY: SigilNeedsKeyError,
     lib.SIGIL_ERR_CRYPTO: SigilCryptoError,
     lib.SIGIL_ERR_OOM: SigilOOMError,
+    lib.SIGIL_ERR_CONFLICT: SigilConflictError,
+    lib.SIGIL_ERR_EXISTS: SigilExistsError,
+    lib.SIGIL_ERR_NO_SPACE: SigilNoSpaceError,
+    lib.SIGIL_ERR_UNCOLLECTED: SigilUncollectedError,
 }
 
 _SOURCE_NAMES: dict[int, Literal["binary", "filename"]] = {
@@ -155,7 +188,7 @@ _CARD_FORMAT_NAMES: dict[int, CardFormat] = {
     lib.SIGIL_CARD_FORMAT_SEGACD_BRAM: "segacd-bram",
 }
 
-_SUBDIR_LIST_DEPTH = 3
+_SUBDIR_LIST_DEPTH = 4
 _SUBDIR_CAP = 16
 
 
@@ -240,6 +273,43 @@ class SigilCardListing:
     free_slots: int
     corrupt_count: int
     entries: tuple[SigilCardEntry, ...]
+
+
+@dataclass(frozen=True)
+class SigilCompanion:
+    """A game whose saves this game reads, as a sequel reads its prequel's. `unit` is its unit
+    from RomM for restore, or None to leave its saves as they are."""
+
+    game_ids: tuple[str, ...]
+    unit: bytes | None = None
+
+
+@dataclass(frozen=True)
+class SigilCompanionResult:
+    """A companion's saves found with the game's, as its unit; data is None when none are there."""
+
+    data: bytes | None
+    content_hash: str
+    identity_hash: str
+    changed: bool
+
+
+@dataclass(frozen=True)
+class SigilSyncResult:
+    """What collect or restore produced. Store `state` and pass it to the next call for this game."""
+
+    artifact: str
+    shape: SaveShape
+    data: bytes | None
+    content_hash: str
+    identity_hash: str
+    changed: bool
+    conflict: bool
+    state: bytes
+    holding: bytes | None
+    unowned: tuple[str, ...]
+    restore_again: bool
+    companions: tuple[SigilCompanionResult, ...]
 
 
 def _raise_error(code: int) -> None:
@@ -387,28 +457,15 @@ def _list_recursive(directory: str, relative: str, depth: int, out: list[str]) -
                 _list_recursive(entry.path, rel, depth - 1, out)
 
 
-def locate_saves(
-    game: SigilResult,
-    core: str,
-    content_path: str,
-    *,
-    save_root: str | os.PathLike[str] | None = None,
-    listing: Iterable[str] | None = None,
-    options: Mapping[str, str] | None = None,
-) -> SigilSaveUnit:
-    """The files under a save root that belong to `game` when `core` runs `content_path`.
-
-    Names only; no file is read. docs/python.md defines every input.
-    """
-    keepalive: list[object] = []
+def _fill_save_request(req, keepalive: list[object], game: SigilResult, core: str, content_path: str,
+                       listing: Iterable[str], options: Mapping[str, str] | None) -> None:
+    """Fills a sigil_save_request; every buffer it points at goes into `keepalive`."""
 
     def c_str(value: str):
         buf = ffi.new("char[]", value.encode("utf-8"))
         keepalive.append(buf)
         return buf
 
-    if listing is None:
-        listing = list_save_root(save_root, core) if save_root is not None else []
     paths = [c_str(p) for p in listing]
     option_items = list((options or {}).items())
 
@@ -416,10 +473,10 @@ def locate_saves(
     result.struct_version = lib.SIGIL_RESULT_V3
     result.title_id = game.title_id.encode("utf-8")
     result.save_id = game.save_id.encode("utf-8")
+    result.platform = platform_from_slug(game.platform) if game.platform else lib.SIGIL_PLATFORM_AUTO
     result.features = game.features
     keepalive.append(result)
 
-    req = ffi.new("sigil_save_request *")
     req.struct_version = lib.SIGIL_SAVE_REQUEST_V1
     req.layout = c_str(core)
     req.platform = c_str(game.platform) if game.platform else ffi.NULL
@@ -441,6 +498,26 @@ def locate_saves(
     req.listing_count = len(paths)
     req.open = ffi.NULL
     req.open_ctx = ffi.NULL
+
+
+def locate_saves(
+    game: SigilResult,
+    core: str,
+    content_path: str,
+    *,
+    save_root: str | os.PathLike[str] | None = None,
+    listing: Iterable[str] | None = None,
+    options: Mapping[str, str] | None = None,
+) -> SigilSaveUnit:
+    """The files under a save root that belong to `game` when `core` runs `content_path`.
+
+    Names only; no file is read. docs/python.md defines every input.
+    """
+    keepalive: list[object] = []
+    if listing is None:
+        listing = list_save_root(save_root, core) if save_root is not None else []
+    req = ffi.new("sigil_save_request *")
+    _fill_save_request(req, keepalive, game, core, content_path, listing, options)
 
     out = ffi.new("sigil_save_unit **")
     rc = lib.sigil_save_resolve(req, out)
@@ -495,6 +572,193 @@ def hash_saves(saves: SigilSaveUnit, save_root: str | os.PathLike[str]) -> Sigil
     return replace(saves, content_hash=_text(unit.content_hash), identity_hash=_text(unit.identity_hash))
 
 
+_SYNC_MODES = {"managed": lib.SIGIL_SYNC_MANAGED, "unmanaged": lib.SIGIL_SYNC_UNMANAGED}
+
+
+def _sync(
+    unit: bytes | None,
+    game: SigilResult,
+    core: str,
+    content_path: str,
+    save_root: str | os.PathLike[str],
+    listing: Iterable[str] | None,
+    options: Mapping[str, str] | None,
+    game_ids: Iterable[str],
+    state: bytes | None,
+    mode: Literal["managed", "unmanaged"],
+    overwrite_local: bool,
+    claimed: Iterable[str],
+    companions: Iterable[SigilCompanion],
+) -> SigilSyncResult:
+    keepalive: list[object] = []
+    root_bytes = os.fsencode(save_root)
+    if listing is None:
+        listing = list_save_root(save_root, core)
+
+    req = ffi.new("sigil_sync_request *")
+    req.struct_version = lib.SIGIL_SYNC_REQUEST_V1
+    _fill_save_request(req.save, keepalive, game, core, content_path, list(listing), options)
+
+    ids = [ffi.new("char[]", i.encode("utf-8")) for i in game_ids]
+    keepalive.extend(ids)
+    id_array = ffi.new("char *[]", ids if ids else [ffi.NULL])
+    keepalive.append(id_array)
+    req.game_ids = id_array
+    req.game_id_count = len(ids)
+    names = [ffi.new("char[]", n.encode("utf-8", "surrogateescape")) for n in claimed]
+    keepalive.extend(names)
+    name_array = ffi.new("char *[]", names if names else [ffi.NULL])
+    keepalive.append(name_array)
+    req.claimed = name_array
+    req.claimed_count = len(names)
+    companion_list = list(companions)
+    if companion_list:
+        array = ffi.new("sigil_sync_companion[]", len(companion_list))
+        keepalive.append(array)
+        for i, companion in enumerate(companion_list):
+            cids = [ffi.new("char[]", g.encode("utf-8")) for g in companion.game_ids]
+            keepalive.extend(cids)
+            cid_array = ffi.new("char *[]", cids if cids else [ffi.NULL])
+            keepalive.append(cid_array)
+            array[i].game_ids = cid_array
+            array[i].game_id_count = len(cids)
+            if companion.unit is not None:
+                unit_data = ffi.new("uint8_t[]", companion.unit)
+                keepalive.append(unit_data)
+                array[i].unit = unit_data
+                array[i].unit_len = len(companion.unit)
+        req.companions = array
+        req.companion_count = len(companion_list)
+    req.mode = _SYNC_MODES[mode]
+    req.overwrite_local = 1 if overwrite_local else 0
+    if state:
+        state_buf = ffi.new("uint8_t[]", state)
+        keepalive.append(state_buf)
+        req.state = state_buf
+        req.state_len = len(state)
+
+    @ffi.callback("sigil_io *(void *, const char *)")
+    def open_member(_ctx, relative_path):
+        return lib.sigil_io_open_file(os.path.join(root_bytes, ffi.string(relative_path)))
+
+    @ffi.callback("int(void *, const char *, const uint8_t *, size_t)")
+    def write_member(_ctx, relative_path, data, length):
+        path = os.path.join(root_bytes, ffi.string(relative_path))
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as f:
+                f.write(ffi.buffer(data, length))
+        except OSError:
+            return -1
+        return 0
+
+    @ffi.callback("int(void *, const char *)")
+    def remove_member(_ctx, relative_path):
+        try:
+            os.remove(os.path.join(root_bytes, ffi.string(relative_path)))
+        except OSError:
+            return -1
+        return 0
+
+    req.save.open = open_member
+    req.write = write_member
+    req.remove = remove_member
+
+    out = ffi.new("sigil_sync_result **")
+    if unit is None:
+        rc = lib.sigil_collect(req, out)
+    else:
+        unit_buf = ffi.new("uint8_t[]", unit)
+        rc = lib.sigil_restore(req, unit_buf, len(unit), out)
+    if rc != lib.SIGIL_OK:
+        overflow, overflow_blocks = "", 0
+        if out[0] != ffi.NULL:
+            overflow, overflow_blocks = _save_name(out[0].overflow), int(out[0].overflow_blocks)
+            lib.sigil_sync_result_free(out[0])
+        message = ffi.string(lib.sigil_strerror(rc)).decode("utf-8", "replace")
+        error = _ERROR_CLASSES.get(rc, SigilError)(rc, message)
+        if isinstance(error, SigilNoSpaceError):
+            error.overflow = overflow
+            error.overflow_blocks = overflow_blocks
+        raise error
+    r = out[0]
+    try:
+        return SigilSyncResult(
+            artifact=_text(r.artifact),
+            shape=_SHAPE_NAMES.get(r.shape, "none"),
+            data=bytes(ffi.buffer(r.data, r.len)) if r.data != ffi.NULL else None,
+            content_hash=_text(r.content_hash),
+            identity_hash=_text(r.identity_hash),
+            changed=bool(r.changed),
+            conflict=bool(r.conflict),
+            state=bytes(ffi.buffer(r.state, r.state_len)) if r.state != ffi.NULL else b"",
+            holding=bytes(ffi.buffer(r.holding, r.holding_len)) if r.holding != ffi.NULL else None,
+            unowned=tuple(_save_name(r.unowned[i]) for i in range(r.unowned_count)),
+            restore_again=bool(r.restore_again),
+            companions=tuple(
+                SigilCompanionResult(
+                    data=bytes(ffi.buffer(c.data, c.len)) if c.data != ffi.NULL else None,
+                    content_hash=_text(c.content_hash),
+                    identity_hash=_text(c.identity_hash),
+                    changed=bool(c.changed),
+                )
+                for c in (r.companions[i] for i in range(r.companion_count))
+            ),
+        )
+    finally:
+        lib.sigil_sync_result_free(r)
+
+
+def collect(
+    game: SigilResult,
+    core: str,
+    content_path: str,
+    save_root: str | os.PathLike[str],
+    *,
+    listing: Iterable[str] | None = None,
+    options: Mapping[str, str] | None = None,
+    game_ids: Iterable[str] = (),
+    state: bytes | None = None,
+    mode: Literal["managed", "unmanaged"] = "managed",
+    claimed: Iterable[str] = (),
+    companions: Iterable[SigilCompanion] = (),
+) -> SigilSyncResult:
+    """`game`'s saves under `save_root` gathered into the unit that travels to RomM.
+
+    Store the returned `state` once the unit, `holding` and each changed companion unit reached
+    RomM. docs/python.md defines every input.
+    """
+    return _sync(None, game, core, content_path, save_root, listing, options, game_ids, state, mode, False, claimed,
+                 companions)
+
+
+def restore(
+    unit: bytes,
+    game: SigilResult,
+    core: str,
+    content_path: str,
+    save_root: str | os.PathLike[str],
+    *,
+    listing: Iterable[str] | None = None,
+    options: Mapping[str, str] | None = None,
+    game_ids: Iterable[str] = (),
+    state: bytes | None = None,
+    mode: Literal["managed", "unmanaged"] = "managed",
+    overwrite_local: bool = False,
+    claimed: Iterable[str] = (),
+    companions: Iterable[SigilCompanion] = (),
+) -> SigilSyncResult:
+    """Puts `unit`, and each companion's unit given, back under `save_root` and reads them back.
+
+    Raises SigilConflictError, writing nothing, when the saves there changed since the last
+    sync and `overwrite_local` is False. Raises SigilUncollectedError, writing nothing, when a
+    shared Saturn or Sega CD volume holds saves no collect has passed on yet. Raises
+    SigilNoSpaceError, writing nothing, when the saves don't fit, naming the one that didn't.
+    """
+    return _sync(unit, game, core, content_path, save_root, listing, options, game_ids, state, mode, overwrite_local,
+                 claimed, companions)
+
+
 def list_card(path: str | os.PathLike[str]) -> SigilCardListing:
     """The saves on the memory card at `path`. The card format is detected from its content."""
     io = lib.sigil_io_open_file(os.fsencode(path))
@@ -517,7 +781,7 @@ def list_card(path: str | os.PathLike[str]) -> SigilCardListing:
             corrupt_count=int(listing.corrupt_count),
             entries=tuple(
                 SigilCardEntry(
-                    name=_text(e.name),
+                    name=_save_name(e.name),
                     owner_id=_text(e.owner_id),
                     blocks=int(e.blocks),
                     first_block=int(e.first_block),
@@ -531,6 +795,12 @@ def list_card(path: str | os.PathLike[str]) -> SigilCardListing:
 
 def _text(chars) -> str:
     return ffi.string(chars).decode("utf-8", "replace")
+
+
+def _save_name(chars) -> str:
+    """A name stored on a card or volume. Bytes that aren't UTF-8 decode as surrogates, so the
+    name passed back in `claimed` is the same bytes."""
+    return ffi.string(chars).decode("utf-8", "surrogateescape")
 
 
 def _member(m) -> SigilSaveMember:

@@ -53,6 +53,16 @@ static bool condition_holds(const sigil_save_request *req, const char *key,
     return strcmp(actual, value) == 0;
 }
 
+static bool member_applies(const sigil_save_request *req, const sigil_layout_member *lm) {
+    return condition_holds(req, lm->opt_key, lm->opt_value, lm->opt_default) &&
+           condition_holds(req, lm->opt2_key, lm->opt2_value, lm->opt2_default);
+}
+
+static bool shared_applies(const sigil_save_request *req, const sigil_layout_shared *ls) {
+    return condition_holds(req, ls->opt_key, ls->opt_value, ls->opt_default) &&
+           condition_holds(req, ls->opt2_key, ls->opt2_value, ls->opt2_default);
+}
+
 static const char *gpgx_cart_size_name(const char *value) {
     if (!value) return "4Mbit";
     if (strcmp(value, "128k") == 0) return "128Kbit";
@@ -67,7 +77,44 @@ static const char *gpgx_cart_size_name(const char *value) {
 typedef struct {
     const sigil_save_request *req;
     char stem[SIGIL_SAVE_ENTRY_MAX];
+    char dc_vmu_id[sizeof(((sigil_result *)0)->title_id)];
 } expand_ctx;
+
+/* flycast's per-game VMU name: the product number with ` /\:*?|<>` made `_`
+ * (flycast shell/libretro/oslib.cpp getVmuPath). */
+static void dc_vmu_id(const sigil_save_request *req, char *out, size_t cap) {
+    out[0] = '\0';
+    if (!req->result || !req->result->title_id[0]) return;
+    snprintf(out, cap, "%s", req->result->title_id);
+    for (char *c = out; *c; c++) {
+        if (strchr(" /\\:*?|<>", *c)) *c = '_';
+    }
+}
+
+char sigil_gc_region_letter(const sigil_result *result) {
+    if (!result) return 0;
+    if (strlen(result->raw_serial) >= 4) return result->raw_serial[3];
+    unsigned value = 0;
+    if (strlen(result->title_id) >= 8 && sscanf(result->title_id + 6, "%2x", &value) == 1) return (char)value;
+    return 0;
+}
+
+const char *sigil_gc_region_folder(char letter) {
+    if (!letter) return NULL;
+    if (letter == 'E') return "USA";
+    if (letter == 'J' || letter == 'K') return "JAP";
+    return "EUR";
+}
+
+static const char *gc_region(const sigil_save_request *req) {
+    return sigil_gc_region_folder(sigil_gc_region_letter(req->result));
+}
+
+static void expand_ctx_init(expand_ctx *ctx, const sigil_save_request *req) {
+    ctx->req = req;
+    sigil_content_stem(req->content_path, ctx->stem, sizeof(ctx->stem));
+    dc_vmu_id(req, ctx->dc_vmu_id, sizeof(ctx->dc_vmu_id));
+}
 
 static const char *variable_value(const expand_ctx *ctx, const char *name, size_t len) {
     const sigil_save_request *req = ctx->req;
@@ -75,6 +122,8 @@ static const char *variable_value(const expand_ctx *ctx, const char *name, size_
     if (len == 6 && strncmp(name, "romset", 6) == 0) return ctx->stem;
     if (len == 8 && strncmp(name, "title_id", 8) == 0) return req->result ? req->result->title_id : NULL;
     if (len == 7 && strncmp(name, "save_id", 7) == 0) return req->result ? req->result->save_id : NULL;
+    if (len == 9 && strncmp(name, "dc_vmu_id", 9) == 0) return ctx->dc_vmu_id;
+    if (len == 9 && strncmp(name, "gc_region", 9) == 0) return gc_region(req);
     if (len == 9 && strncmp(name, "cart_size", 9) == 0) {
         return gpgx_cart_size_name(option_value(req, "genesis_plus_gx_cart_size"));
     }
@@ -185,7 +234,7 @@ static int collect(const sigil_layout *layout, const sigil_save_request *req,
 
     for (size_t i = 0; i < layout->member_count; i++) {
         const sigil_layout_member *lm = &layout->members[i];
-        if (!condition_holds(req, lm->opt_key, lm->opt_value, lm->opt_default)) continue;
+        if (!member_applies(req, lm)) continue;
         if (!expand_template(ctx, lm->template_, path, sizeof(path))) continue;
 
         if (path[strlen(path) - 1] == '/') {
@@ -205,7 +254,7 @@ static int collect(const sigil_layout *layout, const sigil_save_request *req,
 
     for (size_t i = 0; i < layout->shared_count; i++) {
         const sigil_layout_shared *ls = &layout->shared[i];
-        if (!condition_holds(req, ls->opt_key, ls->opt_value, ls->opt_default)) continue;
+        if (!shared_applies(req, ls)) continue;
         if (!expand_template(ctx, ls->template_, path, sizeof(path))) continue;
         if (!listing_has(req, path)) continue;
         if (b->unkeyed_count >= UNIT_MAX_UNKEYED) break;
@@ -239,20 +288,15 @@ static int md5_stream(const sigil_io *io, char out_hex[33]) {
 }
 
 typedef struct {
-    char   name[SIGIL_SAVE_PATH_MAX];
-    char   md5[33];
-} hashed_entry;
-
-typedef struct {
-    hashed_entry *entries;
-    size_t        count;
-    size_t        cap;
+    sigil_named_md5 *entries;
+    size_t           count;
+    size_t           cap;
 } entry_list;
 
 static int entry_list_add(entry_list *l, const char *name, const char *md5) {
     if (l->count == l->cap) {
         size_t ncap = l->cap ? l->cap * 2 : 16;
-        hashed_entry *n = (hashed_entry *)realloc(l->entries, ncap * sizeof(*n));
+        sigil_named_md5 *n = (sigil_named_md5 *)realloc(l->entries, ncap * sizeof(*n));
         if (!n) return SIGIL_ERR_OOM;
         l->entries = n;
         l->cap = ncap;
@@ -264,23 +308,8 @@ static int entry_list_add(entry_list *l, const char *name, const char *md5) {
     return SIGIL_OK;
 }
 
-static int entry_compare(const void *a, const void *b) {
-    return strcmp(((const hashed_entry *)a)->name, ((const hashed_entry *)b)->name);
-}
-
 static void combined_hash(entry_list *l, char out_hex[33]) {
-    qsort(l->entries, l->count, sizeof(hashed_entry), entry_compare);
-    sigil_md5 m;
-    sigil_md5_init(&m);
-    for (size_t i = 0; i < l->count; i++) {
-        if (i > 0) sigil_md5_update(&m, "\n", 1);
-        sigil_md5_update(&m, l->entries[i].name, strlen(l->entries[i].name));
-        sigil_md5_update(&m, ":", 1);
-        sigil_md5_update(&m, l->entries[i].md5, 32);
-    }
-    uint8_t digest[16];
-    sigil_md5_final(&m, digest);
-    sigil_md5_hex(digest, out_hex);
+    sigil_named_hash(l->entries, l->count, out_hex);
 }
 
 static int on_zip_entry(void *ctx, const char *name, const char *md5_hex) {
@@ -370,8 +399,7 @@ int sigil_save_resolve(const sigil_save_request *req, sigil_save_unit **out) {
     *out = NULL;
 
     expand_ctx ctx;
-    ctx.req = req;
-    sigil_content_stem(req->content_path, ctx.stem, sizeof(ctx.stem));
+    expand_ctx_init(&ctx, req);
     if (ctx.stem[0] == '\0') return SIGIL_ERR_INVALID_ARG;
 
     uint32_t features = req->features;
@@ -421,6 +449,126 @@ int sigil_save_resolve(const sigil_save_request *req, sigil_save_unit **out) {
     }
 
     *out = unit;
+    return SIGIL_OK;
+}
+
+size_t sigil_save_shared_paths(const sigil_save_request *req, char (*out)[SIGIL_SAVE_PATH_MAX], size_t cap) {
+    if (!req || !req->content_path) return 0;
+    expand_ctx ctx;
+    expand_ctx_init(&ctx, req);
+    const sigil_layout *layout = sigil_layout_find(req->layout, req->platform);
+    size_t n = 0;
+    for (size_t i = 0; i < layout->shared_count && n < cap; i++) {
+        const sigil_layout_shared *ls = &layout->shared[i];
+        if (!shared_applies(req, ls)) continue;
+        if (expand_template(&ctx, ls->template_, out[n], SIGIL_SAVE_PATH_MAX)) n++;
+    }
+    return n;
+}
+
+static char region_from_option(const char *value) {
+    if (!value) return 0;
+    if (strcmp(value, "ntsc-u") == 0) return 'U';
+    if (strcmp(value, "pal") == 0) return 'E';
+    if (strcmp(value, "ntsc-j") == 0) return 'J';
+    return 0;
+}
+
+static char region_from_word(const char *word, size_t len) {
+    static const struct { const char *word; char region; } WORDS[] = {
+        { "USA", 'U' }, { "US", 'U' }, { "U", 'U' },
+        { "Europe", 'E' }, { "EU", 'E' }, { "E", 'E' }, { "UK", 'E' }, { "Germany", 'E' },
+        { "France", 'E' }, { "Spain", 'E' }, { "Italy", 'E' }, { "Australia", 'E' },
+        { "Japan", 'J' }, { "JP", 'J' }, { "J", 'J' },
+    };
+    for (size_t i = 0; i < sizeof(WORDS) / sizeof(WORDS[0]); i++) {
+        if (strlen(WORDS[i].word) == len && strncmp(WORDS[i].word, word, len) == 0) return WORDS[i].region;
+    }
+    return 0;
+}
+
+/* The region the first parenthesised tag of the content's file name names:
+ * "Lunar (USA).cue" and "Lunar (USA, Europe).cue" give 'U'. */
+static char region_from_name(const char *content_path) {
+    char stem[SIGIL_SAVE_ENTRY_MAX];
+    sigil_content_stem(content_path, stem, sizeof(stem));
+    for (const char *open = strchr(stem, '('); open; open = strchr(open + 1, '(')) {
+        const char *word = open + 1;
+        size_t len = strcspn(word, ",)");
+        char region = region_from_word(word, len);
+        if (region) return region;
+    }
+    return 0;
+}
+
+int sigil_save_volume_targets(const sigil_save_request *req, sigil_volume_target out[SIGIL_VOLUME_TARGETS_MAX],
+                              size_t *count) {
+    *count = 0;
+    if (!req || !req->content_path) return SIGIL_ERR_INVALID_ARG;
+    expand_ctx ctx;
+    expand_ctx_init(&ctx, req);
+    const sigil_layout *layout = sigil_layout_find(req->layout, req->platform);
+    char region = layout->region_option ? region_from_option(option_value(req, layout->region_option)) : 0;
+    if (!region) region = region_from_name(req->content_path);
+
+    for (int device = SIGIL_DEVICE_INTERNAL; device < SIGIL_DEVICE_COUNT && *count < SIGIL_VOLUME_TARGETS_MAX; device++) {
+        sigil_volume_target *t = &out[*count];
+        memset(t, 0, sizeof(*t));
+        bool found = false, found_present = false;
+        for (size_t i = 0; i < layout->member_count && !found_present; i++) {
+            const sigil_layout_member *lm = &layout->members[i];
+            char path[SIGIL_SAVE_PATH_MAX];
+            if (lm->device != device || !member_applies(req, lm)) continue;
+            if (!expand_template(&ctx, lm->template_, path, sizeof(path))) continue;
+            found_present = listing_has(req, path);
+            if (found && !found_present) continue;
+            found = true;
+            snprintf(t->path, sizeof(t->path), "%s", path);
+            t->per_game = true;
+            t->form = lm->form;
+            t->new_size = lm->new_size;
+        }
+        /* Among the files the region allows, the first present wins, else the
+         * first; when the region allows none, the one file present. */
+        size_t candidates = 0, present = 0;
+        const sigil_layout_shared *chosen = NULL, *only_present = NULL;
+        bool chosen_present = false;
+        char chosen_path[SIGIL_SAVE_PATH_MAX] = "", present_path[SIGIL_SAVE_PATH_MAX] = "";
+        for (size_t i = 0; i < layout->shared_count && !found; i++) {
+            const sigil_layout_shared *ls = &layout->shared[i];
+            char path[SIGIL_SAVE_PATH_MAX];
+            if (ls->device != device || !shared_applies(req, ls)) continue;
+            if (!expand_template(&ctx, ls->template_, path, sizeof(path))) continue;
+            candidates++;
+            bool here = listing_has(req, path);
+            if (here) {
+                present++;
+                only_present = ls;
+                snprintf(present_path, sizeof(present_path), "%s", path);
+            }
+            if ((!ls->region || ls->region == region) && (!chosen || (here && !chosen_present))) {
+                chosen = ls;
+                chosen_present = here;
+                snprintf(chosen_path, sizeof(chosen_path), "%s", path);
+            }
+        }
+        if (!found && candidates > 0) {
+            if (!chosen && present == 1) {
+                chosen = only_present;
+                snprintf(chosen_path, sizeof(chosen_path), "%s", present_path);
+            }
+            if (!chosen) return SIGIL_ERR_NOT_FOUND;
+            snprintf(t->path, sizeof(t->path), "%s", chosen_path);
+            t->per_game = false;
+            t->form = chosen->form;
+            t->new_size = chosen->new_size;
+            found = true;
+        }
+        if (found) {
+            t->device = device;
+            (*count)++;
+        }
+    }
     return SIGIL_OK;
 }
 

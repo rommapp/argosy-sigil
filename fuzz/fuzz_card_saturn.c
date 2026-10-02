@@ -15,16 +15,21 @@ static int mem_read(void *ctx, uint64_t off, void *buf, size_t len) {
 
 static int64_t mem_size(void *ctx) { return (int64_t)((mem_ctx *)ctx)->len; }
 
-/* Lists the input as a volume, extracts and verifies every save it lists,
- * deletes the first and writes the volume back; then injects the input as a
- * .BUP into an empty internal volume. */
+/* Lists the input as a volume read the way the last input byte picks
+ * (without a device hint, as a cart, as internal memory), extracts and
+ * verifies every save it lists, deletes the first and writes the volume
+ * back; then injects the input as a .BUP into an empty internal volume. */
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     mem_ctx m = { data, size };
     sigil_io io = { mem_read, mem_size, NULL, &m };
 
     sigil_saturn_volume vol;
     sigil_card_listing *listing = NULL;
-    if (sigil_saturn_volume_load(&io, &vol) == SIGIL_OK) {
+    int how = size ? data[size - 1] % 3 : 0;
+    int rc = how == 1 ? sigil_saturn_volume_load_cart(&io, &vol)
+             : how == 2 ? sigil_saturn_volume_load_internal(&io, &vol)
+                        : sigil_saturn_volume_load(&io, &vol);
+    if (rc == SIGIL_OK) {
         if (sigil_saturn_list(&vol, &listing) == SIGIL_OK) {
             for (size_t i = 0; i < listing->entry_count; i++) {
                 uint8_t *bup = NULL;

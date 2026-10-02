@@ -41,9 +41,22 @@ The request carries what sigil can't discover by itself:
 
 From those, sigil works out the kind of target (folder card, shared card or per-game card), whether to swap a volume or inject into it, which entries are safe to delete, and whether a change is local, remote or both.
 
-The state blob holds the last-synced `identity_hash` of each unit, the owner learned for each backup RAM entry, and the snapshot of each volume from the last `collect`. The client never reads it. The blob format is versioned, so a blob from an older sigil still loads.
+The state blob holds the last-synced `identity_hash` of each unit, the owner learned for each backup RAM entry, which game each shared volume was swapped in for, the identity of the saves last passed on in a holding unit, the snapshot of each volume from the last `collect`, and, in unmanaged mode, what the last `restore` wrote and replaced. The client never reads it. It is text, one fact per line, and lines a version doesn't know are kept, so a blob from an older sigil still loads.
 
-Everything else on this page happens inside those calls. `sigil_save_resolve` stays public as the lower-level call that locates and hashes one unit, and `collect` is built on it.
+Everything else on this page happens inside those calls.
+
+`collect` and `restore` exist in every binding, tested end to end against the real samples, for:
+
+- PS1 memory cards under pcsx_rearmed and Beetle PSX
+- PS2 file cards under LRPS2 (`pcsx2`), shared or per content
+- PS2 file and folder cards under standalone PCSX2, AetherSX2, NetherSX2 and ARMSX2 (`pcsx2_standalone`), slot 1 and slot 2 each either kind
+- Saturn backup RAM under Beetle Saturn (per game or shared), Kronos (512 KiB to 4 MiB carts, and its Beetle-named mode), the yabause core (64 KiB expanded) and Yaba Sanshiro (one shared 8 MiB expanded `backup.bin`)
+- Sega CD backup RAM under genesis_plus_gx, per game or per BIOS region, with the managed swap, the holding unit, claims and the unmanaged inject described below
+
+- Dreamcast VMUs under flycast libretro (shared, VMU A1 per game, every port per game) and standalone flycast
+- GameCube under Dolphin, libretro and standalone: the GCI folder (default) and raw cards of every size, units of `.gci` files either way, F-Zero GX rebound to the target card
+
+Companions for stitching go through the same card, volume and folder code for each of these, with tests on PS1 cards, Saturn volumes and Dolphin's GCI folder. Still to come: the remaining standalone emulators. `list` exists as `sigil_card_list`. `sigil_save_resolve` stays public as the lower-level call that locates and hashes one unit, and `collect` is built on it.
 
 ## 1. Layout data
 
@@ -55,7 +68,6 @@ The layout table is C arrays in `src/save_layout.c` today, libretro cores only, 
 - Add a scope to each member: per game, or shared by every game.
 - Resolve an option value the row doesn't list to the option's default, the way RetroArch does. RetroArch matches values case-sensitively, falls back to `default_value` (or the first listed value for cores without one), and writes the default back to the config on unload.
 - Add a `settings` role for members that hold device configuration, such as Beetle Saturn's `.smpc` (clock and console language). Settings members are reported and never bundled. This changes today's behaviour: the Beetle Saturn row bundles `.smpc` as a sidecar (`src/save_layout.c` L45).
-- Correct the `genesis_plus_gx` Sega CD row, which lists a `.srm` primary (`src/save_layout.c` L20). The core writes no `.srm` for disc games.
 - Start from [emu-atlas](https://github.com/danielcopper/emu-atlas) (MIT), which records the governing option, scope and role for many libretro cores and standalone emulators, pinned to upstream commits.
 
 API: `sigil_save_request` gains `emulator_version`. `sigil_save_unit` gains a scope per member, and moves `.smpc` from its sidecars to a separate settings list.
@@ -92,15 +104,15 @@ mGBA, VBA-M, SameBoy and Gearboy share the 48-byte GB layout, but mGBA pairs its
 
 Take one game's saves out of a shared card, put them back without disturbing the other games, and build a per-game card holding that game's saves plus any saves it imports from other games.
 
-The per-game result is the neutral form. PS1, PS2 and Dreamcast travel as one per-game card or VMU (`SINGLE`). Saturn and Sega CD travel as a per-game internal volume, plus a per-game cart volume when the game has entries on the cart: `SINGLE` with one volume, `MULTI` with both. The two are separate devices, and a game's `BUP_Write` names the device it writes to. GameCube travels as the game's `.gci` files: `SINGLE` for one file, `MULTI` for more.
+The per-game result is the neutral form. PS1, PS2 and Dreamcast travel as one per-game card or VMU (`SINGLE`). Saturn and Sega CD travel as a per-game internal volume, plus a per-game cart volume when the game has entries on the cart: `SINGLE` (`backup.ram`) with internal entries alone, otherwise `MULTI`, a zip whose member names say which volume is which. A 4 MiB Saturn volume is Yaba Sanshiro's internal memory or a 32 Mbit cart, so size can't. The two are separate devices, and a game's `BUP_Write` names the device it writes to. GameCube travels as the game's `.gci` files: `SINGLE` for one file, `MULTI` for more.
 
 Emulators that keep saves as folders convert at the edges. Dolphin's GCI folder mode uses the `.gci` files as they are. PS2 has three kinds of target, each handled differently:
 
 | Target | Upload | Restore |
 |---|---|---|
-| Folder card (PCSX2, AetherSX2, NetherSX2, ARMSX2) | Pack the game's save folders into a per-game card | Unpack into save folders, each with an `_pcsx2_index` built from the card's entries. Other games' folders stay as they are |
+| Folder card (PCSX2, AetherSX2, NetherSX2, ARMSX2) | Pack the game's save folders into a per-game card | Unpack into save folders, each with an `_pcsx2_index` built from the card's entries, writing only files whose bytes differ. Files of the game's folders that the unit lacks, and the game's folders it lacks, are removed. Other games' folders and the system folders stay as they are. When the card folder's `_pcsx2_superblock` is missing or shorter than 0x2000 bytes, or byte 0x16 isn't `0x6F`, write a full formatted one first, or PCSX2 shows the card as unformatted and hides every save. Never write it empty. sigil works on the card PCSX2 shows the game: the game's folders and the system folders packed into an 8 MB card, so another game's folders never count against its space |
 | Shared file card (`Mcd001.ps2`) | Extract the game's entries into a per-game card | Inject the entries into the shared card, rebuilding its FAT and ECC |
-| Per-game file card (LRPS2 per-content `<content>.ps2`, a PCSX2 per-game card) | Extract, dropping other games' entries | Write the per-game card in place of the file |
+| Per-game file card (LRPS2 per-content `<content>.ps2`, a PCSX2 per-game card) | Extract, dropping other games' entries | Inject, as for a shared card, so another game's save the user put there stays |
 
 PS2 saves already in RomM as folder zips move to per-game cards in a RomM migration.
 
@@ -125,18 +137,18 @@ Saves stay keyed to the exact content: the ROM hash on cartridge platforms, and 
 
 ### Stitching a card
 
-A game that imports a save from an earlier title needs that save on its card. For this, the request names the main game by its ROM hash, and lists zero or more companion games, each with the unit or source card its saves come from. The target format and, for PS2, the card size (8, 16, 32 or 64 MB) come from the emulator in the request.
+A game that imports a save from an earlier title needs that save on its card. The request lists the companion games (`companions`), each with its ids and, on restore, its unit from RomM. The client picks the companions, usually from a user action. sigil has no list of which games read which.
 
-sigil takes the main game's saves from the main card and each companion's saves from that companion's card, then builds one card from them. Each card speaks only for the game it was supplied for. sigil ignores a companion save found on the main card, and a main save found on a companion card. The client picks the companions, usually from a user action. sigil has no list of which games read which.
+`restore` puts the game's saves and each companion's saves on the game's card, volume or GCI folder. Each unit speaks only for its own game: a companion's save inside the game's unit is ignored, and so is the game's save inside a companion's unit. A companion given without a unit keeps whatever saves it already has there. One given with a unit has its saves replaced, under the same conflict rule as the game's own.
 
-Companion saves go on the card but stay out of the main game's unit and hash. On extract, sigil reports every save with the id of the game that owns it, so a companion save the main game rewrote returns to the companion's unit.
+Companion saves stay out of the game's unit and hash. `collect` returns one unit per companion with the saves it owns on the game's card, so a companion save the game rewrote goes back to the companion's unit with `changed` set. On cards with ids, the id says whose a save is. On Saturn, Sega CD and Dreamcast volumes, the owner `restore` recorded in the state does.
 
-PS2 `DATA-SYSTEM` and `BWNETCNF` carry no serial and every game sees them. sigil copies them from the main card only, and reports it when the main card has none.
+PS2 `DATA-SYSTEM` and `BWNETCNF` carry no serial and every game sees them. They belong to no game, so `restore` leaves them as they are on the target card and never brings them.
 
-sigil refuses the build and reports why when:
+`restore` refuses before writing when:
 
-- the saves don't fit the card's blocks or directory entries. The report names the save that overflowed and the shortfall.
-- a GameCube companion's region differs from the main game's, unless a `compatible_with` link covers it.
+- the saves don't fit the card's blocks or directory entries, with `SIGIL_ERR_NO_SPACE`. The result names the save that overflowed and the blocks it lacked.
+- a GameCube companion's save belongs to another Dolphin region than the game, with `SIGIL_ERR_INVALID_ARG`. The game can't read it, and Dolphin keeps it in another region's folder or card. A `compatible_with` link will lift this once it exists.
 
 ### Saturn, Sega CD and Dreamcast
 
@@ -145,18 +157,23 @@ Backup RAM and VMU entries carry a name the game chooses and no serial, so the i
 1. Before launch, `restore` writes a fresh internal volume and, when the emulator has a cart, a fresh cart volume. Each holds only the game's entries for that device, plus any companions, with the format block in place.
 2. After the session ends, `collect` assigns every entry on both volumes to the running game, except companion entries, which return to their owners by name.
 
-In managed mode, the one time ownership has to be inferred is the first sync of a volume that already holds saves, such as a shared `backup.bin` the user brings in. The first `restore` on a volume collects every entry already there before it swaps, so nothing is lost. Each entry gets an owner in this order:
+In managed mode, the one time ownership has to be inferred is the first sync of a volume that already holds saves, such as a shared `backup.bin` the user brings in. `restore` can't upload, so it never swaps away a save that hasn't gone up: it refuses with `SIGIL_ERR_UNCOLLECTED` until every save on the volume either matches its game's last collect or sits in the last holding unit. `collect` returns the saves with no known owner as that holding unit, and the client uploads it before storing the state. Each entry gets an owner in this order:
 
-1. A table in the layout data mapping product codes to the save names each game writes. It is built offline by following SH-2 and 68000 code from each name to the BIOS call it reaches, filled out from shared save archives, and checked by playing the rest ([sega.md](save-research/sega.md) sections 3.2.1 and 3.2.2). Matching is by prefix, which covers names games build at runtime. The code scan alone found the right name for 17 of 39 Saturn games, and the Sega CD method is untested, so the table depends on the archives and play-testing to fill in. A name shared by several products can't be split by the table: the Japanese and US Virtua Fighter 2 both write `VFIGHTER2_X`, and three Wolf Team discs share `AISLE_LORD_`. Those entries fall through to the next step. The only existing name list, bucanero's, is GPLv3, so it is a reference for checking, not a source to copy.
-2. The user picks an owner. `collect` reports the entry as having no known owner, the client asks, and the answer goes in the next request.
+1. The user's claim in the request.
+2. The owner the state learned when a collect or restore placed the save.
+3. In managed mode, the game the volume was last swapped in for.
+4. A table in the layout data mapping product codes to the save names each game writes. It is built offline by following SH-2 and 68000 code from each name to the BIOS call it reaches, filled out from shared save archives, and checked by playing the rest ([sega.md](save-research/sega.md) sections 3.2.1 and 3.2.2). Matching is by prefix, which covers names games build at runtime. The code scan alone found the right name for 17 of 39 Saturn games, and the Sega CD method is untested, so the table depends on the archives and play-testing to fill in. A name shared by several products can't be split by the table: the Japanese and US Virtua Fighter 2 both write `VFIGHTER2_X`, and three Wolf Team discs share `AISLE_LORD_`. Those entries fall through to the next step. The only existing name list, bucanero's, is GPLv3, so it is a reference for checking, not a source to copy. The table is `src/save_names.c`, seeded with the eight products whose code we read off a dump and whose save name a sample or the scan confirms; a name two products write needs both rows and then matches neither. Rows grow as samples arrive.
+5. The user picks an owner. `collect` reports the entry in `unowned`, the client asks, and the answer goes in the next request's `claimed`.
 
-Entries left unowned stay in a holding unit and are never deleted.
+Entries left unowned stay in the holding unit and are never deleted without having gone up in one.
+
+genesis_plus_gx keeps one per-BIOS volume per region, `scd_E.brm`, `scd_U.brm` and `scd_J.brm`, and picks by the disc's region byte, or by `genesis_plus_gx_region_detect` when it's forced (`libretro.c` L1043-1060, L1574-1585). sigil doesn't read Sega CD discs, so it takes the forced option, then the content name's region tag, then the only one of the three files present.
 
 ### Internal operations
 
 `collect` and `restore` are built from these. Only `list` is public.
 
-These exist for PS1 and PS2 cards, GameCube raw cards, Dreamcast VMUs, and Saturn and Sega CD backup RAM: `sigil_card_list` is public in every binding, and extract, build, inject, delete and verify are internal in `src/card_*.c`. The single-save forms are `.mcs`, PS2 save folders, `.gci`, `.dci`, `.BUP`, and a sigil-internal Sega CD unit that keeps the stored ECC-encoded blocks. The public listing of picodrive's combined Sega CD file shows only its internal part today. PS2 also formats an 8 MB card byte for byte as mymc does, writes ECC, keeps the spare bytes of pages it didn't change (real cards carry erased and stale spares), and packs and unpacks PCSX2 folder-card saves. Tests check all of them against the real samples in `tests/fixtures/saves/`, and `fuzz/` fuzzes them.
+These exist for PS1 and PS2 cards, GameCube raw cards, Dreamcast VMUs, and Saturn and Sega CD backup RAM: `sigil_card_list` is public in every binding, and extract, build, inject, delete and verify are internal in `src/card_*.c`. The single-save forms are `.mcs`, PS2 save folders, `.gci`, `.dci`, `.BUP`, and a sigil-internal Sega CD unit that keeps the stored ECC-encoded blocks. The public listing of picodrive's combined Sega CD file shows only its internal part today. PS2 also formats an 8 MB card byte for byte as mymc does, writes ECC, keeps the spare bytes of pages it didn't change (real cards carry erased and stale spares), packs and unpacks PCSX2 folder-card saves, and builds and checks a folder card's `_pcsx2_superblock`. Tests check all of them against the real samples in `tests/fixtures/saves/`, and `fuzz/` fuzzes them.
 
 - Extract: split a card or volume into units by owner.
 - Build: make a per-game card or volume from units, as described above.
@@ -166,7 +183,7 @@ These exist for PS1 and PS2 cards, GameCube raw cards, Dreamcast VMUs, and Satur
 
 ### Card layout
 
-Built cards are deterministic. Main saves come first, then companions in the order given. Blocks are allocated from the first free one, and unused space holds what the format's own format writes: zero on PS1 and Saturn, `0xFF` on GameCube and in PS2 file-cluster tails. Card-level fields such as the format time and card serial take fixed values. Each save keeps its own timestamps and attributes, and a GameCube save keeps its copy counter; only its first-block field changes with placement.
+Built cards are deterministic. The game's saves come first, then companions in the order given. Blocks are allocated from the first free one, and unused space holds what the format's own format writes: zero on PS1 and Saturn, `0xFF` on GameCube and in PS2 file-cluster tails. Card-level fields such as the format time and card serial take fixed values. Each save keeps its own timestamps and attributes, and a GameCube save keeps its copy counter; only its first-block field changes with placement.
 
 F-Zero GX and PSO bind their GameCube saves to the card serial. Dolphin rewrites the bound bytes on import, and sigil does the same when it builds a card: inject leaves the save as it is, and the build step rebinds F-Zero GX afterwards. PSO rebinding waits for a sample to test it against.
 
@@ -176,6 +193,7 @@ A PCSX2 folder card keeps each save's timestamps and file order in `_pcsx2_index
 - Card dates convert to Unix seconds as UTC, as PCSX2 does, so a round trip doesn't shift the time.
 - `order` follows the card's directory entry order. Some games, GTA among them, break when it changes.
 - `_pcsx2_meta/<file>` and `_pcsx2_meta_directory` hold raw directory entries and take precedence over the index. sigil writes them only for entries whose mode isn't PCSX2's default. Otherwise PCSX2 applies that default when it loads.
+- `_pcsx2_superblock` at the card folder's root is the one card-level file. PCSX2 reads all 0x2000 bytes and treats the card as formatted only when byte 0x16 is `0x6F`, so a missing, empty or short file hides every save ([sony.md](save-research/sony.md) section 2.2). sigil builds it from the same superblock page `sigil_ps2_card_format` writes, zero-padded to the erase block, which is mymc's blank card's first block. A superblock that already passes the check stays as it is, since it may describe a larger card.
 - The emulators don't agree on the index's YAML style. AetherSX2 writes block style and quotes some keys; ARMSX2 writes one line of flow style. PCSX2's YAML reader takes either, so sigil reads both and writes one fixed style. The index is never part of what RomM stores, since PS2 saves travel as cards.
 
 `.vmp` and `.psv` are signed with an HMAC. sigil reads them and doesn't write them.
@@ -196,6 +214,8 @@ A PCSX2 folder card keeps each save's timestamps and file order in `_pcsx2_index
 - Read and write one title's saves inside xemu's qcow2 image and its FATX filesystem, at `E:\UDATA\<TitleID>` and, for titles that use it, `E:\TDATA\<TitleID>`.
 - Non-roamable titles sign their saves with the console's HDKey from `eeprom.bin`. Their saves validate only on an install with the same EEPROM, so moving them needs re-signing or the same `eeprom.bin`.
 - Port Argosy's Kotlin implementation (`data/sync/xbox/`: `Qcow2Image`, `Qcow2Writer`, `FatxVolume`, `XboxHddImage`), which already does this for its own sync.
+
+Console identity files in those NANDs (3DS `movable.sed`, OTP, `SecureInfo`, friend code seed; Switch profiles; Cemu accounts) are a separate per-user layer and never part of a save unit. [user-identity.md](user-identity.md) holds the parked proposal.
 
 Emulated NAND on Wii, Wii U, 3DS and Switch is already a folder per title on the host, so it needs no image support. Finding and creating those folders still takes work:
 

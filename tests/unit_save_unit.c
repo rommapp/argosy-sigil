@@ -199,16 +199,15 @@ static void test_segacd(void) {
     sigil_save_unit *u = resolve("segacd per game", "genesis_plus_gx", "segacd", "Sonic CD (USA).chd", 0,
                                  per_game, 3, listing, 6, NULL);
     if (!u) return;
-    const char *want[] = { "Sonic CD (USA).srm", "Sonic CD (USA).brm", "Sonic CD (USA)_4Mbit_cart.brm" };
-    expect_members("segacd per game", u, SIGIL_SAVE_SHAPE_MULTI, want, 3);
+    const char *want[] = { "Sonic CD (USA).brm", "Sonic CD (USA)_4Mbit_cart.brm" };
+    expect_members("segacd per game", u, SIGIL_SAVE_SHAPE_MULTI, want, 2);
     if (u->unkeyed_count != 0) fail("segacd per game", "shared files are not written under per game");
     sigil_save_unit_free(u);
 
     u = resolve("segacd core defaults", "genesis_plus_gx", "segacd", "Sonic CD (USA).chd", 0,
                 NULL, 0, listing, 6, NULL);
     if (!u) return;
-    const char *want2[] = { "Sonic CD (USA).srm" };
-    expect_members("segacd core defaults", u, SIGIL_SAVE_SHAPE_SINGLE, want2, 1);
+    expect_members("segacd core defaults", u, SIGIL_SAVE_SHAPE_NONE, NULL, 0);
     if (u->unkeyed_count != 2 || strcmp(u->unkeyed[0], "scd_U.brm") != 0
         || strcmp(u->unkeyed[1], "4Mbit_cart.brm") != 0) {
         fail("segacd core defaults", "scd_U.brm and 4Mbit_cart.brm should be reported unkeyed");
@@ -218,7 +217,7 @@ static void test_segacd(void) {
     u = resolve("segacd argosy slug", "genesis_plus_gx", "scd", "Sonic CD (USA).chd", 0,
                 per_game, 3, listing, 6, NULL);
     if (!u) return;
-    expect_members("segacd argosy slug", u, SIGIL_SAVE_SHAPE_MULTI, want, 3);
+    expect_members("segacd argosy slug", u, SIGIL_SAVE_SHAPE_MULTI, want, 2);
     sigil_save_unit_free(u);
 
     const char *genesis_listing[] = { "Sonic (USA).srm", "Sonic (USA).brm" };
@@ -265,6 +264,34 @@ static void test_psx_saturn(void) {
     const char *want3[] = { "Panzer Dragoon Saga (USA).srm", "Panzer Dragoon Saga (USA).bcr",
                             "Panzer Dragoon Saga (USA).smpc" };
     expect_members("saturn cart", u, SIGIL_SAVE_SHAPE_MULTI, want3, 3);
+    sigil_save_unit_free(u);
+
+    const char *shared_listing[] = {
+        "Panzer Dragoon Saga (USA).srm", "Panzer Dragoon Saga (USA).bkr", "Panzer Dragoon Saga (USA).bcr",
+        "Panzer Dragoon Saga (USA).smpc", "mednafen_saturn_libretro_shared.bkr",
+        "mednafen_saturn_libretro_shared.smpc", "mednafen_saturn_libretro_shared.bcr",
+    };
+    sigil_save_option all_shared[] = {
+        { "beetle_saturn_save_method", "mednafen" },
+        { "beetle_saturn_shared_int", "enabled" },
+        { "beetle_saturn_shared_ext", "enabled" },
+    };
+    u = resolve("saturn mednafen shared", "mednafen_saturn", "saturn", "Panzer Dragoon Saga (USA).m3u", 0,
+                all_shared, 3, shared_listing, 7, NULL);
+    if (!u) return;
+    expect_members("saturn mednafen shared", u, SIGIL_SAVE_SHAPE_NONE, NULL, 0);
+    if (u->unkeyed_count != 3) fail("saturn mednafen shared", "the shared .bkr, .smpc and .bcr should be unkeyed");
+    sigil_save_unit_free(u);
+
+    sigil_save_option int_shared[] = { { "beetle_saturn_shared_int", "enabled" } };
+    u = resolve("saturn libretro shared int", "mednafen_saturn", "saturn", "Panzer Dragoon Saga (USA).m3u", 0,
+                int_shared, 1, shared_listing, 7, NULL);
+    if (!u) return;
+    const char *want4[] = { "Panzer Dragoon Saga (USA).srm", "Panzer Dragoon Saga (USA).bcr" };
+    expect_members("saturn libretro shared int", u, SIGIL_SAVE_SHAPE_MULTI, want4, 2);
+    if (u->unkeyed_count != 1 || strcmp(u->unkeyed[0], "mednafen_saturn_libretro_shared.smpc") != 0) {
+        fail("saturn libretro shared int", "only the shared .smpc should be unkeyed");
+    }
     sigil_save_unit_free(u);
 }
 

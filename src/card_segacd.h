@@ -107,8 +107,8 @@ int sigil_segacd_extract(const sigil_segacd_volume *vol, uint32_t first_block,
  * Appends the .scd unit `unit` after the last save and adds its directory
  * entry, rewriting the four copies of the free-block and file counts from
  * the directory.
- * SIGIL_ERR_NOT_FOUND when the volume lacks room for the data and the entry;
- * SIGIL_ERR_INVALID_ARG when a save of that name exists;
+ * SIGIL_ERR_NO_SPACE when the volume lacks room for the data and the entry;
+ * SIGIL_ERR_EXISTS when a save of that name exists;
  * SIGIL_ERR_UNSUPPORTED_FORMAT when `unit` isn't one save, its protected
  * blocks don't decode, or the directory holds entries that don't decode or
  * saves that aren't back to back. On any error the volume is left unchanged.
