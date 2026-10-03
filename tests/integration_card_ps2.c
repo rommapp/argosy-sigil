@@ -555,10 +555,11 @@ int main(void) {
     check_full_card_refuses(&manifest);
     for (size_t i = 0; i < sizeof(FOLDER_FACTS) / sizeof(FOLDER_FACTS[0]); i++) check_folder(&manifest, &FOLDER_FACTS[i]);
     check_meta_for_hidden_folder(&manifest);
+    int missing = g_cards ? corpus_count_missing(&manifest, "ps2") : 0;
     corpus_free(&manifest);
     corpus_free(&entries);
 
     printf("ps2 cards: %d checked, %d failures\n", g_cards, g_fails);
-    if (g_fails) return 1;
-    return g_cards ? 0 : TEST_SKIP;
+    if (!g_cards) return TEST_SKIP;
+    return corpus_exit(g_fails + missing);
 }

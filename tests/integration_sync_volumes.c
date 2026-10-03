@@ -22,14 +22,7 @@ static corpus_table g_saturn, g_segacd;
 /* ---- samples ------------------------------------------------------------------ */
 
 static uint8_t *sample(const corpus_table *manifest, const char *platform, const char *id, const char *path, size_t *len) {
-    for (size_t r = 0; r < manifest->nrows; r++) {
-        if (strcmp(corpus_get(manifest, r, "id"), id) != 0) continue;
-        if (path && strcmp(corpus_get(manifest, r, "path"), path) != 0) continue;
-        char full[1024];
-        if (corpus_sample_path(platform, id, corpus_get(manifest, r, "path"), full, sizeof(full)) != 0) return NULL;
-        return corpus_read_file(full, len);
-    }
-    return NULL;
+    return corpus_sample(manifest, platform, id, path, len);
 }
 
 static uint8_t *segacd(const char *id, size_t *len) { return sample(&g_segacd, "segacd", id, NULL, len); }
@@ -839,13 +832,10 @@ int main(void) {
         fprintf(stderr, "SKIP: no saturn or segacd manifest\n");
         return TEST_SKIP;
     }
-    size_t probe_len = 0;
-    uint8_t *probe = segacd("multi-titles-brm", &probe_len);
-    if (!probe) {
+    if (!corpus_present(&g_segacd, "segacd", "multi-titles-brm") || !corpus_present(&g_saturn, "saturn", "rayman-bkr-bcr")) {
         fprintf(stderr, "SKIP: volume samples missing\n");
         return TEST_SKIP;
     }
-    free(probe);
 
     check_saturn_internal_and_cart();
     check_saturn_keeps_gzip();
@@ -869,5 +859,5 @@ int main(void) {
     corpus_free(&g_saturn);
     corpus_free(&g_segacd);
     printf("volume sync: %d failures\n", g_fails);
-    return g_fails ? 1 : 0;
+    return corpus_exit(g_fails);
 }

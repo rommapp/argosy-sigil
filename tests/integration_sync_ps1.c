@@ -53,13 +53,7 @@ static void refresh_listing(game *g, mem_root *root) {
 static corpus_table g_manifest, g_entries;
 
 static uint8_t *sample(const char *id, size_t *len) {
-    for (size_t r = 0; r < g_manifest.nrows; r++) {
-        if (strcmp(corpus_get(&g_manifest, r, "id"), id) != 0) continue;
-        char full[1024];
-        if (corpus_sample_path("psx", id, corpus_get(&g_manifest, r, "path"), full, sizeof(full)) != 0) return NULL;
-        return corpus_read_file(full, len);
-    }
-    return NULL;
+    return corpus_sample(&g_manifest, "psx", id, NULL, len);
 }
 
 /* The unit holds exactly the entries.tsv rows of `id` that the game owns,
@@ -408,13 +402,10 @@ int main(void) {
         fprintf(stderr, "SKIP: no psx entries\n");
         return TEST_SKIP;
     }
-    size_t probe_len = 0;
-    uint8_t *probe = sample("xenogears-full-mcd", &probe_len);
-    if (!probe) {
+    if (!corpus_present(&g_manifest, "psx", "xenogears-full-mcd")) {
         fprintf(stderr, "SKIP: psx samples missing\n");
         return TEST_SKIP;
     }
-    free(probe);
 
     sigil_sync_result *first = NULL;
     check_collect_own_card(&first);
@@ -431,5 +422,5 @@ int main(void) {
     corpus_free(&g_manifest);
     corpus_free(&g_entries);
     printf("ps1 sync: %d failures\n", g_fails);
-    return g_fails ? 1 : 0;
+    return corpus_exit(g_fails);
 }

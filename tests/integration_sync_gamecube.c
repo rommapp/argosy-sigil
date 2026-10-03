@@ -20,14 +20,7 @@ static void fail(const char *where, const char *what) {
 static corpus_table g_manifest;
 
 static uint8_t *sample(const char *id, const char *path, size_t *len) {
-    for (size_t r = 0; r < g_manifest.nrows; r++) {
-        if (strcmp(corpus_get(&g_manifest, r, "id"), id) != 0) continue;
-        if (path && strcmp(corpus_get(&g_manifest, r, "path"), path) != 0) continue;
-        char full[1024];
-        if (corpus_sample_path("ngc", id, corpus_get(&g_manifest, r, "path"), full, sizeof(full)) != 0) return NULL;
-        return corpus_read_file(full, len);
-    }
-    return NULL;
+    return corpus_sample(&g_manifest, "ngc", id, path, len);
 }
 
 static const char *const FZERO_FILES[] = {
@@ -424,14 +417,11 @@ int main(void) {
         fprintf(stderr, "SKIP: no ngc manifest\n");
         return TEST_SKIP;
     }
-    size_t probe_len = 0;
-    uint8_t *probe = sample("card-raw-usa", NULL, &probe_len);
-    if (!probe) {
+    if (!corpus_present(&g_manifest, "ngc", "card-raw-usa")) {
         fprintf(stderr, "SKIP: ngc samples missing\n");
         corpus_free(&g_manifest);
         return TEST_SKIP;
     }
-    free(probe);
 
     sigil_sync_result *folder_unit = NULL;
     check_folder_collect(&folder_unit);
@@ -444,5 +434,5 @@ int main(void) {
 
     corpus_free(&g_manifest);
     printf("gamecube sync: %d failures\n", g_fails);
-    return g_fails ? 1 : 0;
+    return corpus_exit(g_fails);
 }

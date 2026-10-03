@@ -19,13 +19,7 @@ static corpus_table g_manifest;
 /* ---- samples ------------------------------------------------------------------ */
 
 static uint8_t *sample(const char *id, size_t *len) {
-    for (size_t r = 0; r < g_manifest.nrows; r++) {
-        if (strcmp(corpus_get(&g_manifest, r, "id"), id) != 0) continue;
-        char full[1024];
-        if (corpus_sample_path("ps2", id, corpus_get(&g_manifest, r, "path"), full, sizeof(full)) != 0) return NULL;
-        return corpus_read_file(full, len);
-    }
-    return NULL;
+    return corpus_sample(&g_manifest, "ps2", id, NULL, len);
 }
 
 static bool load_card(const uint8_t *data, size_t len, sigil_ps2_card *card) {
@@ -44,10 +38,9 @@ static bool folder_save(const char *id, sigil_ps2_save *out) {
         if (strcmp(corpus_get(&g_manifest, r, "id"), id) != 0) continue;
         const char *path = corpus_get(&g_manifest, r, "path");
         const char *slash = strchr(path, '/');
-        char full[1024];
-        if (!slash || corpus_sample_path("ps2", id, path, full, sizeof(full)) != 0) continue;
+        if (!slash) continue;
         snprintf(folder, sizeof(folder), "%.*s", (int)(slash - path), path);
-        files[n].data = corpus_read_file(full, &files[n].len);
+        files[n].data = corpus_sample(&g_manifest, "ps2", id, path, &files[n].len);
         if (!files[n].data) continue;
         snprintf(files[n].path, sizeof(files[n].path), "%s", slash + 1);
         n++;
@@ -410,9 +403,9 @@ static bool put_sample_folder(mem_root *root, const char *card, const char *id) 
     for (size_t r = 0; r < g_manifest.nrows; r++) {
         if (strcmp(corpus_get(&g_manifest, r, "id"), id) != 0) continue;
         const char *rel = corpus_get(&g_manifest, r, "path");
-        char full[1024], at[SIGIL_SAVE_PATH_MAX];
+        char at[SIGIL_SAVE_PATH_MAX];
         size_t len = 0;
-        uint8_t *data = corpus_sample_path("ps2", id, rel, full, sizeof(full)) == 0 ? corpus_read_file(full, &len) : NULL;
+        uint8_t *data = corpus_sample(&g_manifest, "ps2", id, rel, &len);
         if (!data) return false;
         snprintf(at, sizeof(at), "%s/%s", card, rel);
         root_put(root, at, data, len);
@@ -722,14 +715,11 @@ int main(void) {
         fprintf(stderr, "SKIP: no ps2 manifest\n");
         return TEST_SKIP;
     }
-    size_t probe_len = 0;
-    uint8_t *probe = sample("mymc-mc01", &probe_len);
-    if (!probe) {
+    if (!corpus_present(&g_manifest, "ps2", "mymc-mc01")) {
         fprintf(stderr, "SKIP: ps2 samples missing\n");
         corpus_free(&g_manifest);
         return TEST_SKIP;
     }
-    free(probe);
 
     sigil_sync_result *first = NULL;
     check_collect_shared(&first);
@@ -747,5 +737,5 @@ int main(void) {
 
     corpus_free(&g_manifest);
     printf("ps2 sync: %d failures\n", g_fails);
-    return g_fails ? 1 : 0;
+    return corpus_exit(g_fails);
 }

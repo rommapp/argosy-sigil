@@ -20,14 +20,7 @@ static void fail(const char *where, const char *what) {
 static corpus_table g_psx, g_saturn;
 
 static uint8_t *sample(const corpus_table *manifest, const char *platform, const char *id, const char *path, size_t *len) {
-    for (size_t r = 0; r < manifest->nrows; r++) {
-        if (strcmp(corpus_get(manifest, r, "id"), id) != 0) continue;
-        if (path && strcmp(corpus_get(manifest, r, "path"), path) != 0) continue;
-        char full[1024];
-        if (corpus_sample_path(platform, id, corpus_get(manifest, r, "path"), full, sizeof(full)) != 0) return NULL;
-        return corpus_read_file(full, len);
-    }
-    return NULL;
+    return corpus_sample(manifest, platform, id, path, len);
 }
 
 typedef struct {
@@ -314,13 +307,10 @@ int main(void) {
         fprintf(stderr, "SKIP: manifests missing\n");
         return TEST_SKIP;
     }
-    size_t probe_len = 0;
-    uint8_t *probe = sample(&g_psx, "psx", "megaman-bad-link-mcd", NULL, &probe_len);
-    if (!probe) {
+    if (!corpus_present(&g_psx, "psx", "megaman-bad-link-mcd") || !corpus_present(&g_saturn, "saturn", "rayman-bkr-bcr")) {
         fprintf(stderr, "SKIP: samples missing\n");
         return TEST_SKIP;
     }
-    free(probe);
 
     check_ps1();
     check_saturn();
@@ -328,5 +318,5 @@ int main(void) {
     corpus_free(&g_psx);
     corpus_free(&g_saturn);
     printf("companion sync: %d failures\n", g_fails);
-    return g_fails ? 1 : 0;
+    return corpus_exit(g_fails);
 }
