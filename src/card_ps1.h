@@ -9,6 +9,8 @@
 #define PS1_FRAME_SIZE   128u
 #define PS1_DATA_BLOCKS  15u
 #define PS1_NAME_LEN     20u
+#define PS1_GME_HEADER_SIZE 0xF40u
+#define PS1_VMP_HEADER_SIZE 0x80u
 
 /**
  * Reads a PS1 memory card in any supported wrapper into `image`, a full raw
@@ -16,6 +18,43 @@
  * were unused. Sets `*format` to a sigil_card_format value.
  */
 int sigil_ps1_card_load(const sigil_io *io, uint8_t image[PS1_CARD_SIZE], int *format);
+
+/**
+ * A card as its file holds it: the raw card, the file's format, and for a
+ * .gme or .vmp the header in front of the card. `read_directory` is the
+ * directory block as read, so a .gme keeps a slot's comment only while the
+ * same save holds the slot.
+ */
+typedef struct {
+    uint8_t image[PS1_CARD_SIZE];
+    int     format;
+    uint8_t header[PS1_GME_HEADER_SIZE];
+    uint8_t read_directory[PS1_BLOCK_SIZE];
+} sigil_ps1_file;
+
+/** Reads a card in any supported wrapper, keeping the wrapper's header. */
+int sigil_ps1_file_load(const sigil_io *io, sigil_ps1_file *f);
+
+/**
+ * Makes `f` an empty card in `format`: SIGIL_CARD_FORMAT_PS1_RAW, or
+ * SIGIL_CARD_FORMAT_PS1_VMP with the header a PSP writes and the seed
+ * 00 01 .. 13 (any seed checks; the Vagrant Story sample carries this one).
+ */
+void sigil_ps1_file_format(sigil_ps1_file *f, int format);
+
+/**
+ * SIGIL_ERR_DAMAGED when a .vmp's signature doesn't match its card, which
+ * the PSP and Vita refuse to load; SIGIL_OK otherwise.
+ */
+int sigil_ps1_file_check(const sigil_ps1_file *f);
+
+/**
+ * The file's bytes in its own format: a raw card; a .gme with the header's
+ * frame copies following the directory, a comment kept only beside the save
+ * it was read with, and the card at full size; a .vmp signed for its card
+ * under its own seed. The caller frees `*out`.
+ */
+int sigil_ps1_file_write(const sigil_ps1_file *f, uint8_t **out, size_t *len);
 
 /**
  * Lists the live saves on a raw card image into `out`, in directory order.
@@ -56,6 +95,9 @@ void sigil_ps1_format(uint8_t image[PS1_CARD_SIZE]);
  * a single save. On any error the card is left unchanged.
  */
 int sigil_ps1_inject(uint8_t image[PS1_CARD_SIZE], const uint8_t *mcs, size_t len);
+
+/** Blocks sigil_ps1_inject takes for `mcs`; 0 when it isn't one save. */
+uint32_t sigil_ps1_cost(const uint8_t *mcs, size_t len);
 
 /** Marks the save starting at `first_block` deleted, freeing its blocks. */
 int sigil_ps1_delete(uint8_t image[PS1_CARD_SIZE], uint32_t first_block);

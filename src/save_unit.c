@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "save_layout.h"
+#include <ctype.h>
 #include <stdlib.h>
 #include <stdio.h>
 
@@ -63,22 +64,57 @@ static bool shared_applies(const sigil_save_request *req, const sigil_layout_sha
            condition_holds(req, ls->opt2_key, ls->opt2_value, ls->opt2_default);
 }
 
-static const char *gpgx_cart_size_name(const char *value) {
-    if (!value) return "4Mbit";
-    if (strcmp(value, "128k") == 0) return "128Kbit";
-    if (strcmp(value, "256k") == 0) return "256Kbit";
-    if (strcmp(value, "512k") == 0) return "512Kbit";
-    if (strcmp(value, "1meg") == 0) return "1Mbit";
-    if (strcmp(value, "2meg") == 0) return "2Mbit";
-    if (strcmp(value, "4meg") == 0) return "4Mbit";
+/* genesis_plus_gx's RAM cart: genesis_plus_gx_cart_size names the size, the
+ * cart file carries it in its name, and the file is the cart's bytes. */
+typedef struct {
+    const char *value;
+    const char *name;
+    uint32_t    bytes;
+} gpgx_cart;
+
+static const gpgx_cart GPGX_CARTS[] = {
+    { "128k", "128Kbit", 16u * 1024u },
+    { "256k", "256Kbit", 32u * 1024u },
+    { "512k", "512Kbit", 64u * 1024u },
+    { "1meg", "1Mbit", 128u * 1024u },
+    { "2meg", "2Mbit", 256u * 1024u },
+    { "4meg", "4Mbit", 512u * 1024u },
+};
+
+static const gpgx_cart *gpgx_cart_for(const sigil_save_request *req) {
+    const char *value = option_value(req, "genesis_plus_gx_cart_size");
+    if (!value) value = "4meg";
+    for (size_t i = 0; i < sizeof(GPGX_CARTS) / sizeof(GPGX_CARTS[0]); i++) {
+        if (strcmp(GPGX_CARTS[i].value, value) == 0) return &GPGX_CARTS[i];
+    }
     return NULL;
+}
+
+/* The size a file the core creates from `template_` has: the row's, or the
+ * cart size the core's option names. */
+static uint32_t new_file_size(const sigil_save_request *req, const char *template_, uint32_t row_size) {
+    if (!strstr(template_, "{cart_size}")) return row_size;
+    const gpgx_cart *cart = gpgx_cart_for(req);
+    return cart ? cart->bytes : row_size;
 }
 
 typedef struct {
     const sigil_save_request *req;
     char stem[SIGIL_SAVE_ENTRY_MAX];
     char dc_vmu_id[sizeof(((sigil_result *)0)->title_id)];
+    char disc_id[sizeof(((sigil_result *)0)->title_id)];
 } expand_ctx;
+
+/* A PSP EBOOT's DISC_ID: the title id's letters and digits (SLUS-01040 is
+ * SLUS01040). */
+static void disc_id(const sigil_save_request *req, char *out, size_t cap) {
+    size_t n = 0;
+    const char *id = req->result ? req->result->title_id : "";
+    for (; *id && n + 1 < cap; id++) {
+        if (isalnum((unsigned char)*id)) out[n++] = *id;
+    }
+    out[n] = '\0';
+}
 
 /* flycast's per-game VMU name: the product number with ` /\:*?|<>` made `_`
  * (flycast shell/libretro/oslib.cpp getVmuPath). */
@@ -114,6 +150,7 @@ static void expand_ctx_init(expand_ctx *ctx, const sigil_save_request *req) {
     ctx->req = req;
     sigil_content_stem(req->content_path, ctx->stem, sizeof(ctx->stem));
     dc_vmu_id(req, ctx->dc_vmu_id, sizeof(ctx->dc_vmu_id));
+    disc_id(req, ctx->disc_id, sizeof(ctx->disc_id));
 }
 
 static const char *variable_value(const expand_ctx *ctx, const char *name, size_t len) {
@@ -123,9 +160,11 @@ static const char *variable_value(const expand_ctx *ctx, const char *name, size_
     if (len == 8 && strncmp(name, "title_id", 8) == 0) return req->result ? req->result->title_id : NULL;
     if (len == 7 && strncmp(name, "save_id", 7) == 0) return req->result ? req->result->save_id : NULL;
     if (len == 9 && strncmp(name, "dc_vmu_id", 9) == 0) return ctx->dc_vmu_id;
+    if (len == 7 && strncmp(name, "disc_id", 7) == 0) return ctx->disc_id;
     if (len == 9 && strncmp(name, "gc_region", 9) == 0) return gc_region(req);
     if (len == 9 && strncmp(name, "cart_size", 9) == 0) {
-        return gpgx_cart_size_name(option_value(req, "genesis_plus_gx_cart_size"));
+        const gpgx_cart *cart = gpgx_cart_for(req);
+        return cart ? cart->name : NULL;
     }
     if (len == 13 && strncmp(name, "nvram_version", 13) == 0) {
         const char *v = option_value(req, "opera_nvram_version");
@@ -452,7 +491,8 @@ int sigil_save_resolve(const sigil_save_request *req, sigil_save_unit **out) {
     return SIGIL_OK;
 }
 
-size_t sigil_save_shared_paths(const sigil_save_request *req, char (*out)[SIGIL_SAVE_PATH_MAX], size_t cap) {
+size_t sigil_save_shared_paths(const sigil_save_request *req, char (*out)[SIGIL_SAVE_PATH_MAX], int *devices,
+                               size_t cap) {
     if (!req || !req->content_path) return 0;
     expand_ctx ctx;
     expand_ctx_init(&ctx, req);
@@ -461,7 +501,9 @@ size_t sigil_save_shared_paths(const sigil_save_request *req, char (*out)[SIGIL_
     for (size_t i = 0; i < layout->shared_count && n < cap; i++) {
         const sigil_layout_shared *ls = &layout->shared[i];
         if (!shared_applies(req, ls)) continue;
-        if (expand_template(&ctx, ls->template_, out[n], SIGIL_SAVE_PATH_MAX)) n++;
+        if (!expand_template(&ctx, ls->template_, out[n], SIGIL_SAVE_PATH_MAX)) continue;
+        if (devices) devices[n] = ls->device;
+        n++;
     }
     return n;
 }
@@ -526,7 +568,7 @@ int sigil_save_volume_targets(const sigil_save_request *req, sigil_volume_target
             snprintf(t->path, sizeof(t->path), "%s", path);
             t->per_game = true;
             t->form = lm->form;
-            t->new_size = lm->new_size;
+            t->new_size = new_file_size(req, lm->template_, lm->new_size);
         }
         /* Among the files the region allows, the first present wins, else the
          * first; when the region allows none, the one file present. */
@@ -561,7 +603,7 @@ int sigil_save_volume_targets(const sigil_save_request *req, sigil_volume_target
             snprintf(t->path, sizeof(t->path), "%s", chosen_path);
             t->per_game = false;
             t->form = chosen->form;
-            t->new_size = chosen->new_size;
+            t->new_size = new_file_size(req, chosen->template_, chosen->new_size);
             found = true;
         }
         if (found) {

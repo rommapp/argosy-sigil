@@ -85,6 +85,95 @@ static size_t ps1_saves_of(const uint8_t *card, size_t len, const char *owner) {
 #define MML2 "SLUS-01334"
 #define MML1 "SLUS-00453"
 #define MML2_CUE "Mega Man Legends 2 (USA).cue"
+#define MML2_CARD "Mega Man Legends 2 (USA).srm"
+
+/* Flips byte `at` of `owner`'s save data on a raw PS1 card. */
+static void flip_ps1_save(uint8_t *card, const char *owner, size_t at) {
+    sigil_card_listing *l = NULL;
+    if (sigil_ps1_card_list(card, SIGIL_CARD_FORMAT_PS1_RAW, &l) != SIGIL_OK) return;
+    for (size_t i = 0; i < l->entry_count; i++) {
+        if (strcmp(l->entries[i].owner_id, owner) == 0) card[(size_t)l->entries[i].first_block * PS1_BLOCK_SIZE + at] ^= 0xFF;
+    }
+    sigil_card_listing_free(l);
+}
+
+/* The identity collect gives `owner`'s companion saves on `root`'s game card. */
+static bool companion_identity(mem_root *root, const sigil_sync_result *state, char out[33]) {
+    game g;
+    make_game(&g, root, "pcsx_rearmed", "psx", SIGIL_PLATFORM_PSX, MML2_CUE, MML2);
+    with_companion(&g, MML1, NULL);
+    g.req.state = state->state;
+    g.req.state_len = state->state_len;
+    sigil_sync_result *c = NULL;
+    bool ok = sigil_collect(&g.req, &c) == SIGIL_OK && c->companion_count == 1;
+    if (ok) snprintf(out, 33, "%s", c->companions[0].identity_hash);
+    sigil_sync_result_free(c);
+    return ok;
+}
+
+/* A restore carrying a companion's unit replaces the companion's saves on a
+ * card that already holds older ones, even when the game's own saves are
+ * already there; and a companion save changed locally since the last sync
+ * stops it until the user says to overwrite. */
+static void check_ps1_companion_rules(const sigil_sync_result *first, const sigil_sync_result *second) {
+    uint8_t *newer = (uint8_t *)malloc(first->len);
+    if (!newer) return;
+    memcpy(newer, first->data, first->len);
+    flip_ps1_save(newer, MML1, 300);
+    sigil_sync_result newer_unit = *first;
+    newer_unit.data = newer;
+
+    mem_root root = {0};
+    game g;
+    make_game(&g, &root, "pcsx_rearmed", "psx", SIGIL_PLATFORM_PSX, MML2_CUE, MML2);
+    with_companion(&g, MML1, first);
+    sigil_sync_result *placed = NULL, *again = NULL, *r = NULL;
+    char have[33] = "", want[33] = "";
+    if (sigil_restore(&g.req, second->data, second->len, &placed) != SIGIL_OK) {
+        fail("ps1 companion rules", "setup restore failed");
+        goto done;
+    }
+    refresh(&g, &root);
+    g.req.state = placed->state;
+    g.req.state_len = placed->state_len;
+    with_companion(&g, MML1, &newer_unit);
+    int writes = root.writes;
+    if (sigil_restore(&g.req, second->data, second->len, &again) != SIGIL_OK || root.writes == writes) {
+        fail("ps1 companion rules", "a newer companion unit beside an unchanged game wasn't written");
+    } else {
+        mem_file *f = root_find(&root, MML2_CARD);
+        mem_root alone = {0};
+        root_put(&alone, MML2_CARD, newer, first->len);
+        if (ps1_saves_of(f->data, f->len, MML1) != 1 || !companion_identity(&root, again, have) ||
+            !companion_identity(&alone, again, want) || strcmp(have, want) != 0) {
+            fail("ps1 companion rules", "the companion's older save wasn't replaced by its newer unit");
+        }
+        root_free(&alone);
+    }
+
+    refresh(&g, &root);
+    g.req.state = again ? again->state : NULL;
+    g.req.state_len = again ? again->state_len : 0;
+    flip_ps1_save(root_find(&root, MML2_CARD)->data, MML1, 301);
+    with_companion(&g, MML1, first);
+    writes = root.writes;
+    if (sigil_restore(&g.req, second->data, second->len, &r) != SIGIL_ERR_CONFLICT || root.writes != writes ||
+        !r || !r->conflict) {
+        fail("ps1 companion rules", "a companion save changed locally was overwritten without asking");
+    }
+    sigil_sync_result_free(r);
+    r = NULL;
+    g.req.overwrite_local = 1;
+    if (sigil_restore(&g.req, second->data, second->len, &r) != SIGIL_OK) {
+        fail("ps1 companion rules", "overwriting a changed companion save failed");
+    }
+done:
+    sigil_sync_result_free(r);
+    sigil_sync_result_free(again);
+    sigil_sync_result_free(placed);
+    root_free(&root);
+    free(newer);
+}
 
 /* PS1, ids on the card: the companion's save goes on the game's own card,
  * collect returns it as the companion's unit, and a change the game made to
@@ -133,15 +222,7 @@ static void check_ps1(void) {
             c = NULL;
 
             f = root_find(&root, "Mega Man Legends 2 (USA).srm");
-            sigil_card_listing *l = NULL;
-            if (sigil_ps1_card_list(f->data, SIGIL_CARD_FORMAT_PS1_RAW, &l) == SIGIL_OK) {
-                for (size_t i = 0; i < l->entry_count; i++) {
-                    if (strcmp(l->entries[i].owner_id, MML1) == 0) {
-                        f->data[(size_t)l->entries[i].first_block * PS1_BLOCK_SIZE + 300] ^= 0xFF;
-                    }
-                }
-            }
-            sigil_card_listing_free(l);
+            flip_ps1_save(f->data, MML1, 300);
             if (sigil_collect(&g.req, &c) != SIGIL_OK || c->changed || c->companion_count != 1 || !c->companions[0].changed) {
                 fail("ps1 companions", "a change to the companion's save didn't read as the companion's");
             }
@@ -149,15 +230,7 @@ static void check_ps1(void) {
             c = NULL;
 
             f = root_find(&root, "Mega Man Legends 2 (USA).srm");
-            l = NULL;
-            if (sigil_ps1_card_list(f->data, SIGIL_CARD_FORMAT_PS1_RAW, &l) == SIGIL_OK) {
-                for (size_t i = 0; i < l->entry_count; i++) {
-                    if (strcmp(l->entries[i].owner_id, MML2) == 0) {
-                        f->data[(size_t)l->entries[i].first_block * PS1_BLOCK_SIZE + 300] ^= 0xFF;
-                    }
-                }
-            }
-            sigil_card_listing_free(l);
+            flip_ps1_save(f->data, MML2, 300);
             sigil_sync_result *again = NULL;
             g.req.overwrite_local = 1;
             int writes = root.writes;
@@ -181,14 +254,23 @@ static void check_ps1(void) {
             with_companion(&h, MML1, first);
             h.req.overwrite_local = 1;
             r = NULL;
-            if (sigil_restore(&h.req, second->data, second->len, &r) != SIGIL_ERR_NO_SPACE || !r || !r->overflow[0] ||
-                r->overflow_blocks == 0 || crowded.writes != 0) {
-                fail("ps1 companions", "a full card didn't name the save that overflowed and the shortfall");
+            sigil_card_listing *game_saves = NULL, *on_full = NULL;
+            bool listed = sigil_ps1_card_list(second->data, SIGIL_CARD_FORMAT_PS1_RAW, &game_saves) == SIGIL_OK &&
+                          game_saves->entry_count == 1 &&
+                          sigil_ps1_card_list(full, SIGIL_CARD_FORMAT_PS1_RAW, &on_full) == SIGIL_OK;
+            if (sigil_restore(&h.req, second->data, second->len, &r) != SIGIL_ERR_NO_SPACE || !r || crowded.writes != 0) {
+                fail("ps1 companions", "a full card took the saves");
+            } else if (!listed || strcmp(r->problem, game_saves->entries[0].name) != 0 ||
+                       r->blocks_short != game_saves->entries[0].blocks - on_full->free_blocks) {
+                fail("ps1 companions", "a full card didn't name the save that overflowed and its exact shortfall");
             }
+            sigil_card_listing_free(game_saves);
+            sigil_card_listing_free(on_full);
             sigil_sync_result_free(r);
             root_free(&crowded);
             free(full);
         }
+        check_ps1_companion_rules(first, second);
     }
     sigil_sync_result_free(first);
     sigil_sync_result_free(second);

@@ -236,6 +236,22 @@ void sigil_md5_hex(const uint8_t digest[16], char out[33]);
 /** The MD5 of `len` bytes, as lowercase hex. */
 void sigil_md5_of(const void *data, size_t len, char out[33]);
 
+/* SHA-1 (FIPS 180-4) and HMAC-SHA1 (RFC 2104), for the PSP and Vita PS1
+ * card signature. */
+typedef struct {
+    uint32_t state[5];
+    uint64_t length;
+    uint8_t  buffer[64];
+    size_t   buffered;
+} sigil_sha1;
+
+void sigil_sha1_init(sigil_sha1 *s);
+void sigil_sha1_update(sigil_sha1 *s, const void *data, size_t len);
+void sigil_sha1_final(sigil_sha1 *s, uint8_t digest[20]);
+
+/** HMAC-SHA1 of `len` bytes of `data` under `key`. */
+void sigil_hmac_sha1(const uint8_t *key, size_t key_len, const void *data, size_t len, uint8_t mac[20]);
+
 /** One named part of a unit and the MD5 of its bytes. */
 typedef struct {
     char name[SIGIL_SAVE_PATH_MAX];
@@ -251,9 +267,12 @@ void sigil_named_hash(sigil_named_md5 *items, size_t count, char out[33]);
 
 /**
  * The shared files the request's layout row applies, expanded, whether or
- * not the listing holds them. Returns how many went into `out`.
+ * not the listing holds them, with each one's sigil_device in `devices` when
+ * given. Files of one device other than SIGIL_DEVICE_NONE are alternatives:
+ * the emulator uses one of them. Returns how many went into `out`.
  */
-size_t sigil_save_shared_paths(const sigil_save_request *req, char (*out)[SIGIL_SAVE_PATH_MAX], size_t cap);
+size_t sigil_save_shared_paths(const sigil_save_request *req, char (*out)[SIGIL_SAVE_PATH_MAX], int *devices,
+                               size_t cap);
 
 /**
  * The region letter that ends a GameCube game code, from the result's raw

@@ -80,38 +80,64 @@ static int root_remove(void *ctx, const char *path) {
     return 0;
 }
 
-/* Reads the input as a zip, then restores it as a unit from RomM into an
- * empty root, collects the root and restores the collected unit. The last
- * input byte picks Sega CD under genesis_plus_gx, a Dreamcast under flycast
- * with every VMU per game, or a GameCube under Dolphin's GCI folder. */
-int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
-    sigil_zip_member *members = NULL;
-    size_t count = 0;
-    if (sigil_zip_read_mem(data, size, 1u << 20, &members, &count) == SIGIL_OK) sigil_zip_members_free(members, count);
+static void broken(const char *what) {
+    fprintf(stderr, "oracle: %s\n", what);
+    abort();
+}
 
-    static const char *const SEGACD_PATHS[] = { "Game.brm", "Game_4Mbit_cart.brm" };
-    static const char *const VMU_PATHS[] = { "T-1.A1.bin", "T-1.B1.bin" };
-    static const char *const GC_PATHS[] = { "User/GC/USA/Card A/a.gci", "User/GC/USA/Card A/b.gci" };
-    static const sigil_save_option SEGACD_OPTIONS[] = {
-        { "genesis_plus_gx_system_bram", "per game" },
-        { "genesis_plus_gx_cart_bram", "per game" },
-    };
-    static const sigil_save_option VMU_OPTIONS[] = { { "reicast_per_content_vmus", "All VMUs" } };
-    int mode = size > 0 ? data[size - 1] % 3 : 0;
-    bool vmu = mode == 1, gc = mode == 2;
+typedef struct {
+    const char              *layout;
+    const char              *platform;
+    const char              *content;
+    int                      result_platform;   /* 0 for no sigil_result */
+    const char              *title_id;
+    const char              *serial;
+    const char              *paths[2];
+    const sigil_save_option *options;
+    size_t                   option_count;
+} sync_mode;
 
+static const sigil_save_option SEGACD_PER_GAME[] = {
+    { "genesis_plus_gx_system_bram", "per game" },
+    { "genesis_plus_gx_cart_bram", "per game" },
+};
+static const sigil_save_option VMU_ALL[] = { { "reicast_per_content_vmus", "All VMUs" } };
+static const sigil_save_option GC_RAW[] = { { "SlotA", "1" }, { "MemoryCardSize", "-1" } };
+static const sigil_save_option SATURN_SHARED[] = {
+    { "beetle_saturn_save_method", "mednafen" },
+    { "beetle_saturn_shared_int", "enabled" },
+    { "beetle_saturn_shared_ext", "enabled" },
+};
+
+static const sync_mode MODES[] = {
+    { "genesis_plus_gx", "segacd", "Game.cue", 0, "", "", { "Game.brm", "Game_4Mbit_cart.brm" }, SEGACD_PER_GAME, 2 },
+    { "flycast", "dreamcast", "Game.gdi", SIGIL_PLATFORM_DREAMCAST, "T-1", "", { "T-1.A1.bin", "T-1.B1.bin" }, VMU_ALL, 1 },
+    { "dolphin", "gamecube", "Game.iso", SIGIL_PLATFORM_GAMECUBE, "47465A45", "GFZE",
+      { "User/GC/USA/Card A/a.gci", "User/GC/USA/Card A/b.gci" }, NULL, 0 },
+    { "dolphin", "gamecube", "Game.iso", SIGIL_PLATFORM_GAMECUBE, "47465A45", "GFZE",
+      { "User/GC/MemoryCardA.USA.raw", "User/GC/MemoryCardA.EUR.raw" }, GC_RAW, 2 },
+    { "mednafen_saturn", "saturn", "Game.cue", 0, "", "", { "Game.srm", "Game.bcr" }, NULL, 0 },
+    { "genesis_plus_gx", "segacd", "Game (USA).cue", 0, "", "", { "scd_U.brm", "4Mbit_cart.brm" }, NULL, 0 },
+    { "mednafen_saturn", "saturn", "Game.cue", 0, "", "",
+      { "mednafen_saturn_libretro_shared.bkr", "mednafen_saturn_libretro_shared.bcr" }, SATURN_SHARED, 3 },
+};
+#define MODE_COUNT (sizeof(MODES) / sizeof(MODES[0]))
+
+/* Restores the input as a unit from RomM into an empty root under mode `m`,
+ * collects the root and restores the collected unit. A restore that succeeds
+ * must collect back to the unit's identity, unchanged. */
+static void run_mode(const sync_mode *m, const uint8_t *data, size_t size) {
     sigil_result result;
     memset(&result, 0, sizeof(result));
     result.struct_version = SIGIL_RESULT_V3;
-    result.platform = gc ? SIGIL_PLATFORM_GAMECUBE : SIGIL_PLATFORM_DREAMCAST;
-    strcpy(result.title_id, gc ? "47465A45" : "T-1");
-    strcpy(result.raw_serial, gc ? "GFZE" : "");
+    result.platform = m->result_platform;
+    snprintf(result.title_id, sizeof(result.title_id), "%s", m->title_id);
+    snprintf(result.raw_serial, sizeof(result.raw_serial), "%s", m->serial);
 
     root r;
     memset(&r, 0, sizeof(r));
-    const char *const *paths = gc ? GC_PATHS : vmu ? VMU_PATHS : SEGACD_PATHS;
     for (size_t i = 0; i < 2; i++) {
-        snprintf(r.names[i], sizeof(r.names[i]), "%s", paths[i]);
+        snprintf(r.names[i], sizeof(r.names[i]), "%s", m->paths[i]);
         r.listing[i] = r.names[i];
     }
     r.count = 2;
@@ -119,14 +145,14 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     memset(&req, 0, sizeof(req));
     req.struct_version = SIGIL_SYNC_REQUEST_V1;
     req.save.struct_version = SIGIL_SAVE_REQUEST_V1;
-    req.save.layout = gc ? "dolphin" : vmu ? "flycast" : "genesis_plus_gx";
-    req.save.platform = gc ? "gamecube" : vmu ? "dreamcast" : "segacd";
-    req.save.result = gc || vmu ? &result : NULL;
-    req.save.content_path = "Game.cue";
+    req.save.layout = m->layout;
+    req.save.platform = m->platform;
+    req.save.result = m->result_platform ? &result : NULL;
+    req.save.content_path = m->content;
     req.save.listing = r.listing;
     req.save.listing_count = r.count;
-    req.save.options = vmu ? VMU_OPTIONS : gc ? NULL : SEGACD_OPTIONS;
-    req.save.option_count = vmu ? 1 : gc ? 0 : 2;
+    req.save.options = m->options;
+    req.save.option_count = m->option_count;
     req.save.open = root_open;
     req.save.open_ctx = &r;
     req.overwrite_local = 1;
@@ -140,11 +166,30 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     out = NULL;
     req.save.listing_count = r.count;
     if (sigil_collect(&req, &out) == SIGIL_OK && out->data) {
-        sigil_sync_result *again = NULL;
-        sigil_restore(&req, out->data, out->len, &again);
+        sigil_sync_result *again = NULL, *back = NULL;
+        if (sigil_restore(&req, out->data, out->len, &again) == SIGIL_OK) {
+            req.save.listing_count = r.count;
+            req.state = again->state;
+            req.state_len = again->state_len;
+            if (sigil_collect(&req, &back) != SIGIL_OK) broken("collect after a restore failed");
+            if (strcmp(back->identity_hash, out->identity_hash) != 0) broken("a restored unit collects back as other saves");
+            if (back->changed) broken("a restored unit collects back as changed");
+        }
+        sigil_sync_result_free(back);
         sigil_sync_result_free(again);
     }
     sigil_sync_result_free(out);
     for (size_t i = 0; i < r.count; i++) free(r.file[i]);
+}
+
+/* Reads the input as a zip, then runs it through every mode: Sega CD and
+ * Saturn on per-game and on shared volumes, a Dreamcast under flycast with
+ * every VMU per game, and a GameCube under Dolphin's GCI folder and on its
+ * raw card. */
+int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+    sigil_zip_member *members = NULL;
+    size_t count = 0;
+    if (sigil_zip_read_mem(data, size, 1u << 20, &members, &count) == SIGIL_OK) sigil_zip_members_free(members, count);
+    for (size_t i = 0; i < MODE_COUNT; i++) run_mode(&MODES[i], data, size);
     return 0;
 }

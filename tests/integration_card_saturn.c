@@ -496,6 +496,13 @@ static void check_inject_and_delete(void) {
             if (sigil_saturn_verify(&vol, kept.bup[i], kept.len[i]) != SIGIL_OK) fail(id, "an existing save changed");
         }
         if (sigil_saturn_verify(&vol, bup, bup_len) != SIGIL_OK) fail(id, "injected save did not verify");
+        uint8_t *dated = (uint8_t *)malloc(bup_len);
+        if (dated) {
+            memcpy(dated, bup, bup_len);
+            dated[0x28 + 3] ^= 0x01;
+            if (sigil_saturn_verify(&vol, dated, bup_len) == SIGIL_OK) fail(id, "a save with another archive date verified");
+            free(dated);
+        }
 
         const sigil_card_entry *ray = find_entry(after, "RAYEARTH_00");
         if (!ray || sigil_saturn_delete(&vol, ray->first_block) != SIGIL_OK ||

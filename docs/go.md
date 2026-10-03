@@ -163,6 +163,7 @@ type CardListing struct {
     FreeSlots    uint32      // Directory slots a new save can use.
     CorruptCount uint32      // Saves left out because their block chain is broken.
     Entries      []CardEntry // Live saves, in directory order.
+    CorruptEntries []CardEntry // The left-out saves the card still names; Blocks is 0.
 }
 
 type CardEntry struct {
@@ -190,11 +191,21 @@ picked: [c.md](c.md), "Sync". For Saturn and Sega CD, build the game with
 ```go
 sigil.Collect(game *Result, core, contentPath, saveRoot string, opts *SyncOptions) (*SyncResult, error)
 sigil.Restore(unit []byte, game *Result, core, contentPath, saveRoot string, opts *SyncOptions) (*SyncResult, error)
-    // sigil.ErrConflict, writing nothing, when the saves under saveRoot changed since the last sync.
-    // sigil.ErrUncollected, writing nothing, when a shared volume holds saves no collect has
-    //   passed on yet. *sigil.OverflowError, which matches sigil.ErrNoSpace, when the saves
-    //   don't fit: Name is the save that didn't, Blocks the blocks it lacked (0 when a
-    //   directory slot ran out instead).
+    // Each of these writes nothing: sigil.ErrConflict (the saves under saveRoot changed since
+    //   the last sync), sigil.ErrUncollected (a shared volume holds saves no collect has passed
+    //   on yet), and as a *sigil.ProblemError, which matches its error with errors.Is:
+    //   sigil.ErrNoSpace (BlocksShort says by how much), sigil.ErrRegion (a companion's save
+    //   from another region), sigil.ErrNoTarget (the unit holds a volume the emulator's
+    //   settings keep no file for), sigil.ErrAmbiguous (more than one file could be the
+    //   emulator's card) and sigil.ErrDamaged (unless Repair rebuilt it; a card sigil can't read
+    //   stays ErrDamaged). Problem names the save, member or files. Collect returns ErrDamaged
+    //   and ErrAmbiguous the same way. c.md, "Sync", has the table.
+
+type ProblemError struct {
+    Err         error   // sigil.ErrNoSpace, ErrRegion, ErrNoTarget, ErrAmbiguous or ErrDamaged.
+    Problem     string  // The save, unit member or file at fault; for ErrAmbiguous the files, one per line.
+    BlocksShort uint32  // ErrNoSpace: blocks the save lacked; 0 when a directory slot ran out.
+}
 
 type Companion struct {
     GameIDs []string // The companion's ids, as for GameIDs.
@@ -215,6 +226,7 @@ type SyncOptions struct {
     State          []byte            // What the last call returned for this platform and emulator.
     Unmanaged      bool              // The game runs outside the caller.
     OverwriteLocal bool              // Restore: the user chose to replace saves that changed locally.
+    Repair         bool              // Rebuild what ErrDamaged named, where sigil can.
     Claimed        []string          // Saturn, Sega CD: names from Unowned the user gave this game.
     Companions     []Companion       // Games whose saves this game reads, in the order they go on.
 }

@@ -2,40 +2,41 @@
 /* The PS1 and PS2 card kinds. */
 #include "sync_internal.h"
 
-/* PS1: a save is an .mcs. */
+/* PS1: a card is the file as it holds the card (raw, .gme or .vmp), and a
+ * save is an .mcs. */
 
 static int ps1_load(const sigil_io *io, int device, void **card, int *format) {
     (void)device;
-    uint8_t *image = (uint8_t *)malloc(PS1_CARD_SIZE);
-    if (!image) return SIGIL_ERR_OOM;
-    int rc = sigil_ps1_card_load(io, image, format);
-    if (rc != SIGIL_OK) { free(image); return rc; }
-    *card = image;
+    sigil_ps1_file *f = (sigil_ps1_file *)malloc(sizeof(*f));
+    if (!f) return SIGIL_ERR_OOM;
+    int rc = sigil_ps1_file_load(io, f);
+    if (rc != SIGIL_OK) { free(f); return rc; }
+    *card = f;
+    *format = f->format;
     return SIGIL_OK;
 }
 
 static int ps1_blank(void **card, int *format, int device, size_t size, int form, const void *like) {
     (void)device;
     (void)size;
-    (void)form;
     (void)like;
-    uint8_t *image = (uint8_t *)malloc(PS1_CARD_SIZE);
-    if (!image) return SIGIL_ERR_OOM;
-    sigil_ps1_format(image);
-    *card = image;
-    *format = SIGIL_CARD_FORMAT_PS1_RAW;
+    sigil_ps1_file *f = (sigil_ps1_file *)malloc(sizeof(*f));
+    if (!f) return SIGIL_ERR_OOM;
+    sigil_ps1_file_format(f, form == SIGIL_FORM_VMP ? SIGIL_CARD_FORMAT_PS1_VMP : SIGIL_CARD_FORMAT_PS1_RAW);
+    *card = f;
+    *format = f->format;
     return SIGIL_OK;
 }
 
 static int ps1_list(const void *card, int format, sigil_card_listing **out) {
-    return sigil_ps1_card_list((const uint8_t *)card, format, out);
+    return sigil_ps1_card_list(((const sigil_ps1_file *)card)->image, format, out);
 }
 
 static int ps1_extract(const void *card, const sigil_card_entry *entry, void **save) {
     size_t len = sigil_ps1_mcs_size(entry->blocks);
     uint8_t *mcs = (uint8_t *)malloc(len);
     if (!mcs) return SIGIL_ERR_OOM;
-    int rc = sigil_ps1_extract((const uint8_t *)card, entry->first_block, entry->blocks, mcs);
+    int rc = sigil_ps1_extract(((const sigil_ps1_file *)card)->image, entry->first_block, entry->blocks, mcs);
     if (rc != SIGIL_OK) { free(mcs); return rc; }
     *save = sigil_sync_blob_new(mcs, len);
     return *save ? SIGIL_OK : SIGIL_ERR_OOM;
@@ -43,20 +44,38 @@ static int ps1_extract(const void *card, const sigil_card_entry *entry, void **s
 
 static int ps1_inject(void *card, const void *save) {
     const sigil_sync_blob *s = (const sigil_sync_blob *)save;
-    return sigil_ps1_inject((uint8_t *)card, s->data, s->len);
+    return sigil_ps1_inject(((sigil_ps1_file *)card)->image, s->data, s->len);
+}
+
+static uint32_t ps1_cost(const void *card, const void *save) {
+    (void)card;
+    const sigil_sync_blob *s = (const sigil_sync_blob *)save;
+    return sigil_ps1_cost(s->data, s->len);
 }
 
 static int ps1_remove(void *card, const sigil_card_entry *entry) {
-    return sigil_ps1_delete((uint8_t *)card, entry->first_block);
+    return sigil_ps1_delete(((sigil_ps1_file *)card)->image, entry->first_block);
 }
 
 static int ps1_verify(const void *card, const void *save) {
     const sigil_sync_blob *s = (const sigil_sync_blob *)save;
-    return sigil_ps1_verify((const uint8_t *)card, s->data, s->len);
+    return sigil_ps1_verify(((const sigil_ps1_file *)card)->image, s->data, s->len);
 }
 
 static int ps1_image(const void *card, uint8_t **out, size_t *len) {
-    return sigil_sync_copy_image((const uint8_t *)card, PS1_CARD_SIZE, out, len);
+    return sigil_ps1_file_write((const sigil_ps1_file *)card, out, len);
+}
+
+static int ps1_check(const void *card) {
+    return sigil_ps1_file_check((const sigil_ps1_file *)card);
+}
+
+/* The PSP and Vita name a PS1 card SCEVMC0.VMP or SCEVMC1.VMP, and read it
+ * only signed. */
+static int ps1_new_form(const sigil_sync_request *req, const char *path) {
+    (void)req;
+    size_t len = strlen(path);
+    return len >= 4 && strcmp(path + len - 4, ".VMP") == 0 ? SIGIL_FORM_VMP : SIGIL_FORM_RAW;
 }
 
 /* Hashes the save as it goes on a card: sigil_ps1_inject rewrites the
@@ -78,14 +97,13 @@ static int ps1_identity(const void *save, char out[33]) {
     return rc;
 }
 
-static bool ps1_writable(int format) { return format == SIGIL_CARD_FORMAT_PS1_RAW; }
-
 const sigil_sync_kind sigil_sync_ps1_kind = {
     .platform = "psx", .has_ids = true, .main_device = SIGIL_DEVICE_NONE,
     .load = ps1_load, .blank = ps1_blank, .free_card = free, .size = sigil_sync_no_size,
     .unit_size = sigil_sync_no_unit_size, .list = ps1_list, .extract = ps1_extract,
-    .free_save = sigil_sync_blob_free, .inject = ps1_inject, .remove = ps1_remove, .verify = ps1_verify,
-    .image = ps1_image, .identity = ps1_identity, .writable = ps1_writable,
+    .free_save = sigil_sync_blob_free, .inject = ps1_inject, .cost = ps1_cost, .remove = ps1_remove, .verify = ps1_verify,
+    .image = ps1_image, .identity = ps1_identity, .check = ps1_check, .new_form = ps1_new_form,
+    .raw_ext = ".mcr",
 };
 
 /* PS2: a save is a save folder lifted off the card. */
@@ -146,6 +164,10 @@ static int ps2_inject(void *card, const void *save) {
     return sigil_ps2_inject((sigil_ps2_card *)card, (const sigil_ps2_save *)save);
 }
 
+static uint32_t ps2_cost(const void *card, const void *save) {
+    return sigil_ps2_cost((const sigil_ps2_card *)card, (const sigil_ps2_save *)save);
+}
+
 static int ps2_remove(void *card, const sigil_card_entry *entry) {
     return sigil_ps2_delete((sigil_ps2_card *)card, entry->first_block);
 }
@@ -173,6 +195,6 @@ const sigil_sync_kind sigil_sync_ps2_kind = {
     .platform = "ps2", .has_ids = true, .main_device = SIGIL_DEVICE_NONE,
     .load = ps2_load, .blank = ps2_blank, .free_card = ps2_free_card, .size = sigil_sync_no_size,
     .unit_size = sigil_sync_no_unit_size, .list = ps2_list, .extract = ps2_extract, .free_save = ps2_free_save,
-    .inject = ps2_inject, .remove = ps2_remove, .verify = ps2_verify, .image = ps2_image,
-    .identity = ps2_identity, .writable = sigil_sync_any_format, .folder_cards = true,
+    .inject = ps2_inject, .cost = ps2_cost, .remove = ps2_remove, .verify = ps2_verify, .image = ps2_image,
+    .identity = ps2_identity, .folder_cards = true,
 };

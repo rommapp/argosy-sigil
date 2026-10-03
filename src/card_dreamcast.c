@@ -188,14 +188,16 @@ int sigil_dreamcast_card_list(const uint8_t image[VMU_CARD_SIZE], sigil_card_lis
             continue;
         }
         if (!is_file(entry)) continue;
+        char name[VMU_NAME_LEN + 1];
+        memcpy(name, entry + ENTRY_NAME, VMU_NAME_LEN);
+        name[VMU_NAME_LEN] = '\0';
         uint32_t blocks = entry_chain(image, &l, entry, NULL);
         if (blocks == 0) {
-            listing->corrupt_count++;
+            sigil_card_listing_corrupt(listing, name, NULL, sigil_read_le16(entry + ENTRY_FIRST_BLOCK));
             continue;
         }
         sigil_card_entry *e = &listing->entries[listing->entry_count++];
-        memcpy(e->name, entry + ENTRY_NAME, VMU_NAME_LEN);
-        e->name[VMU_NAME_LEN] = '\0';
+        memcpy(e->name, name, sizeof(name));
         e->blocks = blocks;
         e->first_block = sigil_read_le16(entry + ENTRY_FIRST_BLOCK);
     }
@@ -297,6 +299,20 @@ void sigil_dreamcast_format(uint8_t image[VMU_CARD_SIZE]) {
     fat_set(image, &l, VMU_ROOT_BLOCK, VMU_FAT_END);
 }
 
+void sigil_dreamcast_format_like(uint8_t image[VMU_CARD_SIZE], const uint8_t like[VMU_CARD_SIZE]) {
+    vmu_layout l;
+    if (!like || !read_layout(like, &l)) {
+        sigil_dreamcast_format(image);
+        return;
+    }
+    memcpy(image, like, VMU_CARD_SIZE);
+    for (uint32_t s = 0; s < slot_count(&l); s++) memset(image + slot_offset(&l, s), 0, VMU_DIR_ENTRY_SIZE);
+    for (uint32_t b = 0; b < l.user_blocks; b++) {
+        fat_set(image, &l, b, VMU_FAT_FREE);
+        memset(block_mut(image, b), 0, VMU_BLOCK_SIZE);
+    }
+}
+
 static uint32_t dci_blocks(const uint8_t *dci, size_t len) {
     if (!dci || len < sigil_dreamcast_dci_size(1)) return 0;
     if ((len - VMU_DIR_ENTRY_SIZE) % VMU_BLOCK_SIZE != 0) return 0;
@@ -331,6 +347,10 @@ static bool choose_blocks(const uint8_t *image, const vmu_layout *l, bool game,
         if (fat_get(image, l, b) == VMU_FAT_FREE) chosen[found++] = b;
     }
     return found == blocks;
+}
+
+uint32_t sigil_dreamcast_cost(const uint8_t *dci, size_t len) {
+    return dci_blocks(dci, len);
 }
 
 int sigil_dreamcast_inject(uint8_t image[VMU_CARD_SIZE], const uint8_t *dci, size_t len) {
@@ -383,8 +403,11 @@ int sigil_dreamcast_verify(const uint8_t image[VMU_CARD_SIZE], const uint8_t *dc
         const uint8_t *entry = image + slot_offset(&l, s);
         if (!is_file(entry) || memcmp(entry + ENTRY_NAME, dci + ENTRY_NAME, VMU_NAME_LEN) != 0) continue;
         if (entry_chain(image, &l, entry, NULL) != blocks) continue;
+        /* The .dci's first-block field names where it sat before; inject
+         * replaces it, so it isn't compared. */
         if (sigil_dreamcast_extract(image, sigil_read_le16(entry + ENTRY_FIRST_BLOCK), blocks, copy) == SIGIL_OK &&
-            memcmp(copy, dci, len) == 0) {
+            memcmp(copy, dci, ENTRY_FIRST_BLOCK) == 0 &&
+            memcmp(copy + ENTRY_FIRST_BLOCK + 2, dci + ENTRY_FIRST_BLOCK + 2, len - ENTRY_FIRST_BLOCK - 2) == 0) {
             rc = SIGIL_OK;
         }
     }

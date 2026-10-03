@@ -155,6 +155,7 @@ data class SigilCardListing(
     freeSlots: Int,             // Directory slots a new save can use.
     corruptCount: Int,          // Saves left out because their block chain is broken.
     entries: List<SigilCardEntry>,  // Live saves, in directory order.
+    corruptEntries: List<SigilCardEntry>,  // The left-out saves the card still names; blocks is 0.
 )
 
 data class SigilCardEntry(
@@ -190,14 +191,19 @@ Sigil.collect(
     unmanaged: Boolean = false,             // The game runs outside the caller.
     claimed: List<String> = emptyList(),    // Saturn, Sega CD: names from `unowned` the user gave this game.
     companions: List<SigilCompanion> = emptyList(),   // Games whose saves this game reads, in the order they go on.
+    repair: Boolean = false,                // Rebuild what SigilException.DAMAGED named, where sigil can.
 ): SigilSyncResult
+    // Raises SigilException.DAMAGED when a file holding the saves is damaged and repair is false,
+    //   or isn't a card sigil can read at all (repair doesn't change that).
 
 Sigil.restore(unit: ByteArray, /* same inputs */, overwriteLocal: Boolean = false): SigilSyncResult
-    // Raises SigilException with code SigilException.CONFLICT, writing nothing, when the saves
-    //   under saveRoot changed since the last sync, and with SigilException.UNCOLLECTED when a
-    //   shared volume holds saves no collect has passed on yet. With SigilException.NO_SPACE,
-    //   `overflow` names the save that didn't fit and `overflowBlocks` the blocks it lacked
-    //   (0 when a directory slot ran out instead).
+    // Each of these raises SigilException and writes nothing: CONFLICT (the saves under
+    //   saveRoot changed since the last sync), UNCOLLECTED (a shared volume holds saves no
+    //   collect has passed on yet), NO_SPACE (the saves don't fit; `blocksShort` says by how
+    //   much), REGION (a companion's save from another region), NO_TARGET (the unit holds a
+    //   volume the emulator's settings keep no file for), AMBIGUOUS (more than one file could be
+    //   the emulator's card) and DAMAGED. The last five name the save, member or files in
+    //   `problem`. c.md, "Sync", has the table.
 
 class SigilCompanion(
     gameIds: List<String>,      // The companion's ids, as for gameIds.

@@ -50,37 +50,37 @@ static void load_exception_class(JNIEnv *env) {
     if (g_exception_class) return;
     g_exception_class = global_class(env, "com/nendo/sigil/SigilException");
     if (!g_exception_class) return;
-    /* SigilException(code, message, overflow, overflowBlocks) */
+    /* SigilException(code, message, problem, blocksShort) */
     g_exception_ctor = find_method(env, g_exception_class, "<init>", "(ILjava/lang/String;Ljava/lang/String;I)V");
 }
 
-/* Throws SigilException for `code`, naming the save that didn't fit and the
- * blocks it lacked when `overflow` is given. */
-static void throw_sigil_overflow(JNIEnv *env, int code, const char *overflow, uint32_t blocks) {
+/* Throws SigilException for `code`, naming what is at fault when `problem`
+ * is given and, for a save that didn't fit, the blocks it lacked. */
+static void throw_sigil_problem(JNIEnv *env, int code, const char *problem, uint32_t blocks_short) {
     if ((*env)->ExceptionCheck(env)) return;
     load_exception_class(env);
     if (g_exception_class && g_exception_ctor) {
-        char escaped[3 * SIGIL_CARD_NAME_MAX + 1];
-        sigil_save_name_escape(overflow ? overflow : "", escaped, sizeof(escaped));
+        char escaped[3 * SIGIL_SAVE_PATH_MAX + 1];
+        sigil_save_name_escape(problem ? problem : "", escaped, sizeof(escaped));
         jstring jmessage = (*env)->NewStringUTF(env, sigil_strerror(code));
-        jstring joverflow = (*env)->NewStringUTF(env, escaped);
-        jobject ex = (*env)->NewObject(env, g_exception_class, g_exception_ctor, (jint)code, jmessage, joverflow,
-                                       (jint)blocks);
+        jstring jproblem = (*env)->NewStringUTF(env, escaped);
+        jobject ex = (*env)->NewObject(env, g_exception_class, g_exception_ctor, (jint)code, jmessage, jproblem,
+                                       (jint)blocks_short);
         if (ex) {
             (*env)->Throw(env, (jthrowable)ex);
             (*env)->DeleteLocalRef(env, jmessage);
-            (*env)->DeleteLocalRef(env, joverflow);
+            (*env)->DeleteLocalRef(env, jproblem);
             return;
         }
         (*env)->ExceptionClear(env);
         (*env)->DeleteLocalRef(env, jmessage);
-        (*env)->DeleteLocalRef(env, joverflow);
+        (*env)->DeleteLocalRef(env, jproblem);
     }
     jclass fallback = find_class(env, "java/lang/IllegalStateException");
     if (fallback) (*env)->ThrowNew(env, fallback, sigil_strerror(code));
 }
 
-static void throw_sigil(JNIEnv *env, int code) { throw_sigil_overflow(env, code, NULL, 0); }
+static void throw_sigil(JNIEnv *env, int code) { throw_sigil_problem(env, code, NULL, 0); }
 
 static void throw_binding_broken(JNIEnv *env, const char *what) {
     if ((*env)->ExceptionCheck(env)) return;
@@ -515,9 +515,9 @@ static void load_card_classes(JNIEnv *env) {
     /* SigilCardEntry(name, ownerId, blocks, firstBlock) */
     g_card_entry_ctor = find_method(env, g_card_entry_class, "<init>",
         "(Ljava/lang/String;Ljava/lang/String;II)V");
-    /* SigilCardListing(formatCode, totalBlocks, freeBlocks, freeSlots, corruptCount, entries) */
+    /* SigilCardListing(formatCode, totalBlocks, freeBlocks, freeSlots, corruptCount, entries, corruptEntries) */
     g_card_listing_ctor = find_method(env, g_card_listing_class, "<init>",
-        "(IIIIILjava/util/List;)V");
+        "(IIIIILjava/util/List;Ljava/util/List;)V");
     if (!g_array_list_ctor) g_array_list_ctor = find_method(env, g_array_list_class, "<init>", "()V");
     if (!g_array_list_add) g_array_list_add = find_method(env, g_array_list_class, "add", "(Ljava/lang/Object;)Z");
 }
@@ -526,6 +526,23 @@ static jstring save_name_string(JNIEnv *env, const char *raw) {
     char escaped[3 * SIGIL_CARD_NAME_MAX + 1];
     sigil_save_name_escape(raw, escaped, sizeof(escaped));
     return (*env)->NewStringUTF(env, escaped);
+}
+
+/* An ArrayList of SigilCardEntry for `count` entries, or NULL with an exception pending. */
+static jobject card_entry_list(JNIEnv *env, const sigil_card_entry *entries, size_t count) {
+    jobject list = (*env)->NewObject(env, g_array_list_class, g_array_list_ctor);
+    for (size_t i = 0; list && i < count; i++) {
+        const sigil_card_entry *e = &entries[i];
+        jstring jname  = save_name_string(env, e->name);
+        jstring jowner = save_name_string(env, e->owner_id);
+        jobject je = (*env)->NewObject(env, g_card_entry_class, g_card_entry_ctor,
+                                       jname, jowner, (jint)e->blocks, (jint)e->first_block);
+        if (je) (*env)->CallBooleanMethod(env, list, g_array_list_add, je);
+        (*env)->DeleteLocalRef(env, jname);
+        (*env)->DeleteLocalRef(env, jowner);
+        if (je) (*env)->DeleteLocalRef(env, je);
+    }
+    return list;
 }
 
 JNIEXPORT jobject JNICALL
@@ -550,23 +567,13 @@ Java_com_nendo_sigil_Sigil_nativeListCard(JNIEnv *env, jclass clazz, jstring jpa
     }
 
     jobject out = NULL;
-    jobject entries = (*env)->NewObject(env, g_array_list_class, g_array_list_ctor);
-    if (entries) {
-        for (size_t i = 0; i < listing->entry_count; i++) {
-            const sigil_card_entry *e = &listing->entries[i];
-            jstring jname  = save_name_string(env, e->name);
-            jstring jowner = save_name_string(env, e->owner_id);
-            jobject je = (*env)->NewObject(env, g_card_entry_class, g_card_entry_ctor,
-                                           jname, jowner, (jint)e->blocks, (jint)e->first_block);
-            if (je) (*env)->CallBooleanMethod(env, entries, g_array_list_add, je);
-            (*env)->DeleteLocalRef(env, jname);
-            (*env)->DeleteLocalRef(env, jowner);
-            if (je) (*env)->DeleteLocalRef(env, je);
-        }
+    jobject entries = card_entry_list(env, listing->entries, listing->entry_count);
+    jobject corrupt = entries ? card_entry_list(env, listing->corrupt_entries, listing->corrupt_entry_count) : NULL;
+    if (entries && corrupt) {
         out = (*env)->NewObject(env, g_card_listing_class, g_card_listing_ctor,
                                 (jint)listing->format, (jint)listing->total_blocks,
                                 (jint)listing->free_blocks, (jint)listing->free_slots,
-                                (jint)listing->corrupt_count, entries);
+                                (jint)listing->corrupt_count, entries, corrupt);
     }
     sigil_card_listing_free(listing);
     if (!out && !(*env)->ExceptionCheck(env)) throw_sigil(env, SIGIL_ERR_OOM);
@@ -632,6 +639,7 @@ static int remove_member(void *ctx, const char *relative_path) {
     char path[SIGIL_SAVE_PATH_MAX * 2];
     int n = snprintf(path, sizeof(path), "%s/%s", o->root, relative_path);
     if (n <= 0 || (size_t)n >= sizeof(path)) return -1;
+    if (path[n - 1] == '/') return rmdir(path) == 0 ? 0 : -1;
     return unlink(path) == 0 ? 0 : -1;
 }
 
@@ -718,7 +726,7 @@ Java_com_nendo_sigil_Sigil_nativeSync(JNIEnv *env, jclass clazz,
                                        jobjectArray jlisting, jobjectArray jgame_ids,
                                        jbyteArray jstate, jboolean unmanaged, jboolean overwrite_local,
                                        jobjectArray jclaimed, jobjectArray jcompanion_ids,
-                                       jobjectArray jcompanion_units) {
+                                       jobjectArray jcompanion_units, jboolean repair) {
     (void)clazz;
     if (!jroot || !jlayout || !jcontent) { throw_sigil(env, SIGIL_ERR_INVALID_ARG); return NULL; }
 
@@ -799,6 +807,7 @@ Java_com_nendo_sigil_Sigil_nativeSync(JNIEnv *env, jclass clazz,
     req.state = (const uint8_t *)state;
     req.state_len = (size_t)state_len;
     req.overwrite_local = overwrite_local ? 1 : 0;
+    req.repair = repair ? 1 : 0;
     req.write = write_member;
     req.remove = remove_member;
     req.write_ctx = &octx;
@@ -830,12 +839,12 @@ Java_com_nendo_sigil_Sigil_nativeSync(JNIEnv *env, jclass clazz,
             }
         }
     }
-    char overflow[SIGIL_CARD_NAME_MAX] = "";
-    uint32_t overflow_blocks = 0;
-    if (rc == SIGIL_ERR_NO_SPACE && r) {
-        memcpy(overflow, r->overflow, sizeof(overflow));
-        overflow[sizeof(overflow) - 1] = '\0';
-        overflow_blocks = r->overflow_blocks;
+    char problem[SIGIL_SAVE_PATH_MAX] = "";
+    uint32_t blocks_short = 0;
+    if (rc != SIGIL_OK && r) {
+        memcpy(problem, r->problem, sizeof(problem));
+        problem[sizeof(problem) - 1] = '\0';
+        blocks_short = r->blocks_short;
     }
     sigil_sync_result_free(r);
     release_companions(env, borrowed, borrowed_count);
@@ -858,7 +867,7 @@ Java_com_nendo_sigil_Sigil_nativeSync(JNIEnv *env, jclass clazz,
     if (title_id) (*env)->ReleaseStringUTFChars(env, jtitle_id, title_id);
     if (save_id)  (*env)->ReleaseStringUTFChars(env, jsave_id, save_id);
 
-    if (rc != SIGIL_OK) throw_sigil_overflow(env, rc, overflow, overflow_blocks);
+    if (rc != SIGIL_OK) throw_sigil_problem(env, rc, problem, blocks_short);
     else if (binding_broken) throw_binding_broken(env, "SigilSyncResult");
     else if (!out && !(*env)->ExceptionCheck(env)) throw_sigil(env, SIGIL_ERR_OOM);
     return out;

@@ -65,10 +65,14 @@ data class SigilResult(
 
 /**
  * A failed sigil call; [code] is the C error code and the message is `sigil_strerror` for it.
- * With [NO_SPACE] from restore, [overflow] names the save that didn't fit and [overflowBlocks]
- * the blocks it lacked (0 when a directory slot was missing instead).
+ * After collect or restore, [problem] names what is at fault when the error has one: the save
+ * that didn't fit ([NO_SPACE], with [blocksShort] the blocks it lacked, 0 when a directory slot
+ * was missing instead), the companion's save from another region ([REGION]), the damaged file
+ * ([DAMAGED]), the unit member the emulator's settings keep no file for ([NO_TARGET]), or the
+ * files that could each be the emulator's card, one per line ([AMBIGUOUS]). It is escaped as
+ * [SigilCardEntry.name] is.
  */
-class SigilException(val code: Int, message: String, val overflow: String = "", val overflowBlocks: Int = 0) :
+class SigilException(val code: Int, message: String, val problem: String = "", val blocksShort: Int = 0) :
     Exception(message) {
     companion object {
         /** Nothing identified the file, or a unit holds none of the game's saves. */
@@ -79,6 +83,14 @@ class SigilException(val code: Int, message: String, val overflow: String = "", 
         const val NO_SPACE = -11
         /** A shared volume holds saves no collect has passed on yet; restore wrote nothing. */
         const val UNCOLLECTED = -12
+        /** A file the saves are in is damaged; `repair` rebuilds it where sigil can. */
+        const val DAMAGED = -13
+        /** A companion's save belongs to another region than the game; restore wrote nothing. */
+        const val REGION = -14
+        /** The unit holds a volume the emulator's settings keep no file for; restore wrote nothing. */
+        const val NO_TARGET = -15
+        /** More than one file could be the emulator's card and the options don't say which. */
+        const val AMBIGUOUS = -16
     }
 }
 
@@ -139,14 +151,18 @@ data class SigilCardEntry(
     val firstBlock: Int
 )
 
-/** The saves on a memory card and the space left on it. */
+/**
+ * The saves on a memory card and the space left on it. [corruptEntries] are the saves left out
+ * as corrupt that the card still names, with blocks 0.
+ */
 data class SigilCardListing(
     private val formatCode: Int,
     val totalBlocks: Int,
     val freeBlocks: Int,
     val freeSlots: Int,
     val corruptCount: Int,
-    val entries: List<SigilCardEntry>
+    val entries: List<SigilCardEntry>,
+    val corruptEntries: List<SigilCardEntry>
 ) {
     val format: Format get() = Format.fromCode(formatCode)
 
@@ -275,7 +291,8 @@ object Sigil {
         overwriteLocal: Boolean,
         claimed: Array<String>,
         companionIds: Array<Array<String>>,
-        companionUnits: Array<ByteArray?>
+        companionUnits: Array<ByteArray?>,
+        repair: Boolean
     ): SigilSyncResult
     @JvmStatic private external fun nativeLayoutSubdirs(layout: String): Array<String>
     @JvmStatic private external fun nativeContentStem(contentPath: String): String
@@ -370,7 +387,9 @@ object Sigil {
     /**
      * [game]'s saves under [saveRoot] gathered into the unit that travels to RomM. Store the
      * result's state once the unit, its holding unit and each changed companion unit reached
-     * RomM; docs/kotlin.md defines every input.
+     * RomM. Raises [SigilException] with [SigilException.DAMAGED] when a file holding the saves
+     * is damaged and [repair] is false, or isn't a card sigil can read at all. docs/kotlin.md
+     * defines every input.
      */
     fun collect(
         game: SigilResult,
@@ -383,18 +402,24 @@ object Sigil {
         state: ByteArray? = null,
         unmanaged: Boolean = false,
         claimed: List<String> = emptyList(),
-        companions: List<SigilCompanion> = emptyList()
+        companions: List<SigilCompanion> = emptyList(),
+        repair: Boolean = false
     ): SigilSyncResult =
         sync(null, game, core, contentPath, saveRoot, listing, options, gameIds, state, unmanaged, false, claimed,
-            companions)
+            companions, repair)
 
     /**
      * Puts [unit], and each companion's unit given, back under [saveRoot] and reads them back.
-     * Raises [SigilException] with [SigilException.CONFLICT], writing nothing, when the saves
-     * there changed since the last sync and [overwriteLocal] is false; with
+     * Each of these raises [SigilException] and writes nothing: [SigilException.CONFLICT] when the
+     * saves there changed since the last sync and [overwriteLocal] is false;
      * [SigilException.UNCOLLECTED] when a shared Saturn or Sega CD volume holds saves no collect
-     * has passed on yet; and with [SigilException.NO_SPACE], naming the save that didn't fit,
-     * when they don't fit.
+     * has passed on yet; [SigilException.NO_SPACE] when the saves don't fit;
+     * [SigilException.REGION] for a companion's save from another region;
+     * [SigilException.NO_TARGET] when the unit holds a volume the emulator's settings keep no
+     * file for; [SigilException.AMBIGUOUS] when more than one file could be the emulator's card;
+     * and [SigilException.DAMAGED] when a file the saves go in is damaged and [repair]
+     * is false, or isn't a card sigil can read at all.
+     * The last five name the save, member or files in [SigilException.problem].
      */
     fun restore(
         unit: ByteArray,
@@ -409,10 +434,11 @@ object Sigil {
         unmanaged: Boolean = false,
         overwriteLocal: Boolean = false,
         claimed: List<String> = emptyList(),
-        companions: List<SigilCompanion> = emptyList()
+        companions: List<SigilCompanion> = emptyList(),
+        repair: Boolean = false
     ): SigilSyncResult =
         sync(unit, game, core, contentPath, saveRoot, listing, options, gameIds, state, unmanaged, overwriteLocal,
-            claimed, companions)
+            claimed, companions, repair)
 
     private fun sync(
         unit: ByteArray?,
@@ -427,7 +453,8 @@ object Sigil {
         unmanaged: Boolean,
         overwriteLocal: Boolean,
         claimed: List<String>,
-        companions: List<SigilCompanion>
+        companions: List<SigilCompanion>,
+        repair: Boolean
     ): SigilSyncResult {
         val paths = listing ?: listSaveRoot(java.io.File(saveRoot), core)
         return nativeSync(
@@ -448,7 +475,8 @@ object Sigil {
             overwriteLocal,
             claimed.toTypedArray(),
             companions.map { it.gameIds.toTypedArray() }.toTypedArray(),
-            companions.map { it.unit }.toTypedArray()
+            companions.map { it.unit }.toTypedArray(),
+            repair
         )
     }
 

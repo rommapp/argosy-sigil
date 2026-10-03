@@ -304,18 +304,26 @@ is skipped, when a variable has no value.
 `{cart_size}` comes from `genesis_plus_gx_cart_size` in the core's own
 spelling: `128k` to `128Kbit`, `256k` to `256Kbit`, `512k` to `512Kbit`,
 `1meg` to `1Mbit`, `2meg` to `2Mbit`, `4meg` to `4Mbit`, absent to
-`4Mbit`. `{nvram_version}` is `opera_nvram_version` (default `0`).
+`4Mbit`. A cart file restore creates is that size (16 KiB for `128k` to
+512 KiB for `4meg`), as is a Kronos cart for `kronos_addon_cartridge`,
+whatever size the unit's cart was; saves that don't fit return
+`SIGIL_ERR_NO_SPACE`. `{nvram_version}` is `opera_nvram_version` (default `0`).
 `{left_index}` and `{right_index}` are `beetle_psx_hw_memcard_left_index`
 (default `0`) and `beetle_psx_hw_memcard_right_index` (default `1`).
 `{dc_vmu_id}` is the Dreamcast product number (`title_id`) with each of
 ` /\:*?|<>` replaced by `_`, as flycast names a per-game VMU.
+`{disc_id}` is `title_id` with only its letters and digits (`SLUS-01040`
+gives `SLUS01040`), as a PSP EBOOT's `DISC_ID` names its save folder.
 `{gc_region}` is Dolphin's GameCube region folder from the region letter
 ending the game code: `E` gives `USA`, `J` and `K` give `JAP`, any other
 letter `EUR`. Dolphin reads the disc's region field, which follows the
 letter on retail discs.
 
-Every row was read from the core's source or its libretro docs page; the
-names are the core's literals.
+Every row but `vita_pops` was read from the core's source or its libretro
+docs page; the names are the core's literals. The PSP and Vita firmware
+isn't open, so `vita_pops` follows PS1-to-EBOOT converters (pop-fe), save
+tools (Apollo) and their guides, and its `.vmp` format was checked against
+real cards.
 
 | Layout | Platform | Members (role, option) | Shared | Source |
 |---|---|---|---|---|
@@ -325,13 +333,14 @@ names are the core's literals.
 | `genesis_plus_gx` | `segacd` | `{stem}.brm` primary when `genesis_plus_gx_system_bram` = `per game`; `{stem}_{cart_size}_cart.brm` sidecar when `genesis_plus_gx_cart_bram` = `per game`. No `.srm`: the core writes none for a disc | `scd_E.brm`, `scd_U.brm`, `scd_J.brm` when `system_bram` = `per bios` (default), one per disc region; `{cart_size}_cart.brm` when `cart_bram` = `per cart` (default) | `libretro/libretro.c` `check_variables`, `bram_load`, `bram_save` |
 | `mednafen_psx_hw` | any | `{stem}.srm` primary when `beetle_psx_hw_use_mednafen_memcard0_method` = `libretro` (default); `{stem}.{left_index}.mcr` primary when `mednafen`; `{stem}.{right_index}.mcr` sidecar when `beetle_psx_hw_enable_memcard1` = `enabled` | `mednafen_psx_libretro_shared.0.mcr`, `.1.mcr` when `beetle_psx_hw_shared_memory_cards` = `enabled` | commit `707d1be`; docs.libretro.com/library/beetle_psx_hw |
 | `pcsx_rearmed` | any | `{stem}.srm` primary | `pcsx-card2.mcd` when `pcsx_rearmed_memcard2` = `shared` (default) | observed on device |
+| `vita_pops` | `psx` | `PSP/SAVEDATA/{disc_id}/SCEVMC0.VMP` primary (slot 1); `PSP/SAVEDATA/{disc_id}/SCEVMC1.VMP` sidecar (slot 2). `{disc_id}` is the title id's letters and digits (`SLUS01040`), the EBOOT's `DISC_ID`. Signed `.vmp` cards; the folder's `PARAM.SFO` and `ICON0.PNG` stay as the console wrote them | | PS1 classics on a PSP, and on a Vita (official PS1 Classics and Adrenaline): the save root is the folder holding `PSP/` (`ms0:/` or `ux0:pspemu/`); subdir `PSP/SAVEDATA` |
 | `pcsx2` | any | `{stem}.ps2` primary when `pcsx2_shared_memory_cards` = `disabled` | `Mcd001.ps2`, `Mcd002.ps2` when `enabled` (default). The core keeps them in `<system>/pcsx2/memcards/`, so pass that folder as the save root | libretro/ps2 `libretro/main.cpp`, `pcsx2/VMManager.cpp` |
 | `pcsx2_standalone` | `ps2` | | `memcards/Mcd001.ps2`, `memcards/Mcd002.ps2`, each a file card or a folder card (a directory of save folders and `_pcsx2_superblock`). Covers PCSX2, AetherSX2, NetherSX2 and ARMSX2; the save root is the folder that holds `memcards/` | PCSX2 `pcsx2/Pcsx2Config.cpp`, `pcsx2/SIO/Memcard/MemoryCardFolder.cpp`; subdir `memcards` |
 | `mednafen_saturn` | any | `{stem}.srm` primary when `beetle_saturn_save_method` = `libretro` (default); `{stem}.bkr` primary when `mednafen` and `beetle_saturn_shared_int` = `disabled` (default); `{stem}.bcr` sidecar when `beetle_saturn_shared_ext` = `disabled` (default); `{stem}.smpc` sidecar when `shared_int` = `disabled` | `mednafen_saturn_libretro_shared.bkr` when `shared_int` = `enabled` and `save_method` = `mednafen`; `.smpc` when `shared_int` = `enabled`; `.bcr` when `shared_ext` = `enabled` | `mednafen/ss/ss.c`, `libretro.c`; sega.md section 1 |
 | `kronos` | `saturn` | `kronos/saturn/{stem}.ram` primary when `kronos_use_beetle_saves` = `disabled` (default); `{stem}.bkr` primary when `enabled`; `kronos/saturn/{stem}-ext512K.ram`, `-ext1M.ram`, `-ext2M.ram` or `-ext4M.ram` sidecar by `kronos_addon_cartridge` (`512K_backup_ram` default, `1M_`, `2M_`, `4M_backup_ram`); `{stem}.bcr` sidecar when `kronos_use_beetle_saves` = `enabled` | | libretro/yabause `kronos` `libretro.c` `configure_saturn_addon_cart`; subdir `kronos/saturn` |
 | `yabause` | `saturn` | `{stem}.srm` primary, 64 KiB byte-expanded | | `libretro.c` (master); the core writes the file itself |
 | `yabasanshiro` | `saturn` | | `yabasanshiro/backup.bin`, one 8 MiB byte-expanded volume for every game | libretro/yabause `yabasanshiro` `libretro.c`; subdir `yabasanshiro` |
-| `dolphin` | `gamecube` | | `User/GC/{gc_region}/Card A/`, one `.gci` file per save, when Dolphin.ini's `SlotA` = `8` (default); `User/GC/MemoryCardA.{gc_region}.raw` when `SlotA` = `1`, or `.1019.raw`, `.507.raw`, `.251.raw`, `.123.raw`, `.59.raw` for smaller cards | dolphin-emu `Config/MainSettings.cpp` `GetGCIFolderPath`, `GetMemcardPath`; the libretro core's User folder is the save folder's `User/`; subdir `User/GC` |
+| `dolphin` | `gamecube` | | `User/GC/{gc_region}/Card A/`, one `.gci` file per save, when Dolphin.ini's `SlotA` = `8` (default); `User/GC/MemoryCardA.{gc_region}.raw` when `SlotA` = `1`, or `.1019.raw`, `.507.raw`, `.251.raw`, `.123.raw`, `.59.raw` for smaller cards, picked by `MemoryCardSize` (`-1` for 2043 blocks, `4` to `0` for 1019 to 59). Without that option, the one card file there; with two or more there, collect and restore return `SIGIL_ERR_AMBIGUOUS` naming them | dolphin-emu `Config/MainSettings.cpp` `GetGCIFolderPath`, `GetMemcardPath`; the libretro core's User folder is the save folder's `User/`; subdir `User/GC` |
 | `dolphin_standalone` | `gamecube` | | as `dolphin`, rooted at Dolphin's User folder (`GC/{gc_region}/Card A/`, `GC/MemoryCardA.{gc_region}.raw`) | subdir `GC` |
 | `flycast` | `dreamcast` | `{dc_vmu_id}.A1.bin` primary when `reicast_per_content_vmus` = `VMU A1` or `All VMUs`, else the legacy `{stem}.A1.bin` when only that exists; `{dc_vmu_id}.{A2..D2}.bin` (or legacy `{stem}.{port}.bin`) sidecars when `All VMUs` | `vmu_save_{A1..D2}.bin` when `disabled` (default). The core keeps them in `<system>/dc/`, so pass that folder as the save root. Under `VMU A1` the other ports stay there too and don't sync | flyinghead/flycast `shell/libretro/oslib.cpp` `getVmuPath` |
 | `flycast_standalone` | `dreamcast` | `{dc_vmu_id}_vmu_save_A1.bin` primary, or the legacy `{stem}_vmu_save_A1.bin`, when `PerGameVmu` = `yes` (default) | `vmu_save_A1.bin` when `PerGameVmu` = `no`; `vmu_save_{A2..D2}.bin` | flycast `core/oslib/oslib.cpp`; the save root is the VMU folder |
@@ -756,9 +765,14 @@ ctest --test-dir build -R integration
 Integration tests skip cleanly with exit code 77 when env vars are
 unset, so the public CI without ROMs can still run unit tests.
 
+The same `ctest` run builds and tests the Go and Python bindings against
+this build's static libraries when `go` is on the path and
+`bindings/python/.venv` (or the Python named by `-DSIGIL_BINDING_PYTHON`)
+has cffi and pytest. Shared and sanitized builds leave them out.
+
 Save tests read real save files from `tests/fixtures/saves/`. The files
-aren't committed, only their manifests, so each test skips when its
-samples are missing. [tests/fixtures/saves/README.md](tests/fixtures/saves/README.md)
+aren't committed, only their manifests, so a test skips when its
+platform's samples are absent and fails when only some of them are. [tests/fixtures/saves/README.md](tests/fixtures/saves/README.md)
 explains how to add samples.
 
 ```sh
@@ -769,7 +783,20 @@ cmake -S . -B build-fuzz -DSIGIL_BUILD_FUZZERS=ON -DSIGIL_BUILD_TESTS=OFF \
   -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
 cmake --build build-fuzz --target fuzz_card
 ./build-fuzz/fuzz_card 1000000 1 tests/fixtures/saves/psx/files/*/*
+
+# Fuzz sync. fuzz_sync restores PS1 units with a companion; fuzz_sync_volumes
+# runs each input through Sega CD and Saturn (per-game and shared volumes),
+# flycast, and Dolphin's GCI folder and raw card. Both abort when a unit that restored
+# doesn't collect back to the same saves, unchanged.
+cmake --build build-fuzz --target fuzz_sync fuzz_sync_volumes
+./build-fuzz/fuzz_sync 100000 1 tests/fixtures/saves/psx/files/*/*
+./build-fuzz/fuzz_sync_volumes 20000 1 tests/fixtures/saves/saturn/files/*/* \
+  tests/fixtures/saves/segacd/files/*/* tests/fixtures/saves/dc/files/*/*.bin \
+  tests/fixtures/saves/ngc/files/*/*.gci
 ```
+
+The fuzzers stay out of `ctest`: they need the fuzz build, and a useful
+run takes minutes.
 
 ## Contributing
 

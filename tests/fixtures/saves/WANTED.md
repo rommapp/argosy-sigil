@@ -15,6 +15,7 @@ Cases no sample covers yet. The saves already gathered came from a RomM store an
 - A whole PCSX2 folder card, with a save that has `_pcsx2_meta` files.
 - The `_pcsx2_superblock` PCSX2 writes when it formats a folder card, and the one AetherSX2 or ARMSX2 writes. sigil builds its own from mymc's blank card; a real one settles the card_flags byte (`0x2B` in the mymc samples, `0x52` in PCSX2's reference) and what follows the superblock page. The RomM store holds none, since uploads are single save folders.
 - A NetherSX2 save.
+- The `mymc-mc01` card after mymc imports a save onto it, and after mymc deletes one, each saved as a `.ps2`. sigil's inject and delete would then be checked field by field against mymc's: the `.` entry's parent index, the root's modified time, which time is later, and the value freed clusters get.
 
 ## PSP, Vita (`psp`, `psvita`)
 
@@ -50,7 +51,7 @@ Cases no sample covers yet. The saves already gathered came from a RomM store an
 - One Genesis game saved by both genesis_plus_gx and picodrive.
 - A picodrive Sega CD `.srm`, and a genesis_plus_gx `scd_U.brm` from a known version.
 - A real 32 KiB Saturn internal volume with several games on it.
-- Kronos `.ram` files, and a Saturn cart of 1 MiB or more.
+- Kronos `.ram` files, and a Saturn cart of 1 MiB or more. A Kronos 4 MiB cart (`-ext4M.ram`) with a save on it would confirm its 1024-byte blocks, which sigil takes from Kronos `bios.c` `GetDeviceStats` and no sample has shown yet.
 - A redream VMU.
 
 ## Other

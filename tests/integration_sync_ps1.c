@@ -392,6 +392,424 @@ static void check_restore_no_room(void) {
     free(other);
 }
 
+/* `card` with its save named `name` replaced by `mcs`, or `mcs` added when
+ * `name` is NULL. */
+static uint8_t *card_with(const uint8_t *card, const char *name, const uint8_t *mcs, size_t mcs_len) {
+    uint8_t *out = (uint8_t *)malloc(PS1_CARD_SIZE);
+    if (!out) return NULL;
+    memcpy(out, card, PS1_CARD_SIZE);
+    sigil_card_listing *l = NULL;
+    if (name && sigil_ps1_card_list(out, SIGIL_CARD_FORMAT_PS1_RAW, &l) == SIGIL_OK) {
+        for (size_t i = 0; i < l->entry_count; i++) {
+            if (strcmp(l->entries[i].name, name) == 0) sigil_ps1_delete(out, l->entries[i].first_block);
+        }
+    }
+    sigil_card_listing_free(l);
+    if (mcs && sigil_ps1_inject(out, mcs, mcs_len) != SIGIL_OK) { free(out); return NULL; }
+    return out;
+}
+
+/* A fresh card holding the given saves. */
+static uint8_t *card_of(const uint8_t *const *mcs, const size_t *len, size_t count) {
+    uint8_t *out = (uint8_t *)malloc(PS1_CARD_SIZE);
+    if (!out) return NULL;
+    sigil_ps1_format(out);
+    for (size_t i = 0; i < count; i++) {
+        if (sigil_ps1_inject(out, mcs[i], len[i]) != SIGIL_OK) { free(out); return NULL; }
+    }
+    return out;
+}
+
+#define MML2_CARD "Mega Man Legends 2 (USA).srm"
+#define MML2_CUE  "Mega Man Legends 2 (USA).cue"
+
+/* The conflict rule in each arrangement, with the state of a sync: local
+ * saves already equal to what the restore brings are not a conflict and
+ * aren't written; local saves changed to something else are a conflict until
+ * the user says to overwrite; a card the game's saves were deleted from
+ * since takes the restore. */
+static void check_conflict_rules(void) {
+    size_t len = 0;
+    uint8_t *card = sample("megaman-bad-link-mcd", &len);
+    if (!card) return;
+    mem_root root = {0};
+    root_put(&root, MML2_CARD, card, len);
+    game g;
+    make_game(&g, &root, "pcsx_rearmed", MML2_CUE, "SLUS-01334", MEGAMAN, 1);
+    sigil_sync_result *synced = NULL;
+    size_t mcs_len = 0;
+    uint8_t *mcs = NULL, *b = NULL, *c = NULL, *unit_b = NULL, *unit_c = NULL, *local_b = NULL, *emptied = NULL;
+    if (sigil_collect(&g.req, &synced) != SIGIL_OK || !(mcs = extract_named(synced->data, "BASLUS-01334", &mcs_len))) {
+        fail("conflict rules", "setup failed");
+        goto done;
+    }
+    b = (uint8_t *)malloc(mcs_len);
+    c = (uint8_t *)malloc(mcs_len);
+    memcpy(b, mcs, mcs_len);
+    memcpy(c, mcs, mcs_len);
+    b[PS1_FRAME_SIZE + 100] ^= 0xFF;
+    c[PS1_FRAME_SIZE + 200] ^= 0xFF;
+    const uint8_t *one[1] = { b };
+    unit_b = card_of(one, &mcs_len, 1);
+    one[0] = c;
+    unit_c = card_of(one, &mcs_len, 1);
+    local_b = card_with(card, "BASLUS-01334", b, mcs_len);
+    emptied = card_with(card, "BASLUS-01334", NULL, 0);
+    if (!unit_b || !unit_c || !local_b || !emptied) { fail("conflict rules", "setup failed"); goto done; }
+    g.req.state = synced->state;
+    g.req.state_len = synced->state_len;
+
+    struct { const char *what; const uint8_t *local; const uint8_t *unit; int overwrite; int rc; int writes; } CASES[] = {
+        { "local already equals the restore", local_b, unit_b, 0, SIGIL_OK, 0 },
+        { "local changed to something else", local_b, unit_c, 0, SIGIL_ERR_CONFLICT, 0 },
+        { "local changed, the user overwrites", local_b, unit_c, 1, SIGIL_OK, 1 },
+        { "local saves deleted since the sync", emptied, unit_b, 0, SIGIL_OK, 1 },
+        { "local unchanged", card, unit_b, 0, SIGIL_OK, 1 },
+    };
+    for (size_t i = 0; i < sizeof(CASES) / sizeof(CASES[0]); i++) {
+        root_put(&root, MML2_CARD, CASES[i].local, PS1_CARD_SIZE);
+        root.writes = 0;
+        g.req.overwrite_local = CASES[i].overwrite;
+        sigil_sync_result *r = NULL;
+        int rc = sigil_restore(&g.req, CASES[i].unit, PS1_CARD_SIZE, &r);
+        if (rc != CASES[i].rc || root.writes != CASES[i].writes || (rc == SIGIL_ERR_CONFLICT && (!r || !r->conflict))) {
+            fail("conflict rules", CASES[i].what);
+        }
+        sigil_sync_result_free(r);
+    }
+done:
+    free(emptied);
+    free(local_b);
+    free(unit_c);
+    free(unit_b);
+    free(c);
+    free(b);
+    free(mcs);
+    sigil_sync_result_free(synced);
+    root_free(&root);
+    free(card);
+}
+
+/* A unit speaks only for its game: another game's save inside it isn't
+ * placed, a unit with none of the game's saves is refused, and so is one
+ * holding a broken save. The title id alone names the game's saves. */
+static void check_unit_rules(void) {
+    size_t len = 0, mml1_len = 0, mml2_len = 0;
+    uint8_t *card = sample("megaman-bad-link-mcd", &len);
+    if (!card) return;
+    uint8_t *mml1 = extract_named(card, "BASLUS-00453", &mml1_len);
+    uint8_t *mml2 = extract_named(card, "BASLUS-01334", &mml2_len);
+    const uint8_t *both[2] = { mml1, mml2 };
+    size_t both_len[2] = { mml1_len, mml2_len };
+    uint8_t *mixed = mml1 && mml2 ? card_of(both, both_len, 2) : NULL;
+    uint8_t *other = mml1 ? card_of(both, both_len, 1) : NULL;
+    if (!mixed || !other) { fail("unit rules", "setup failed"); goto done; }
+
+    mem_root root = {0};
+    game g;
+    make_game(&g, &root, "pcsx_rearmed", MML2_CUE, "SLUS-01334", MEGAMAN, 1);
+    sigil_sync_result *r = NULL;
+    if (sigil_restore(&g.req, mixed, PS1_CARD_SIZE, &r) != SIGIL_OK) {
+        fail("unit rules", "a unit holding another game's save too was refused");
+    } else {
+        mem_file *f = root_find(&root, MML2_CARD);
+        size_t got = 0;
+        uint8_t *placed = f ? extract_named(f->data, "BASLUS-00453", &got) : NULL;
+        if (!f || placed) fail("unit rules", "another game's save inside the unit was placed");
+        free(placed);
+    }
+    sigil_sync_result_free(r);
+    root_free(&root);
+
+    struct { const char *what; const uint8_t *unit; int rc; } REFUSED[] = {
+        { "a unit with none of the game's saves", other, SIGIL_ERR_NOT_FOUND },
+        { "a unit holding a broken save", card, SIGIL_ERR_UNSUPPORTED_FORMAT },
+    };
+    for (size_t i = 0; i < sizeof(REFUSED) / sizeof(REFUSED[0]); i++) {
+        mem_root empty = {0};
+        game h;
+        make_game(&h, &empty, "pcsx_rearmed", MML2_CUE, "SLUS-01334", MEGAMAN, 1);
+        r = NULL;
+        if (sigil_restore(&h.req, REFUSED[i].unit, PS1_CARD_SIZE, &r) != REFUSED[i].rc || empty.writes != 0) {
+            fail("unit rules", REFUSED[i].what);
+        }
+        sigil_sync_result_free(r);
+        root_free(&empty);
+    }
+
+    mem_root src = {0};
+    root_put(&src, MML2_CARD, card, len);
+    game t;
+    make_game(&t, &src, "pcsx_rearmed", MML2_CUE, "SLUS-01334", NULL, 0);
+    r = NULL;
+    size_t got = 0;
+    uint8_t *found = NULL;
+    if (sigil_collect(&t.req, &r) != SIGIL_OK || !r->data || !(found = extract_named(r->data, "BASLUS-01334", &got))) {
+        fail("unit rules", "the title id alone didn't name the game's save");
+    }
+    free(found);
+    sigil_sync_result_free(r);
+    root_free(&src);
+done:
+    free(other);
+    free(mixed);
+    free(mml2);
+    free(mml1);
+    free(card);
+}
+
+/* A save that sat on the shared slot-2 card goes back to it; the game's own
+ * card isn't given a copy. */
+static void check_restore_to_slot_2(void) {
+    size_t own_len = 0, shared_len = 0;
+    uint8_t *own = sample("digimon-world-2-mcr", &own_len);
+    uint8_t *shared = sample("ff-origins-mcr", &shared_len);
+    if (!own || !shared) { free(own); free(shared); return; }
+    mem_root root = {0};
+    root_put(&root, "Final Fantasy Origins (USA).srm", own, own_len);
+    root_put(&root, "pcsx-card2.mcd", shared, shared_len);
+    game g;
+    make_game(&g, &root, "pcsx_rearmed", "Final Fantasy Origins (USA).cue", "SLUS-01541", FF_ORIGINS, 1);
+    sigil_sync_result *unit = NULL, *r = NULL;
+    sigil_card_listing *l = NULL;
+    if (sigil_collect(&g.req, &unit) != SIGIL_OK || !unit->data ||
+        sigil_ps1_card_list(unit->data, SIGIL_CARD_FORMAT_PS1_RAW, &l) != SIGIL_OK || l->entry_count == 0) {
+        fail("restore slot 2", "setup failed");
+    } else {
+        size_t mcs_len = 0;
+        uint8_t *mcs = extract_named(unit->data, l->entries[0].name, &mcs_len);
+        mcs[PS1_FRAME_SIZE + 100] ^= 0xFF;
+        const uint8_t *one[1] = { mcs };
+        uint8_t *newer = card_of(one, &mcs_len, 1);
+        g.req.state = unit->state;
+        g.req.state_len = unit->state_len;
+        if (!newer || sigil_restore(&g.req, newer, PS1_CARD_SIZE, &r) != SIGIL_OK) {
+            fail("restore slot 2", "restore failed");
+        } else {
+            mem_file *slot2 = root_find(&root, "pcsx-card2.mcd"), *mine = root_find(&root, "Final Fantasy Origins (USA).srm");
+            size_t got = 0;
+            uint8_t *on_own = extract_named(mine->data, l->entries[0].name, &got);
+            if (sigil_ps1_verify(slot2->data, mcs, mcs_len) != SIGIL_OK) fail("restore slot 2", "the newer save isn't on the slot-2 card");
+            if (on_own) fail("restore slot 2", "the game's own card was given a copy");
+            free(on_own);
+        }
+        free(newer);
+        free(mcs);
+    }
+    sigil_card_listing_free(l);
+    sigil_sync_result_free(r);
+    sigil_sync_result_free(unit);
+    root_free(&root);
+    free(own);
+    free(shared);
+}
+
+/* A write that fails, or that reads back different from what went out, is
+ * an I/O error, never success. */
+static void check_faulty_writes(const sigil_sync_result *first) {
+    if (!first) return;
+    for (int corrupt = 0; corrupt < 2; corrupt++) {
+        mem_root root = {0};
+        if (corrupt) {
+            root.corrupt_write = 1;
+            root.corrupt_at = PS1_BLOCK_SIZE + 300;
+        } else {
+            root.fail_write = 1;
+        }
+        game g;
+        make_game(&g, &root, "pcsx_rearmed", "Xenogears (USA) (Disc 1).cue", "SLUS-00664", XENOGEARS, 2);
+        sigil_sync_result *r = NULL;
+        if (sigil_restore(&g.req, first->data, first->len, &r) != SIGIL_ERR_IO) {
+            fail("faulty writes", corrupt ? "a card that read back corrupted passed" : "a failed write passed");
+        }
+        sigil_sync_result_free(r);
+        root_free(&root);
+    }
+}
+
+#define BUGS_CUE  "Bugs Bunny - Lost in Time (Europe).cue"
+#define BUGS_CARD "Bugs Bunny - Lost in Time (Europe).srm"
+static const char *const BUGS[] = { "SLES-01726" };
+
+/* The game's own save with a broken chain is damaged, not missing: collect
+ * would otherwise read it as deleted, and restore can't put a save beside
+ * one of the same name. Another game's broken save doesn't stop the sync. */
+static void check_broken_own_save(void) {
+    size_t len = 0;
+    uint8_t *mcs = sample("bugs-bunny-mcs", &len);
+    const uint8_t *one[] = { mcs };
+    size_t lens[] = { len };
+    uint8_t *card = mcs ? card_of(one, lens, 1) : NULL;
+    uint8_t *unit = mcs ? card_of(one, lens, 1) : NULL;
+    if (!card || !unit) { fail("broken own save", "setup failed"); free(card); free(unit); free(mcs); return; }
+    uint8_t *link = card + PS1_FRAME_SIZE + 8;
+    link[0] = 9;
+    link[1] = 0;
+    static const char *const OTHER[] = { "SLUS-00001" };
+    for (int own = 1; own >= 0; own--) {
+        mem_root root = {0};
+        root_put(&root, BUGS_CARD, card, PS1_CARD_SIZE);
+        game g;
+        make_game(&g, &root, "pcsx_rearmed", BUGS_CUE, own ? "SLES-01726" : "SLUS-00001", own ? BUGS : OTHER, 1);
+        sigil_sync_result *seen = NULL, *r = NULL;
+        int collected = sigil_collect(&g.req, &seen);
+        int restored = own ? sigil_restore(&g.req, unit, PS1_CARD_SIZE, &r) : SIGIL_ERR_DAMAGED;
+        if (own && (collected != SIGIL_ERR_DAMAGED || strcmp(seen->problem, BUGS_CARD) != 0 ||
+                    restored != SIGIL_ERR_DAMAGED || root.writes != 0)) {
+            fail("broken own save", "the game's broken save read as missing");
+        }
+        if (!own && collected != SIGIL_OK) fail("broken own save", "another game's broken save stopped the collect");
+        sigil_sync_result_free(seen);
+        sigil_sync_result_free(r);
+        root_free(&root);
+    }
+    free(card);
+    free(unit);
+    free(mcs);
+}
+
+#define VMP_SIGNATURE_AT 0x20u
+
+static size_t saves_on(const uint8_t *file, size_t len, sigil_ps1_file *out) {
+    sigil_io *io = mem_root_io(file, len);
+    sigil_card_listing *l = NULL;
+    size_t n = SIZE_MAX;
+    if (sigil_ps1_file_load(io, out) == SIGIL_OK && sigil_ps1_card_list(out->image, out->format, &l) == SIGIL_OK) {
+        n = l->entry_count;
+    }
+    sigil_card_listing_free(l);
+    sigil_io_close(io);
+    return n;
+}
+
+/* A restore onto a DexDrive .gme or a PSP/Vita .vmp writes the card back in
+ * its own form with the other games' saves kept; a .vmp whose signature
+ * doesn't match its card is damaged until the client asks for a repair. */
+static void check_wrapped_cards(void) {
+    size_t mcs_len = 0;
+    uint8_t *mcs = sample("bugs-bunny-mcs", &mcs_len);
+    const uint8_t *one[] = { mcs };
+    size_t lens[] = { mcs_len };
+    uint8_t *unit = mcs ? card_of(one, lens, 1) : NULL;
+    sigil_ps1_file *before = (sigil_ps1_file *)malloc(sizeof(*before));
+    sigil_ps1_file *after = (sigil_ps1_file *)malloc(sizeof(*after));
+    static const char *const IDS[] = { "gran-turismo-gme", "vagrant-story-vmp" };
+    for (size_t i = 0; i < 2 && unit; i++) {
+        size_t len = 0;
+        uint8_t *file = sample(IDS[i], &len);
+        if (!file) continue;
+        mem_root root = {0};
+        root_put(&root, BUGS_CARD, file, len);
+        game g;
+        make_game(&g, &root, "pcsx_rearmed", BUGS_CUE, "SLES-01726", BUGS, 1);
+        sigil_sync_result *r = NULL;
+        mem_file *f = NULL;
+        size_t had = saves_on(file, len, before);
+        if (sigil_restore(&g.req, unit, PS1_CARD_SIZE, &r) != SIGIL_OK || !(f = root_find(&root, BUGS_CARD))) {
+            fail(IDS[i], "restore onto the wrapped card failed");
+        } else if (saves_on(f->data, f->len, after) != had + 1 || after->format != before->format ||
+                   memcmp(after->header, before->header, 0x0C) != 0 || sigil_ps1_file_check(after) != SIGIL_OK) {
+            fail(IDS[i], "the card didn't keep its form and other saves, or its signature doesn't check");
+        }
+        sigil_sync_result_free(r);
+        root_free(&root);
+        free(file);
+    }
+
+    size_t len = 0;
+    uint8_t *vmp = sample("vagrant-story-vmp", &len);
+    if (vmp && unit) {
+        vmp[PS1_VMP_HEADER_SIZE + PS1_BLOCK_SIZE + 0x100] ^= 0xFF;
+        mem_root root = {0};
+        root_put(&root, BUGS_CARD, vmp, len);
+        game g;
+        make_game(&g, &root, "pcsx_rearmed", BUGS_CUE, "SLES-01726", BUGS, 1);
+        sigil_sync_result *seen = NULL, *r = NULL;
+        mem_file *f = NULL;
+        if (sigil_collect(&g.req, &seen) != SIGIL_ERR_DAMAGED || !seen || strcmp(seen->problem, BUGS_CARD) != 0) {
+            fail("damaged vmp", "collect didn't refuse naming the card");
+        }
+        if (sigil_restore(&g.req, unit, PS1_CARD_SIZE, &r) != SIGIL_ERR_DAMAGED || root.writes != 0) {
+            fail("damaged vmp", "restore wrote over a damaged card without a repair");
+        }
+        sigil_sync_result_free(seen);
+        sigil_sync_result_free(r);
+        seen = r = NULL;
+        g.req.repair = 1;
+        if (sigil_collect(&g.req, &seen) != SIGIL_OK) fail("damaged vmp", "collect with repair refused");
+        if (sigil_restore(&g.req, unit, PS1_CARD_SIZE, &r) != SIGIL_OK || !(f = root_find(&root, BUGS_CARD)) ||
+            saves_on(f->data, f->len, after) == SIZE_MAX || sigil_ps1_file_check(after) != SIGIL_OK) {
+            fail("damaged vmp", "restore with repair didn't sign the card anew");
+        }
+        sigil_sync_result_free(seen);
+        sigil_sync_result_free(r);
+        root_free(&root);
+    }
+
+    /* A game a PSP or Vita hasn't run yet gets a signed .vmp, never a raw card. */
+    if (unit) {
+        mem_root root = {0};
+        game g;
+        make_game(&g, &root, "vita_pops", BUGS_CUE, "SLES-01726", BUGS, 1);
+        sigil_sync_result *r = NULL;
+        mem_file *f = NULL;
+        if (sigil_restore(&g.req, unit, PS1_CARD_SIZE, &r) != SIGIL_OK || root.count != 1 ||
+            !(f = root_find(&root, "PSP/SAVEDATA/SLES01726/SCEVMC0.VMP")) || f->len != PS1_VMP_HEADER_SIZE + PS1_CARD_SIZE ||
+            saves_on(f->data, f->len, after) != 1 || after->format != SIGIL_CARD_FORMAT_PS1_VMP ||
+            sigil_ps1_file_check(after) != SIGIL_OK) {
+            fail("vita pops", "a new card isn't a signed .vmp in the game's SAVEDATA folder");
+        } else if (vmp && memcmp(f->data, vmp, VMP_SIGNATURE_AT) != 0) {
+            fail("vita pops", "a new .vmp's header differs from the one a console writes");
+        }
+        sigil_sync_result_free(r);
+        r = NULL;
+
+        /* Collect hands back the raw card, named for one. */
+        sigil_sync_result *seen = NULL;
+        refresh_listing(&g, &root);
+        if (sigil_collect(&g.req, &seen) != SIGIL_OK || !seen->data || seen->len != PS1_CARD_SIZE ||
+            memcmp(seen->data, "MC", 2) != 0 || strcmp(seen->artifact, "Bugs Bunny - Lost in Time (Europe).mcr") != 0) {
+            fail("vita pops", "collect didn't hand back a raw card named as one");
+        }
+
+        /* A damaged card already holding the unit's saves: repair writes it
+         * again signed, so the next collect reads it without a repair. */
+        if (f && seen) {
+            f = root_find(&root, "PSP/SAVEDATA/SLES01726/SCEVMC0.VMP");
+            f->data[PS1_VMP_HEADER_SIZE + 15 * PS1_BLOCK_SIZE + 0x100] ^= 0xFF;
+            g.req.state = seen->state;
+            g.req.state_len = seen->state_len;
+            g.req.repair = 1;
+            sigil_sync_result *again = NULL;
+            int restored = sigil_restore(&g.req, unit, PS1_CARD_SIZE, &r);
+            g.req.repair = 0;
+            if (restored != SIGIL_OK || sigil_collect(&g.req, &again) != SIGIL_OK) {
+                fail("vita pops", "a repair restore of the saves already there left the card damaged");
+            }
+            sigil_sync_result_free(again);
+        }
+        sigil_sync_result_free(seen);
+        sigil_sync_result_free(r);
+        r = NULL;
+        root_free(&root);
+
+        /* A card whose signature reads back wrong fails the restore. */
+        root.corrupt_write = 1;
+        root.corrupt_at = VMP_SIGNATURE_AT;
+        make_game(&g, &root, "vita_pops", BUGS_CUE, "SLES-01726", BUGS, 1);
+        if (sigil_restore(&g.req, unit, PS1_CARD_SIZE, &r) != SIGIL_ERR_IO) {
+            fail("vita pops", "a .vmp whose signature read back wrong passed the restore");
+        }
+        sigil_sync_result_free(r);
+        root_free(&root);
+    }
+    free(vmp);
+    free(after);
+    free(before);
+    free(unit);
+    free(mcs);
+}
+
 int main(void) {
     char path[1024];
     if (corpus_platform_path("psx", "manifest.tsv", path, sizeof(path)) != 0 || corpus_load(path, &g_manifest) != 0) {
@@ -417,6 +835,12 @@ int main(void) {
     check_restore_keeps_other_games();
     check_restore_no_room();
     check_unnormalized_frame();
+    check_conflict_rules();
+    check_unit_rules();
+    check_restore_to_slot_2();
+    check_faulty_writes(first);
+    check_wrapped_cards();
+    check_broken_own_save();
     sigil_sync_result_free(first);
 
     corpus_free(&g_manifest);

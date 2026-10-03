@@ -189,6 +189,8 @@ typedef struct {
     uint32_t corrupt_count;         /* Saves left out because their block chain is broken. */
     sigil_card_entry *entries;      /* Live saves, in directory order. */
     size_t entry_count;
+    sigil_card_entry *corrupt_entries;  /* The left-out saves the card still names; blocks is 0. */
+    size_t corrupt_entry_count;
 } sigil_card_listing;
 
 typedef struct {
@@ -208,10 +210,26 @@ typedef struct {
 cards, PCSX2 folder cards, GameCube cards and Dolphin's GCI folder, Saturn
 and Sega CD backup RAM, and Dreamcast VMUs work today. On PS1 and PS2 the
 unit is one per-game card: a raw PS1 card, or an 8 MB `.ps2` card with ECC.
+Restore writes a PS1 card back in the form it found: a DexDrive `.gme`
+keeps its header, with the frame copies following the directory and a
+slot's comment kept only beside the save it was written for; a PSP or Vita
+`.vmp` keeps its seed and is signed for its new contents. A new card named
+`.VMP` (the `vita_pops` layout) is a signed `.vmp`. A `.vmp` whose
+signature doesn't match its card, which the console refuses, is damaged.
 A PCSX2 folder card gives the same unit as a file card: restore unpacks it
-into the game's save folders, removes files of the game's folders the unit
-lacks (through `remove`), and writes a formatted `_pcsx2_superblock` when
-the one there is missing or unreadable. On
+into the game's save folders and removes files of the game's folders the
+unit lacks (through `remove`). It formats a new folder card, one with no
+save folders, by writing its `_pcsx2_superblock`. A save folder whose
+`_pcsx2_index` doesn't parse is damaged: collect and restore return
+`SIGIL_ERR_DAMAGED` naming the index, and with `repair` read the folder
+without it and write a fresh one. Restore refuses the same way to write onto
+a card that holds saves behind an unusable superblock, and with `repair`
+writes a new superblock; collect reads such a card's folders as they are.
+A card or volume file sigil can't read as what its path holds (no card
+magic, cut short, an internal volume where a cart goes) is damaged too, and so is a save folder of the game or a companion that sigil can't
+pack (a subdirectory, a file name longer than a card entry holds), which
+PCSX2 still shows. `repair` doesn't change either: sigil never writes over
+saves it can't read. An empty file counts as no card. On
 GameCube it is the game's saves as `.gci` files named as Dolphin names
 them (`<maker>-<gamecode>-<file>.gci`, escaped): the one file, or a zip
 of them named `<stem>.zip`. It is the same whether they came off a raw
@@ -227,7 +245,9 @@ Yaba Sanshiro's internal memory or a 32 Mbit cart. Every
 volume in a unit is raw, whatever form the emulator stores it in; restore
 writes each file back in the emulator's form (gzip, byte expansion), and a
 file the emulator hasn't created yet in the form and size its layout row
-names.
+names. Every Saturn core but Yaba Sanshiro keeps 32 KiB of internal memory,
+so a unit whose internal saves need more returns `SIGIL_ERR_NO_SPACE` there
+with the blocks they lack.
 
 ```c
 typedef struct {
@@ -247,9 +267,13 @@ typedef struct {
     sigil_save_remove_fn remove;      /* restore: removes one file of the save root (called with write_ctx).
                                          Dolphin's GCI folder and PCSX2 folder cards need it to drop a
                                          save the unit lacks; restore refuses with SIGIL_ERR_INVALID_ARG,
-                                         writing nothing, when it must remove a file and this is NULL. */
+                                         writing nothing, when it must remove a file and this is NULL.
+                                         A path ending in '/' is a directory sigil emptied (a dropped
+                                         PCSX2 save folder, which PCSX2 would still show): remove it. */
     const sigil_sync_companion *companions;   /* Games whose saves this game reads, in the order they go on. */
     size_t companion_count;
+    int repair;                       /* Rebuild the damaged structures SIGIL_ERR_DAMAGED named instead of
+                                         refusing. */
 } sigil_sync_request;
 
 typedef struct {
@@ -262,10 +286,7 @@ typedef struct {
 
 int sigil_collect(const sigil_sync_request *req, sigil_sync_result **out);
 int sigil_restore(const sigil_sync_request *req, const uint8_t *unit, size_t unit_len,
-                  sigil_sync_result **out);   /* SIGIL_ERR_CONFLICT, writing nothing, when the saves on
-                                                 disk changed since the last sync. SIGIL_ERR_UNCOLLECTED,
-                                                 writing nothing, when a shared volume holds saves no
-                                                 collect has passed on yet. */
+                  sigil_sync_result **out);
 void sigil_sync_result_free(sigil_sync_result *result);
 
 typedef struct {
@@ -289,8 +310,9 @@ typedef struct {
                                          overwritten. Restore again instead of uploading. */
     sigil_sync_companion_result *companions;   /* collect: one per request companion, in request order. */
     size_t companion_count;
-    char overflow[64];                /* restore, SIGIL_ERR_NO_SPACE: the save that didn't fit. */
-    uint32_t overflow_blocks;         /* The blocks it lacked; 0 when a directory slot ran out instead. */
+    char problem[512];                /* The save or file at fault; see the refusals below. */
+    uint32_t blocks_short;            /* SIGIL_ERR_NO_SPACE: the blocks the save lacked; 0 when a directory
+                                         slot ran out instead. */
 } sigil_sync_result;
 
 typedef struct {
@@ -307,10 +329,24 @@ lists that title in `companions`. Restore puts each companion's saves on the
 game's card, volume or GCI folder beside the game's own. A companion without
 a unit keeps the saves it already has there. Collect leaves companion saves
 out of the game's unit and hash, and returns each companion's saves as its
-own unit, with `changed` against that companion's last sync. On GameCube a
-companion from another Dolphin region than the game is refused with
-`SIGIL_ERR_INVALID_ARG`. When restore returns `SIGIL_ERR_NO_SPACE` it still
-sets `*out`, naming the save that didn't fit in `overflow`; free it as usual.
+own unit, with `changed` against that companion's last sync.
+
+Restore refuses, writing nothing, with:
+
+| Code | When | `problem` |
+|---|---|---|
+| `SIGIL_ERR_CONFLICT` | the saves on disk changed since the last sync and `overwrite_local` is 0 | |
+| `SIGIL_ERR_UNCOLLECTED` | a shared volume holds saves no collect has passed on yet | |
+| `SIGIL_ERR_NO_SPACE` | the saves don't fit; `blocks_short` says by how much | the save |
+| `SIGIL_ERR_REGION` | a GameCube companion's save is from another Dolphin region than the game | the save |
+| `SIGIL_ERR_DAMAGED` | a file the saves go in is damaged and `repair` is 0, or it isn't a card sigil can read | the file |
+| `SIGIL_ERR_AMBIGUOUS` | more than one file could be the emulator's card and the options don't say which: Dolphin raw cards of two sizes with no `MemoryCardSize`. Collect refuses the same way | the files, one per line |
+| `SIGIL_ERR_NO_TARGET` | the unit holds a volume the emulator's settings keep no file for: a `cart.ram` for a core with no cart, a VMU port flycast doesn't keep per game | the unit member |
+
+Collect refuses with `SIGIL_ERR_DAMAGED` in the same way. With each of
+these the call still sets `*out`; free it as usual. sigil reports and the
+client decides: re-run with `overwrite_local` or `repair` once the user
+agreed, or leave the saves as they are.
 
 A game's saves are the ones carrying one of its ids, on its own card and on
 the shared cards beside it. Restore puts each save back on the card it was

@@ -17,7 +17,11 @@ __all__ = [
     "SigilCardListing",
     "SigilConflictError",
     "SigilCryptoError",
+    "SigilDamagedError",
     "SigilExistsError",
+    "SigilRegionError",
+    "SigilNoTargetError",
+    "SigilAmbiguousError",
     "SigilNoSpaceError",
     "SigilCompanion",
     "SigilCompanionResult",
@@ -54,7 +58,11 @@ FEATURE_RTC: int = lib.SIGIL_FEATURE_RTC
 
 
 class SigilError(Exception):
-    """Base error for sigil failures. `code` holds the C error code."""
+    """Base error for sigil failures. `code` holds the C error code. After collect or restore,
+    `problem` names the save or file at fault when the error has one (no space, region,
+    damaged), decoded as SigilCardEntry.name is."""
+
+    problem: str = ""
 
     def __init__(self, code: int, message: str):
         super().__init__(message)
@@ -102,15 +110,33 @@ class SigilExistsError(SigilError):
 
 
 class SigilNoSpaceError(SigilError):
-    """The saves don't fit. After restore, `overflow` names the save that didn't fit and
-    `overflow_blocks` the blocks it lacked (0 when a directory slot was missing instead)."""
+    """The saves don't fit; `problem` names the save that didn't and `blocks_short` the blocks
+    it lacked (0 when a directory slot was missing instead)."""
 
-    overflow: str = ""
-    overflow_blocks: int = 0
+    blocks_short: int = 0
 
 
 class SigilUncollectedError(SigilError):
     """A shared volume holds saves no collect has passed on yet; restore wrote nothing."""
+
+
+class SigilDamagedError(SigilError):
+    """A file the saves are in is damaged; `problem` names it. `repair=True` rebuilds it
+    where sigil can; a card sigil can't read at all stays refused."""
+
+
+class SigilRegionError(SigilError):
+    """A companion's save, named in `problem`, belongs to another region than the game."""
+
+
+class SigilNoTargetError(SigilError):
+    """The unit holds a volume, named in `problem`, that the emulator's settings keep no file
+    for; restore wrote nothing."""
+
+
+class SigilAmbiguousError(SigilError):
+    """More than one file could be the card the emulator uses and the options don't say which;
+    `problem` names them, one per line. Nothing was written."""
 
 
 _ERROR_CLASSES = {
@@ -126,6 +152,10 @@ _ERROR_CLASSES = {
     lib.SIGIL_ERR_EXISTS: SigilExistsError,
     lib.SIGIL_ERR_NO_SPACE: SigilNoSpaceError,
     lib.SIGIL_ERR_UNCOLLECTED: SigilUncollectedError,
+    lib.SIGIL_ERR_DAMAGED: SigilDamagedError,
+    lib.SIGIL_ERR_REGION: SigilRegionError,
+    lib.SIGIL_ERR_NO_TARGET: SigilNoTargetError,
+    lib.SIGIL_ERR_AMBIGUOUS: SigilAmbiguousError,
 }
 
 _SOURCE_NAMES: dict[int, Literal["binary", "filename"]] = {
@@ -273,6 +303,7 @@ class SigilCardListing:
     free_slots: int
     corrupt_count: int
     entries: tuple[SigilCardEntry, ...]
+    corrupt_entries: tuple[SigilCardEntry, ...]   # left-out saves the card still names; blocks is 0
 
 
 @dataclass(frozen=True)
@@ -589,6 +620,7 @@ def _sync(
     overwrite_local: bool,
     claimed: Iterable[str],
     companions: Iterable[SigilCompanion],
+    repair: bool,
 ) -> SigilSyncResult:
     keepalive: list[object] = []
     root_bytes = os.fsencode(save_root)
@@ -631,6 +663,7 @@ def _sync(
         req.companion_count = len(companion_list)
     req.mode = _SYNC_MODES[mode]
     req.overwrite_local = 1 if overwrite_local else 0
+    req.repair = 1 if repair else 0
     if state:
         state_buf = ffi.new("uint8_t[]", state)
         keepalive.append(state_buf)
@@ -654,8 +687,12 @@ def _sync(
 
     @ffi.callback("int(void *, const char *)")
     def remove_member(_ctx, relative_path):
+        relative = ffi.string(relative_path)
         try:
-            os.remove(os.path.join(root_bytes, ffi.string(relative_path)))
+            if relative.endswith(b"/"):
+                os.rmdir(os.path.join(root_bytes, relative))
+            else:
+                os.remove(os.path.join(root_bytes, relative))
         except OSError:
             return -1
         return 0
@@ -671,15 +708,13 @@ def _sync(
         unit_buf = ffi.new("uint8_t[]", unit)
         rc = lib.sigil_restore(req, unit_buf, len(unit), out)
     if rc != lib.SIGIL_OK:
-        overflow, overflow_blocks = "", 0
-        if out[0] != ffi.NULL:
-            overflow, overflow_blocks = _save_name(out[0].overflow), int(out[0].overflow_blocks)
-            lib.sigil_sync_result_free(out[0])
         message = ffi.string(lib.sigil_strerror(rc)).decode("utf-8", "replace")
         error = _ERROR_CLASSES.get(rc, SigilError)(rc, message)
-        if isinstance(error, SigilNoSpaceError):
-            error.overflow = overflow
-            error.overflow_blocks = overflow_blocks
+        if out[0] != ffi.NULL:
+            error.problem = _save_name(out[0].problem)
+            if isinstance(error, SigilNoSpaceError):
+                error.blocks_short = int(out[0].blocks_short)
+            lib.sigil_sync_result_free(out[0])
         raise error
     r = out[0]
     try:
@@ -722,14 +757,16 @@ def collect(
     mode: Literal["managed", "unmanaged"] = "managed",
     claimed: Iterable[str] = (),
     companions: Iterable[SigilCompanion] = (),
+    repair: bool = False,
 ) -> SigilSyncResult:
     """`game`'s saves under `save_root` gathered into the unit that travels to RomM.
 
     Store the returned `state` once the unit, `holding` and each changed companion unit reached
-    RomM. docs/python.md defines every input.
+    RomM. Raises SigilDamagedError when a file holding the saves is damaged and `repair` is
+    False, or isn't a card sigil can read at all. docs/python.md defines every input.
     """
     return _sync(None, game, core, content_path, save_root, listing, options, game_ids, state, mode, False, claimed,
-                 companions)
+                 companions, repair)
 
 
 def restore(
@@ -747,16 +784,32 @@ def restore(
     overwrite_local: bool = False,
     claimed: Iterable[str] = (),
     companions: Iterable[SigilCompanion] = (),
+    repair: bool = False,
 ) -> SigilSyncResult:
     """Puts `unit`, and each companion's unit given, back under `save_root` and reads them back.
 
-    Raises SigilConflictError, writing nothing, when the saves there changed since the last
-    sync and `overwrite_local` is False. Raises SigilUncollectedError, writing nothing, when a
-    shared Saturn or Sega CD volume holds saves no collect has passed on yet. Raises
-    SigilNoSpaceError, writing nothing, when the saves don't fit, naming the one that didn't.
+    Each of these writes nothing: SigilConflictError when the saves there changed since the last
+    sync and `overwrite_local` is False; SigilUncollectedError when a shared Saturn or Sega CD
+    volume holds saves no collect has passed on yet; SigilNoSpaceError when the saves don't fit;
+    SigilRegionError for a companion's save from another region; SigilNoTargetError when the
+    unit holds a volume the emulator's settings keep no file for; SigilAmbiguousError when more
+    than one file could be the emulator's card; SigilDamagedError when a file the saves go in is
+    damaged and `repair` is False. The last five name the save, member or files in `problem`.
     """
     return _sync(unit, game, core, content_path, save_root, listing, options, game_ids, state, mode, overwrite_local,
-                 claimed, companions)
+                 claimed, companions, repair)
+
+
+def _card_entries(entries, count: int) -> tuple[SigilCardEntry, ...]:
+    return tuple(
+        SigilCardEntry(
+            name=_save_name(e.name),
+            owner_id=_text(e.owner_id),
+            blocks=int(e.blocks),
+            first_block=int(e.first_block),
+        )
+        for e in (entries[i] for i in range(count))
+    )
 
 
 def list_card(path: str | os.PathLike[str]) -> SigilCardListing:
@@ -779,15 +832,8 @@ def list_card(path: str | os.PathLike[str]) -> SigilCardListing:
             free_blocks=int(listing.free_blocks),
             free_slots=int(listing.free_slots),
             corrupt_count=int(listing.corrupt_count),
-            entries=tuple(
-                SigilCardEntry(
-                    name=_save_name(e.name),
-                    owner_id=_text(e.owner_id),
-                    blocks=int(e.blocks),
-                    first_block=int(e.first_block),
-                )
-                for e in (listing.entries[i] for i in range(listing.entry_count))
-            ),
+            entries=_card_entries(listing.entries, listing.entry_count),
+            corrupt_entries=_card_entries(listing.corrupt_entries, listing.corrupt_entry_count),
         )
     finally:
         lib.sigil_card_listing_free(listing)

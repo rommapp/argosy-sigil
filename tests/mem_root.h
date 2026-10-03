@@ -22,8 +22,11 @@ typedef struct {
     size_t      count;
     int         writes;
     int         removes;
+    int         dirs_removed;
     int         fail_write;      /* the write (1-based) that reports failure; 0 for none */
-    int         corrupt_write;   /* the write (1-based) stored with its last byte flipped; 0 for none */
+    int         corrupt_write;   /* the write (1-based) stored with one byte flipped; 0 for none */
+    size_t      corrupt_at;      /* the byte it flips; 0 for the last */
+    char        first_write[SIGIL_SAVE_PATH_MAX];   /* the path the first write went to */
     const char *listing[MEM_ROOT_FILES];
 } mem_root;
 
@@ -90,14 +93,26 @@ static sigil_io *root_open(void *ctx, const char *path) {
 static int root_write(void *ctx, const char *path, const uint8_t *data, size_t len) {
     mem_root *r = (mem_root *)ctx;
     r->writes++;
+    if (r->writes == 1) snprintf(r->first_write, sizeof(r->first_write), "%s", path);
     if (r->writes == r->fail_write) return -1;
     root_put(r, path, data, len);
-    if (r->writes == r->corrupt_write && len > 0) root_find(r, path)->data[len - 1] ^= 0xFF;
+    if (r->writes == r->corrupt_write && len > 0) {
+        root_find(r, path)->data[r->corrupt_at && r->corrupt_at < len ? r->corrupt_at : len - 1] ^= 0xFF;
+    }
     return 0;
 }
 
+/* A path ending in '/' is a directory: it goes when no file is left under it. */
 static int root_remove(void *ctx, const char *path) {
     mem_root *r = (mem_root *)ctx;
+    size_t len = strlen(path);
+    if (len && path[len - 1] == '/') {
+        for (size_t i = 0; i < r->count; i++) {
+            if (strncmp(r->files[i].path, path, len) == 0) return -1;
+        }
+        r->dirs_removed++;
+        return 0;
+    }
     mem_file *f = root_find(r, path);
     if (!f) return -1;
     free(f->data);

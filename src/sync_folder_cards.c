@@ -33,15 +33,23 @@ static bool save_folder_of_path(const char *dir, const char *path, char name[SIG
  * every game reads (MemoryCardFolder.cpp, the DATA-SYSTEM and BWNETCNF
  * filter); of those, the card needs the game's, its companions' and the
  * system's. */
+static bool system_folder(const char *name) {
+    return strstr(name, "DATA-SYSTEM") || strstr(name, "BWNETCNF");
+}
+
 static bool shown_to_game(const sigil_sync_request *req, const char *name) {
-    if (strstr(name, "DATA-SYSTEM") || strstr(name, "BWNETCNF")) return true;
+    if (system_folder(name)) return true;
     char owner[SIGIL_CARD_OWNER_MAX];
     sigil_card_sony_owner(name, owner);
     return owner[0] && (sigil_sync_owned_by_game(req, owner) || sigil_sync_companion_of(req, owner) != SIZE_MAX);
 }
 
-/* Reads the files of save folder `name` on folder card `dir` and packs them. */
-static int read_save_folder(const sigil_sync_request *req, const char *dir, const char *name, sigil_ps2_save *out) {
+#define PCSX2_INDEX "_pcsx2_index"
+
+/* Reads the files of save folder `name` on folder card `dir` and packs them,
+ * leaving its _pcsx2_index out when `skip_index`. */
+static int read_save_folder(const sigil_sync_request *req, const char *dir, const char *name, bool skip_index,
+                            sigil_ps2_save *out) {
     char prefix[SIGIL_SAVE_PATH_MAX];
     snprintf(prefix, sizeof(prefix), "%s/%s/", dir, name);
     size_t plen = strlen(prefix);
@@ -51,7 +59,9 @@ static int read_save_folder(const sigil_sync_request *req, const char *dir, cons
     int rc = SIGIL_OK;
     for (size_t i = 0; i < req->save.listing_count && rc == SIGIL_OK; i++) {
         const char *p = req->save.listing[i];
-        if (!p || strncmp(p, prefix, plen) != 0 || strlen(p + plen) >= PS2_FOLDER_PATH_MAX) continue;
+        if (!p || strncmp(p, prefix, plen) != 0) continue;
+        if (strlen(p + plen) >= PS2_FOLDER_PATH_MAX) { rc = SIGIL_ERR_UNSUPPORTED_FORMAT; break; }
+        if (skip_index && strcmp(p + plen, PCSX2_INDEX) == 0) continue;
         int read = sigil_sync_read_file(req, p, FOLDER_CARD_FILE_MAX, &files[n].data, &files[n].len);
         if (read == SIGIL_ERR_NOT_FOUND) continue;
         rc = read;
@@ -82,7 +92,29 @@ static size_t shown_folders(const sigil_sync_request *req, const char *dir, char
     return n;
 }
 
-/* A folder whose index doesn't parse is left off, as an unreadable card is. */
+/* Reads save folder `name` as PCSX2 would show it. A folder whose index
+ * doesn't parse but whose files do is damaged: SIGIL_ERR_DAMAGED naming the
+ * index, or with repair, the folder without it. A folder of the game or a
+ * companion that sigil can't pack (a subdirectory, a name too long for a card
+ * entry) still shows in PCSX2, so it is damaged too, naming the folder, and
+ * repair can't change that; a system folder sigil can't pack is left off
+ * (SIGIL_ERR_NOT_FOUND). */
+static int read_shown_folder(const sigil_sync_ctx *x, const char *dir, const char *name, sigil_sync_cards *s,
+                             sigil_ps2_save *out) {
+    int rc = read_save_folder(x->req, dir, name, false, out);
+    if (rc != SIGIL_ERR_UNSUPPORTED_FORMAT) return rc;
+    rc = read_save_folder(x->req, dir, name, true, out);
+    if (rc == SIGIL_ERR_UNSUPPORTED_FORMAT) {
+        if (system_folder(name)) return SIGIL_ERR_NOT_FOUND;
+        snprintf(s->problem, sizeof(s->problem), "%s/%s", dir, name);
+        return SIGIL_ERR_DAMAGED;
+    }
+    if (rc != SIGIL_OK || x->req->repair) return rc;
+    sigil_ps2_save_free(out);
+    snprintf(s->problem, sizeof(s->problem), "%s/%s/%s", dir, name, PCSX2_INDEX);
+    return SIGIL_ERR_DAMAGED;
+}
+
 int sigil_sync_load_folder_card(const sigil_sync_ctx *x, const char *dir, sigil_sync_cards *s) {
     if (s->count >= SYNC_MAX_CARD_FILES) return SIGIL_OK;
     sigil_sync_card_file *f = &s->files[s->count];
@@ -94,8 +126,8 @@ int sigil_sync_load_folder_card(const sigil_sync_ctx *x, const char *dir, sigil_
     if (!names) rc = SIGIL_ERR_OOM;
     for (size_t i = 0; i < n && rc == SIGIL_OK; i++) {
         sigil_ps2_save save;
-        int read = read_save_folder(x->req, dir, names[i], &save);
-        if (read == SIGIL_ERR_UNSUPPORTED_FORMAT || read == SIGIL_ERR_NOT_FOUND) continue;
+        int read = read_shown_folder(x, dir, names[i], s, &save);
+        if (read == SIGIL_ERR_NOT_FOUND) continue;
         rc = read;
         if (rc == SIGIL_OK) {
             rc = sigil_ps2_inject((sigil_ps2_card *)f->card, &save);
@@ -177,7 +209,7 @@ static int write_save_folder(const sigil_sync_ctx *x, const char *prefix, const 
  * it only counts the files that would go. */
 static int sync_folder_card(const sigil_sync_ctx *x, const sigil_sync_card_file *f, bool apply, size_t *removes) {
     *removes = 0;
-    sigil_sync_paths doomed = { calloc(x->req->save.listing_count + 1, SIGIL_SAVE_PATH_MAX), 0 };
+    sigil_sync_paths doomed = { calloc(2 * x->req->save.listing_count + 1, SIGIL_SAVE_PATH_MAX), 0 };
     sigil_card_listing *listing = NULL;
     int rc = doomed.paths ? x->kind->list(f->card, f->format, &listing) : SIGIL_ERR_OOM;
     for (size_t i = 0; rc == SIGIL_OK && i < listing->entry_count; i++) {
@@ -190,6 +222,7 @@ static int sync_folder_card(const sigil_sync_ctx *x, const sigil_sync_card_file 
         if (rc == SIGIL_OK) rc = write_save_folder(x, prefix, (const sigil_ps2_save *)save, apply, &doomed);
         if (save) x->kind->free_save(save);
     }
+    size_t files_doomed = doomed.count;
     for (size_t i = 0; rc == SIGIL_OK && i < x->req->save.listing_count; i++) {
         char name[SIGIL_CARD_NAME_MAX];
         const char *p = x->req->save.listing[i];
@@ -197,6 +230,16 @@ static int sync_folder_card(const sigil_sync_ctx *x, const sigil_sync_card_file 
         bool kept = false;
         for (size_t k = 0; k < listing->entry_count && !kept; k++) kept = strcmp(listing->entries[k].name, name) == 0;
         if (!kept) snprintf(doomed.paths[doomed.count++], SIGIL_SAVE_PATH_MAX, "%s", p);
+    }
+    /* A dropped folder's directory goes after its files, as "dir/name/":
+     * PCSX2 shows any directory its filter names, empty or not. */
+    for (size_t i = files_doomed, end = doomed.count; rc == SIGIL_OK && i < end; i++) {
+        char name[SIGIL_CARD_NAME_MAX], dir[SIGIL_SAVE_PATH_MAX];
+        if (!save_folder_of_path(f->path, doomed.paths[i], name)) continue;
+        snprintf(dir, sizeof(dir), "%s/%s/", f->path, name);
+        bool listed = false;
+        for (size_t k = end; k < doomed.count && !listed; k++) listed = strcmp(doomed.paths[k], dir) == 0;
+        if (!listed) snprintf(doomed.paths[doomed.count++], SIGIL_SAVE_PATH_MAX, "%s", dir);
     }
     sigil_card_listing_free(listing);
     *removes = doomed.count;
@@ -207,18 +250,38 @@ static int sync_folder_card(const sigil_sync_ctx *x, const sigil_sync_card_file 
     return rc;
 }
 
-/* Writes a full formatted _pcsx2_superblock to folder card `dir` when the one
- * there is missing or PCSX2 wouldn't read it as formatted; PCSX2 hides every
- * save on such a card. */
-static int ensure_superblock(const sigil_sync_ctx *x, const char *dir) {
+static void superblock_path(const char *dir, char out[SIGIL_SAVE_PATH_MAX]) {
+    snprintf(out, SIGIL_SAVE_PATH_MAX, "%s/_pcsx2_superblock", dir);
+}
+
+/* PCSX2 reads the card's _pcsx2_superblock as formatted; it hides every save
+ * on a card whose superblock is missing, empty or short. */
+static bool superblock_usable(const sigil_sync_ctx *x, const char *dir) {
     char path[SIGIL_SAVE_PATH_MAX];
-    snprintf(path, sizeof(path), "%s/_pcsx2_superblock", dir);
+    superblock_path(dir, path);
     uint8_t *have = NULL;
     size_t have_len = 0;
     sigil_sync_read_file(x->req, path, PS2_FOLDER_SUPERBLOCK_SIZE + 1, &have, &have_len);
     bool usable = have && sigil_ps2_folder_superblock_usable(have, have_len);
     free(have);
-    if (usable) return SIGIL_OK;
+    return usable;
+}
+
+/* The listing holds a save folder on folder card `dir`. */
+static bool holds_saves(const sigil_sync_request *req, const char *dir) {
+    char name[SIGIL_CARD_NAME_MAX];
+    for (size_t i = 0; i < req->save.listing_count; i++) {
+        if (req->save.listing[i] && save_folder_of_path(dir, req->save.listing[i], name)) return true;
+    }
+    return false;
+}
+
+/* Writes a full formatted _pcsx2_superblock to folder card `dir` when the one
+ * there isn't usable. */
+static int ensure_superblock(const sigil_sync_ctx *x, const char *dir) {
+    if (superblock_usable(x, dir)) return SIGIL_OK;
+    char path[SIGIL_SAVE_PATH_MAX];
+    superblock_path(dir, path);
     uint8_t sb[PS2_FOLDER_SUPERBLOCK_SIZE];
     sigil_ps2_folder_superblock(sb);
     if (x->req->write(x->req->write_ctx, path, sb, sizeof(sb)) != 0 ||
@@ -228,7 +291,15 @@ static int ensure_superblock(const sigil_sync_ctx *x, const char *dir) {
     return SIGIL_OK;
 }
 
-int sigil_sync_folder_card_removals(const sigil_sync_ctx *x, const sigil_sync_card_file *f, size_t *removes) {
+/* A card with no saves and no usable superblock is new, and restore formats
+ * it; one that holds saves behind an unusable superblock is damaged. */
+int sigil_sync_check_folder_card(const sigil_sync_ctx *x, const sigil_sync_card_file *f, size_t *removes,
+                                 sigil_sync_result *r) {
+    *removes = 0;
+    if (!x->req->repair && holds_saves(x->req, f->path) && !superblock_usable(x, f->path)) {
+        superblock_path(f->path, r->problem);
+        return SIGIL_ERR_DAMAGED;
+    }
     return sync_folder_card(x, f, false, removes);
 }
 

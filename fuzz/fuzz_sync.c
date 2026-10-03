@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "card_ps1.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -48,9 +49,16 @@ static int root_write(void *ctx, const char *path, const uint8_t *data, size_t l
     return 0;
 }
 
+static void broken(const char *what) {
+    fprintf(stderr, "oracle: %s\n", what);
+    abort();
+}
+
 /* Restores the input as a unit from RomM, and as a companion's unit, into a
  * root whose card holds the input too, then collects the root and restores
- * the collected units. */
+ * the collected units, with repair on so a damaged .vmp reaches the writer.
+ * A restore that succeeds must collect back, without repair, to the same
+ * game and companion saves, unchanged. */
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     static const char *const listing[] = { "Game.srm" };
     static const char *const ids[] = { "SLUS-01334" };
@@ -80,6 +88,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     req.game_ids = ids;
     req.game_id_count = 1;
     req.overwrite_local = 1;
+    req.repair = 1;
     req.write = root_write;
     req.write_ctx = &r;
     sigil_sync_companion companion = { companion_ids, 1, data, size };
@@ -97,8 +106,21 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             companion.unit = out->companions[0].data;
             companion.unit_len = out->companions[0].len;
         }
-        sigil_sync_result *again = NULL;
-        sigil_restore(&req, out->data, out->len, &again);
+        sigil_sync_result *again = NULL, *back = NULL;
+        if (sigil_restore(&req, out->data, out->len, &again) == SIGIL_OK) {
+            req.state = again->state;
+            req.state_len = again->state_len;
+            req.repair = 0;
+            if (sigil_collect(&req, &back) != SIGIL_OK) broken("collect after a restore failed");
+            if (strcmp(back->identity_hash, out->identity_hash) != 0) broken("a restored unit collects back as other saves");
+            if (back->changed) broken("a restored unit collects back as changed");
+            if (out->companion_count == 1 &&
+                (back->companion_count != 1 ||
+                 strcmp(back->companions[0].identity_hash, out->companions[0].identity_hash) != 0)) {
+                broken("a restored companion collects back as other saves");
+            }
+        }
+        sigil_sync_result_free(back);
         sigil_sync_result_free(again);
     }
     sigil_sync_result_free(out);

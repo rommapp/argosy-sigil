@@ -97,6 +97,9 @@ int sigil_ps2_extract(const sigil_ps2_card *card, uint32_t first_cluster, sigil_
  */
 int sigil_ps2_inject(sigil_ps2_card *card, const sigil_ps2_save *save);
 
+/** Clusters sigil_ps2_inject takes for `save` on this card, root growth included; 0 for no card. */
+uint32_t sigil_ps2_cost(const sigil_ps2_card *card, const sigil_ps2_save *save);
+
 /** Deletes the save folder starting at `first_cluster`, freeing its clusters. */
 int sigil_ps2_delete(sigil_ps2_card *card, uint32_t first_cluster);
 

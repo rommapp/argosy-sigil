@@ -486,15 +486,21 @@ int sigil_segacd_list(const sigil_segacd_volume *vol, sigil_card_listing **out) 
     listing->free_slots = count_free_slots(&c);
     for (uint32_t i = 0; i < c.files; i++) {
         dir_entry e;
-        if (!read_slot(vol, i, &e) || !entry_valid(vol, &c, &e)) {
-            listing->corrupt_count++;
+        if (!read_slot(vol, i, &e)) {
+            sigil_card_listing_corrupt(listing, NULL, NULL, 0);
+            continue;
+        }
+        char name[SEGACD_NAME_LEN + 1];
+        size_t n = 0;
+        while (n < SEGACD_NAME_LEN && e.raw[n] != 0) n++;
+        memcpy(name, e.raw, n);
+        name[n] = '\0';
+        if (!entry_valid(vol, &c, &e)) {
+            sigil_card_listing_corrupt(listing, name, NULL, e.start);
             continue;
         }
         sigil_card_entry *entry = &listing->entries[listing->entry_count++];
-        size_t n = 0;
-        while (n < SEGACD_NAME_LEN && e.raw[n] != 0) n++;
-        memcpy(entry->name, e.raw, n);
-        entry->name[n] = '\0';
+        memcpy(entry->name, name, n + 1);
         entry->blocks = e.blocks;
         entry->first_block = e.start;
     }
@@ -578,6 +584,19 @@ static uint32_t unit_blocks(const uint8_t *unit, size_t len) {
     return blocks;
 }
 
+/* A new save takes its blocks and, when the file count is odd, a new
+ * directory block: each directory block holds two entries. */
+static uint32_t inject_cost(uint32_t blocks, uint32_t files) {
+    return blocks + (files & 1u);
+}
+
+uint32_t sigil_segacd_cost(const sigil_segacd_volume *vol, const uint8_t *unit, size_t len) {
+    uint32_t blocks = unit_blocks(unit, len);
+    volume_counts c;
+    if (!vol || !vol->data || blocks == 0 || !read_counts(vol, &c)) return 0;
+    return inject_cost(blocks, c.files);
+}
+
 int sigil_segacd_inject(sigil_segacd_volume *vol, const uint8_t *unit, size_t len) {
     if (!vol || !vol->data) return SIGIL_ERR_INVALID_ARG;
     uint32_t blocks = unit_blocks(unit, len);
@@ -594,8 +613,7 @@ int sigil_segacd_inject(sigil_segacd_volume *vol, const uint8_t *unit, size_t le
     }
     free(entries);
     if (rc != SIGIL_OK) return rc;
-    uint32_t cost = blocks + (c.files & 1u);
-    if (c.free < cost || start + blocks > data_end(vol, c.files + 1)) return SIGIL_ERR_NO_SPACE;
+    if (c.free < inject_cost(blocks, c.files)) return SIGIL_ERR_NO_SPACE;
 
     memcpy(vol->data + (size_t)start * SEGACD_BLOCK_SIZE, unit + SEGACD_UNIT_HEADER_SIZE,
            (size_t)blocks * SEGACD_BLOCK_SIZE);

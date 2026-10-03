@@ -24,7 +24,11 @@ static void volume_set_free(volume_set *s) {
     s->count = 0;
 }
 
-static int gather_volumes(const sigil_sync_ctx *x, volume_set *s) {
+/* The game's volume files, loaded. A file there that doesn't read as its
+ * volume is SIGIL_ERR_DAMAGED, naming it in r->problem: sigil never formats
+ * over saves it can't read, so repair doesn't change that. An empty file is
+ * no volume yet. */
+static int gather_volumes(const sigil_sync_ctx *x, volume_set *s, sigil_sync_result *r) {
     memset(s, 0, sizeof(*s));
     s->kind = x->kind;
     sigil_volume_target targets[SIGIL_VOLUME_TARGETS_MAX];
@@ -42,6 +46,10 @@ static int gather_volumes(const sigil_sync_ctx *x, volume_set *s) {
         int64_t size = io->size ? io->size(io->ctx) : -1;
         if (size != 0) rc = x->kind->load(io, f->target.device, &f->card, &f->format);
         sigil_io_close(io);
+        if (rc == SIGIL_ERR_UNSUPPORTED_FORMAT || rc == SIGIL_ERR_INVALID_ARG) {
+            snprintf(r->problem, sizeof(r->problem), "%s", f->target.path);
+            rc = SIGIL_ERR_DAMAGED;
+        }
     }
     if (rc != SIGIL_OK) volume_set_free(s);
     return rc;
@@ -145,7 +153,7 @@ static int note_unowned(const sigil_sync_saves *saves, sigil_sync_result *r) {
 
 int sigil_sync_collect_volumes(sigil_sync_ctx *x, sigil_sync_result *r) {
     volume_set vols;
-    int rc = gather_volumes(x, &vols);
+    int rc = gather_volumes(x, &vols, r);
     if (rc != SIGIL_OK) return rc;
     sigil_sync_saves saves;
     rc = gather_volume_saves(x, &vols, &saves);
@@ -251,7 +259,10 @@ static int place_on_volumes(sigil_sync_ctx *x, volume_set *s, const sigil_sync_s
         for (size_t v = 0; v < s->count; v++) {
             if (s->files[v].target.device == incoming->items[i].device) incoming->items[i].card = v;
         }
-        if (incoming->items[i].card == SIZE_MAX) rc = SIGIL_ERR_INVALID_ARG;
+        if (incoming->items[i].card == SIZE_MAX) {
+            snprintf(r->problem, sizeof(r->problem), "%s", sigil_sync_device_name(incoming->items[i].device));
+            rc = SIGIL_ERR_NO_TARGET;
+        }
     }
     void *next[SIGIL_VOLUME_TARGETS_MAX] = { NULL };
     bool write[SIGIL_VOLUME_TARGETS_MAX] = { false };
@@ -282,13 +293,13 @@ static int place_on_volumes(sigil_sync_ctx *x, volume_set *s, const sigil_sync_s
         for (size_t i = 0; i < incoming->count && rc == SIGIL_OK; i++) {
             if (incoming->items[i].card != v) continue;
             rc = x->kind->inject(next[v], incoming->items[i].save);
-            if (rc == SIGIL_ERR_NO_SPACE) sigil_sync_note_overflow(x, next[v], format, f->target.device, &incoming->items[i], r);
+            if (rc == SIGIL_ERR_NO_SPACE) sigil_sync_note_overflow(x, next[v], format, &incoming->items[i], r);
         }
         for (size_t i = 0; managed && i < local->count && rc == SIGIL_OK; i++) {
             const sigil_sync_save *o = &local->items[i];
             if (o->card != v || o->owner != SYNC_OWN_COMPANION || sigil_sync_companion_restored(x, o->companion)) continue;
             rc = x->kind->inject(next[v], o->save);
-            if (rc == SIGIL_ERR_NO_SPACE) sigil_sync_note_overflow(x, next[v], format, f->target.device, o, r);
+            if (rc == SIGIL_ERR_NO_SPACE) sigil_sync_note_overflow(x, next[v], format, o, r);
         }
     }
     for (size_t v = 0; v < s->count && rc == SIGIL_OK; v++) {
@@ -325,7 +336,7 @@ static int note_restored(sigil_sync_ctx *x, const volume_set *s, const sigil_syn
 int sigil_sync_restore_volumes(sigil_sync_ctx *x, sigil_sync_saves *incoming, const size_t sizes[SIGIL_DEVICE_COUNT],
                                sigil_sync_result *r, char local_identity[33]) {
     volume_set vols;
-    int rc = gather_volumes(x, &vols);
+    int rc = gather_volumes(x, &vols, r);
     if (rc != SIGIL_OK) return rc;
     sigil_sync_saves local;
     rc = gather_volume_saves(x, &vols, &local);

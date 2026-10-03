@@ -302,6 +302,7 @@ static bool load_sample(const char *id, const char *path, sigil_segacd_volume *v
 #define LUNAR        "lunar-ecc-brm", "Lunar_The_Silver_Star-internal-memory.brm"
 #define POPFUL_CART  "popful-mail-cart-brm", "Popful Mail (USA) (RE)-from-emulator cart.brm"
 #define SFCD         "sfcd-internal-plus-cart", "SHINING FORCE CD.brm"
+#define ENTRY_START_AT 12u   /* a directory entry's start block, big-endian; an odd slot fills the payload's first half */
 
 /* The blank samples are formatted volumes; a volume sigil formats matches them. */
 static void check_format(void) {
@@ -410,6 +411,9 @@ static void check_inject_and_delete(void) {
         if (memcmp(vol.data + SEGACD_BLOCK_SIZE, lunar.data + SEGACD_BLOCK_SIZE, (size_t)40 * SEGACD_BLOCK_SIZE) != 0) {
             fail(id, "the remaining save's blocks differ from the Lunar sample's");
         }
+        bool zeroed = true;
+        for (size_t i = (size_t)41 * SEGACD_BLOCK_SIZE; i < (size_t)121 * SEGACD_BLOCK_SIZE && zeroed; i++) zeroed = vol.data[i] == 0;
+        if (!zeroed) fail(id, "the blocks the deleted saves freed still hold their data");
     }
     sigil_card_listing_free(l);
 done:
@@ -418,6 +422,201 @@ done:
     free(dw1);
     sigil_segacd_volume_free(&vol);
     sigil_segacd_volume_free(&lunar);
+}
+
+/* The first `blocks` blocks of `unit` as a save named `name`. Each block is
+ * its own ECC block, so a prefix is a valid save of that many blocks. */
+static uint8_t *unit_slice(const uint8_t *unit, uint32_t blocks, const char *name, size_t *len) {
+    *len = sigil_segacd_unit_size(blocks);
+    uint8_t *out = (uint8_t *)malloc(*len);
+    if (!out) return NULL;
+    memcpy(out, unit, *len);
+    memset(out + 0x04, '_', 11);
+    memcpy(out + 0x04, name, strlen(name));
+    out[0x10] = (uint8_t)(blocks >> 8);
+    out[0x11] = (uint8_t)blocks;
+    return out;
+}
+
+/* A save fits when its blocks and the directory block it may need are free,
+ * to the block: three 40-block saves leave 4 free with an odd file count, so
+ * a 3-block save (needing a directory block) fits exactly and a 4-block one
+ * is refused untouched. Every save still verifies after the exact fit. */
+static void check_exact_fit(void) {
+    size_t blank_len = 0;
+    uint8_t *blank = sample_bytes("blank-internal", "Empty-mister-save.sav", &blank_len);
+    sigil_segacd_volume lunar = {0}, vol = {0};
+    uint8_t *ga = NULL, *fill[3] = { NULL, NULL, NULL }, *three = NULL, *four = NULL;
+    size_t ga_len = 0, fill_len = 0, three_len = 0, four_len = 0;
+    static const char *const NAMES[3] = { "FILL_A", "FILL_B", "FILL_C" };
+    if (!blank || !load_bytes(blank, blank_len, &vol) || !load_sample(LUNAR, &lunar) ||
+        !extract_named(&lunar, "GA_LUNAR_01", &ga, &ga_len)) {
+        fail("exact fit", "setup failed");
+        goto done;
+    }
+    for (int i = 0; i < 3; i++) {
+        fill[i] = unit_slice(ga, 40, NAMES[i], &fill_len);
+        if (!fill[i] || sigil_segacd_inject(&vol, fill[i], fill_len) != SIGIL_OK) { fail("exact fit", "filling failed"); goto done; }
+    }
+    expect_counts("exact fit filled", &vol, 4, 3);
+    four = unit_slice(ga, 4, "FOUR", &four_len);
+    three = unit_slice(ga, 3, "THREE", &three_len);
+    if (!four || !three) { fail("exact fit", "setup failed"); goto done; }
+    expect_refused("exact fit one block over", &vol, four, four_len, SIGIL_ERR_NO_SPACE);
+    if (sigil_segacd_cost(&vol, four, four_len) != 5) fail("exact fit", "an odd file count's directory block isn't in the cost");
+    size_t ten_len = 0;
+    uint8_t *ten = unit_slice(ga, 10, "TEN", &ten_len);
+    if (ten) {
+        uint8_t saved[8];
+        uint8_t *count = vol.data + vol.size - SEGACD_BLOCK_SIZE + 0x10;
+        memcpy(saved, count, 8);
+        for (int i = 0; i < 4; i++) { count[2 * i] = 0; count[2 * i + 1] = 50; }
+        expect_refused("exact fit, a stored free count that overstates the space", &vol, ten, ten_len, SIGIL_ERR_NO_SPACE);
+        memcpy(count, saved, 8);
+        free(ten);
+    }
+    if (sigil_segacd_inject(&vol, three, three_len) != SIGIL_OK) {
+        fail("exact fit", "a save that fits to the block was refused");
+    } else {
+        expect_counts("exact fit", &vol, 0, 4);
+        if (sigil_segacd_cost(&vol, four, four_len) != 4) fail("exact fit", "an even file count added a directory block to the cost");
+        for (int i = 0; i < 3; i++) {
+            if (sigil_segacd_verify(&vol, fill[i], fill_len) != SIGIL_OK) fail("exact fit", "a save changed when the volume filled");
+        }
+        if (sigil_segacd_verify(&vol, three, three_len) != SIGIL_OK) fail("exact fit", "the fitting save didn't verify");
+    }
+done:
+    for (int i = 0; i < 3; i++) free(fill[i]);
+    free(three);
+    free(four);
+    free(ga);
+    free(blank);
+    sigil_segacd_volume_free(&vol);
+    sigil_segacd_volume_free(&lunar);
+}
+
+/* The BIOS writes each count four times and reads it when three agree: a
+ * volume whose first copy is damaged still reads. */
+/* The directory slot `slot` of `vol` as its 16 bytes, through the codec. */
+static uint8_t *slot_payload(sigil_segacd_volume *vol, uint32_t slot, uint8_t payload[SEGACD_PAYLOAD_SIZE]) {
+    uint8_t *block = vol->data + vol->size - (size_t)(2 + slot / 2) * SEGACD_BLOCK_SIZE;
+    if (!sigil_segacd_decode_block(block, payload)) return NULL;
+    return block;
+}
+
+/* The BIOS keeps saves back to back from block 1 and its directory exact:
+ * a save starting a block late is refused for inject; a save ending at the
+ * last data block reads; deleting the last entry in an odd slot clears its
+ * half of the block; a protected unit that doesn't decode isn't injected. */
+static void check_directory_rules(void) {
+    sigil_segacd_volume vol = {0}, lunar = {0};
+    uint8_t *ga = NULL, *fill = NULL, *rest = NULL;
+    size_t ga_len = 0, fill_len = 0, rest_len = 0;
+    uint8_t payload[SEGACD_PAYLOAD_SIZE];
+    if (!load_sample(LUNAR, &lunar) || !extract_named(&lunar, "GA_LUNAR_01", &ga, &ga_len)) {
+        fail("directory rules", "setup failed");
+        goto done;
+    }
+
+    if (load_sample(DARK_WIZARD, &vol)) {
+        uint8_t *block = slot_payload(&vol, 1, payload);
+        if (!block) {
+            fail("directory rules", "setup failed");
+        } else {
+            payload[ENTRY_START_AT + 1]++;
+            sigil_segacd_encode_block(payload, block);
+            fill = unit_slice(ga, 1, "ONE", &fill_len);
+            if (fill) expect_refused("a save a block late", &vol, fill, fill_len, SIGIL_ERR_UNSUPPORTED_FORMAT);
+            free(fill);
+            fill = NULL;
+        }
+        sigil_segacd_volume_free(&vol);
+    }
+
+    if (load_sample(DARK_WIZARD, &vol)) {
+        sigil_card_listing *l = NULL;
+        const sigil_card_entry *e = NULL;
+        uint8_t *block = NULL;
+        if (sigil_segacd_list(&vol, &l) != SIGIL_OK || !(e = find_entry(l, "DW__DATA_01")) ||
+            sigil_segacd_delete(&vol, e->first_block) != SIGIL_OK || !(block = slot_payload(&vol, 1, payload))) {
+            fail("directory rules", "deleting the last entry failed");
+        } else {
+            for (uint32_t i = 0; i < 16; i++) {
+                if (payload[i]) { fail("directory rules", "a deleted entry in an odd slot stayed in its block"); break; }
+            }
+        }
+        sigil_card_listing_free(l);
+        sigil_segacd_volume_free(&vol);
+    }
+
+    size_t blank_len = 0;
+    uint8_t *blank = sample_bytes("blank-internal", "Empty-mister-save.sav", &blank_len);
+    if (blank && load_bytes(blank, blank_len, &vol)) {
+        fill = unit_slice(ga, 40, "FILL_A", &fill_len);
+        uint8_t *second = unit_slice(ga, 40, "FILL_B", &fill_len);
+        sigil_card_listing *l = NULL;
+        bool ok = fill && second && sigil_segacd_inject(&vol, fill, fill_len) == SIGIL_OK &&
+                  sigil_segacd_inject(&vol, second, fill_len) == SIGIL_OK && sigil_segacd_list(&vol, &l) == SIGIL_OK;
+        uint32_t room = ok ? l->free_blocks : 0;
+        sigil_card_listing_free(l);
+        l = NULL;
+        for (int pair = 0; ok && room > 40; pair++) {
+            char a[8], b[8];
+            snprintf(a, sizeof(a), "P%dA", pair);
+            snprintf(b, sizeof(b), "P%dB", pair);
+            size_t one_len = 0;
+            uint8_t *x = unit_slice(ga, 1, a, &one_len), *y = unit_slice(ga, 1, b, &one_len);
+            ok = x && y && sigil_segacd_inject(&vol, x, one_len) == SIGIL_OK &&
+                 sigil_segacd_inject(&vol, y, one_len) == SIGIL_OK && sigil_segacd_list(&vol, &l) == SIGIL_OK;
+            room = ok ? l->free_blocks : 0;
+            sigil_card_listing_free(l);
+            l = NULL;
+            free(x);
+            free(y);
+        }
+        rest = ok && room ? unit_slice(ga, room, "REST", &rest_len) : NULL;
+        if (!rest || sigil_segacd_inject(&vol, rest, rest_len) != SIGIL_OK) {
+            fail("directory rules", "a save of exactly the free blocks with an even file count was refused");
+        } else if (sigil_segacd_list(&vol, &l) != SIGIL_OK || l->free_blocks != 0 || l->corrupt_count != 0 ||
+                   !find_entry(l, "REST_______")) {
+            fail("directory rules", "a save ending at the last data block didn't list");
+        }
+        sigil_card_listing_free(l);
+        free(second);
+        sigil_segacd_volume_free(&vol);
+    }
+    free(blank);
+
+    if (load_sample(DARK_WIZARD, &vol)) {
+        uint8_t *bad = (uint8_t *)malloc(ga_len);
+        if (bad) {
+            memcpy(bad, ga, ga_len);
+            bad[sigil_segacd_unit_size(0) + 8] ^= 0xC0;
+            expect_refused("a protected unit that doesn't decode", &vol, bad, ga_len, SIGIL_ERR_UNSUPPORTED_FORMAT);
+        }
+        free(bad);
+        sigil_segacd_volume_free(&vol);
+    }
+done:
+    free(rest);
+    free(fill);
+    free(ga);
+    sigil_segacd_volume_free(&lunar);
+}
+
+static void check_count_copies(void) {
+    size_t len = 0;
+    uint8_t *bytes = sample_bytes("dark-wizard-brm", "Dark Wizard (USA) cd-bram.brm", &len);
+    sigil_segacd_volume vol = {0};
+    if (!bytes) { fail("count copies", "setup failed"); return; }
+    bytes[len - SEGACD_BLOCK_SIZE + 0x18] ^= 0xFF;
+    sigil_card_listing *l = NULL;
+    if (!load_bytes(bytes, len, &vol) || sigil_segacd_list(&vol, &l) != SIGIL_OK || l->entry_count != 2) {
+        fail("count copies", "a volume with one damaged count copy didn't read");
+    }
+    sigil_card_listing_free(l);
+    sigil_segacd_volume_free(&vol);
+    free(bytes);
 }
 
 /* SFCD_DAT_01 takes 99 blocks; the multi-titles volume has 24 free. Popful
@@ -579,6 +778,18 @@ static void check_not_volumes(void) {
         copy[len - 0x28 + 1] = 0x05;
         copy[len - 0x28 + 3] = 0x06;
         expect_not_volume("disagreeing file counts", copy, len);
+        memcpy(copy, bytes, len);
+        for (int i = 0; i < 4; i++) {
+            copy[len - SEGACD_BLOCK_SIZE + 0x18 + 2 * i] = 0x01;
+            copy[len - SEGACD_BLOCK_SIZE + 0x19 + 2 * i] = 0x00;
+        }
+        sigil_segacd_volume vol = {0};
+        sigil_card_listing *l = NULL;
+        if (load_bytes(copy, len, &vol) && sigil_segacd_list(&vol, &l) == SIGIL_OK) {
+            fail("file counts past the volume", "a volume counting more files than it holds listed");
+        }
+        sigil_card_listing_free(l);
+        sigil_segacd_volume_free(&vol);
     }
     free(copy);
     free(bytes);
@@ -610,6 +821,9 @@ int main(void) {
     check_refusals();
     check_ecc_damage();
     check_no_silent_damage();
+    check_exact_fit();
+    check_count_copies();
+    check_directory_rules();
     check_expanded(&entries);
     check_not_volumes();
     int missing = g_volumes ? corpus_count_missing(&manifest, PLATFORM) : 0;

@@ -224,15 +224,36 @@ def test_pcsx2_folder_card_syncs_through_the_default_listing(tmp_path):
     card.mkdir(parents=True)
     (card / "_pcsx2_superblock").write_bytes(b"")
     restored = sigil.restore(unit.data, _ACE, "pcsx2_standalone", "Ace Combat 04 (USA).iso", tmp_path / "target")
-    assert restored.identity_hash == unit.identity_hash
     assert (card / "_pcsx2_superblock").stat().st_size == 0x2000
     assert (card / "BASLUS-20152AC04" / "_pcsx2_index").exists()
+    back = sigil.collect(_ACE, "pcsx2_standalone", "Ace Combat 04 (USA).iso", tmp_path / "target", state=restored.state)
+    assert back.identity_hash == unit.identity_hash
+    assert not back.changed
 
     meta = card / "BASLUS-20152AC04" / "_pcsx2_meta"
     meta.mkdir()
     (meta / "icon.sys").write_bytes(b"\0" * 512)
     listed = sigil.list_save_root(tmp_path / "target", "pcsx2_standalone")
     assert "memcards/Mcd001.ps2/BASLUS-20152AC04/_pcsx2_meta/icon.sys" in listed
+
+
+def test_pcsx2_folder_restore_removes_a_dropped_folder_and_its_directory(tmp_path):
+    source = tmp_path / "source" / "memcards" / "Mcd001.ps2" / "BASLUS-20152AC04"
+    source.mkdir(parents=True)
+    for f in _ACE_DIR.iterdir():
+        (source / f.name).write_bytes(f.read_bytes())
+    unit = sigil.collect(_ACE, "pcsx2_standalone", "Ace Combat 04 (USA).iso", tmp_path / "source")
+
+    card = tmp_path / "target" / "memcards" / "Mcd001.ps2"
+    dropped = card / "BASLUS-20152XX"
+    dropped.mkdir(parents=True)
+    for f in _ACE_DIR.iterdir():
+        (dropped / f.name).write_bytes(f.read_bytes())
+    (card / "_pcsx2_superblock").write_bytes(b"")
+    sigil.restore(unit.data, _ACE, "pcsx2_standalone", "Ace Combat 04 (USA).iso", tmp_path / "target",
+                  overwrite_local=True, repair=True)
+    assert (card / "BASLUS-20152AC04" / "_pcsx2_index").exists()
+    assert not dropped.exists()
 
 
 def test_companion_saves_go_on_the_card_and_come_back_as_their_unit(tmp_path):
@@ -264,8 +285,8 @@ def test_companion_saves_go_on_the_card_and_come_back_as_their_unit(tmp_path):
     (full / "Sequel.srm").write_bytes(_ps1_card([("BASLUS-99999OTHER", 15)]))
     with pytest.raises(sigil.SigilNoSpaceError) as excinfo:
         sigil.restore(second.data, sequel, "pcsx_rearmed", "Sequel.cue", full, overwrite_local=True)
-    assert excinfo.value.overflow == "BASLUS-01334LEGENDS2"
-    assert excinfo.value.overflow_blocks == 1
+    assert excinfo.value.problem == "BASLUS-01334LEGENDS2"
+    assert excinfo.value.blocks_short == 1
 
 
 def _write_xex_fixture(path):

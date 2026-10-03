@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "save_corpus.h"
 #include "mem_root.h"
+#include "card_saturn.h"
 #include "card_segacd.h"
 #include <stdbool.h>
 
@@ -168,6 +169,44 @@ static sigil_sync_result *lunar_unit(void) {
     return r;
 }
 
+static size_t last_set_byte(const uint8_t *image, size_t len) {
+    size_t at = len;
+    while (at > 0 && image[at - 1] == 0) at--;
+    return at ? at - 1 : 0;
+}
+
+static size_t first_set_byte(const uint8_t *image, size_t len) {
+    size_t at = 0;
+    while (at < len && image[at] == 0) at++;
+    return at;
+}
+
+/* A per-game volume that reads back with a byte of a save's data wrong fails
+ * the restore. `data_at` finds a byte of save data in the cleanly written
+ * volume. */
+static void check_faulty_write(const char *where, const char *layout, const char *platform, const char *content,
+                               const char *opt_key, const char *opt_value, const uint8_t *unit, size_t unit_len,
+                               size_t (*data_at)(const uint8_t *, size_t)) {
+    mem_root clean = {0}, faulty = {0};
+    game g;
+    make_game(&g, &clean, layout, platform, content, SIGIL_SYNC_MANAGED);
+    if (opt_key) add_option(&g, opt_key, opt_value);
+    sigil_sync_result *r = NULL, *bad = NULL;
+    if (sigil_restore(&g.req, unit, unit_len, &r) != SIGIL_OK || clean.count != 1) {
+        fail(where, "clean restore failed");
+    } else {
+        faulty.corrupt_write = 1;
+        faulty.corrupt_at = data_at(clean.files[0].data, clean.files[0].len);
+        make_game(&g, &faulty, layout, platform, content, SIGIL_SYNC_MANAGED);
+        if (opt_key) add_option(&g, opt_key, opt_value);
+        if (sigil_restore(&g.req, unit, unit_len, &bad) != SIGIL_ERR_IO) fail(where, "a volume that read back wrong passed the restore");
+    }
+    sigil_sync_result_free(bad);
+    sigil_sync_result_free(r);
+    root_free(&faulty);
+    root_free(&clean);
+}
+
 /* ---- Saturn ------------------------------------------------------------------- */
 
 /* A game's internal and cart volumes travel together as a zip, and a save with
@@ -206,6 +245,17 @@ static void check_saturn_internal_and_cart(void) {
             if (strcmp(expect, r->content_hash) != 0) fail("saturn pair", "content hash isn't RomM's zip hash");
         }
         sigil_zip_members_free(m, n);
+
+        mem_root no_cart = {0};
+        game yabause;
+        make_game(&yabause, &no_cart, "yabause", "saturn", RAYMAN ".cue", SIGIL_SYNC_MANAGED);
+        sigil_sync_result *refused = NULL;
+        if (sigil_restore(&yabause.req, r->data, r->len, &refused) != SIGIL_ERR_NO_TARGET || !refused ||
+            strcmp(refused->problem, "cart.ram") != 0 || no_cart.writes != 0) {
+            fail("saturn pair", "a cart volume restored to a core with no cart file didn't refuse naming it");
+        }
+        sigil_sync_result_free(refused);
+        root_free(&no_cart);
 
         mem_root empty = {0};
         game fresh;
@@ -284,6 +334,9 @@ static void check_saturn_single(void) {
     if (sigil_collect(&g.req, &r) != SIGIL_OK || !r->data || r->shape != SIGIL_SAVE_SHAPE_SINGLE ||
         strcmp(r->artifact, "backup.ram") != 0 || r->len != 32768) {
         fail("saturn single", "an internal-only game isn't one backup.ram");
+    } else {
+        check_faulty_write("saturn faulty write", "mednafen_saturn", "saturn", "Hyper Duel (Japan).cue", NULL, NULL,
+                           r->data, r->len, last_set_byte);
     }
     sigil_sync_result_free(r);
     root_free(&root);
@@ -370,6 +423,614 @@ static void check_kronos(void) {
         free(cart);
     }
     free(internal);
+}
+
+/* ---- Saturn shared volumes ------------------------------------------------------ */
+
+#define SHARED_BKR "mednafen_saturn_libretro_shared.bkr"
+#define ZWEI_CUE   "Panzer Dragoon II Zwei (USA).cue"
+#define DWARF_CUE  "Three Dirty Dwarves (USA).cue"
+
+static const char *const ZWEI_IDS[] = { "MK-81022" };
+static const char *const DWARF_IDS[] = { "T-30401H" };
+static const char *const ZWEI_AND_DWARF_IDS[] = { "MK-81022", "T-30401H" };
+
+/* A raw 32 KiB Saturn internal volume holding `n` .BUP saves. */
+static uint8_t *saturn_volume(const uint8_t *const *bups, const size_t *lens, size_t n, size_t *out_len) {
+    sigil_saturn_volume v;
+    sigil_bram_storage raw;
+    memset(&raw, 0, sizeof(raw));
+    raw.filler = -1;
+    uint8_t *out = NULL;
+    if (sigil_saturn_volume_format(&v, SATURN_INTERNAL_SIZE, &raw) != SIGIL_OK) return NULL;
+    bool ok = true;
+    for (size_t i = 0; i < n && ok; i++) ok = sigil_saturn_inject(&v, bups[i], lens[i]) == SIGIL_OK;
+    if (!ok || sigil_saturn_volume_write(&v, &out, out_len) != SIGIL_OK) out = NULL;
+    sigil_saturn_volume_free(&v);
+    return out;
+}
+
+/* `bup` with one byte of its data flipped: a newer save of the same name. */
+static uint8_t *bup_variant(const uint8_t *bup, size_t len, size_t at) {
+    uint8_t *out = (uint8_t *)malloc(len);
+    if (!out) return NULL;
+    memcpy(out, bup, len);
+    out[SATURN_BUP_HEADER_SIZE + at] ^= 0xFF;
+    return out;
+}
+
+/* A Beetle Saturn game on the shared internal volume. */
+static void make_shared(game *g, mem_root *root, const char *content, const char *const *ids, size_t id_count, int mode) {
+    make_game(g, root, "mednafen_saturn", "saturn", content, mode);
+    add_option(g, "beetle_saturn_save_method", "mednafen");
+    add_option(g, "beetle_saturn_shared_int", "enabled");
+    g->req.game_ids = ids;
+    g->req.game_id_count = id_count;
+}
+
+/* The saves of the shared-volume checks: Zwei and the Dwarves have table
+ * rows, Tokimeki has none. */
+typedef struct {
+    uint8_t *zwei, *dwarf, *toki;
+    size_t   zwei_len, dwarf_len, toki_len;
+} shared_saves;
+
+static bool load_shared_saves(shared_saves *s) {
+    memset(s, 0, sizeof(*s));
+    s->zwei = sample(&g_saturn, "saturn", "pandra-zwei-bup", "PANDRA_ZWEI.BUP", &s->zwei_len);
+    s->dwarf = sample(&g_saturn, "saturn", "three-dirty-dwarves-bup", NULL, &s->dwarf_len);
+    s->toki = sample(&g_saturn, "saturn", "tokimeki-bup", "TOKIMEKI_99.BUP", &s->toki_len);
+    return s->zwei && s->dwarf && s->toki;
+}
+
+static void free_shared_saves(shared_saves *s) {
+    free(s->zwei);
+    free(s->dwarf);
+    free(s->toki);
+}
+
+/* A unit of one internal volume holding `bup`. */
+static uint8_t *unit_of(const uint8_t *bup, size_t len, size_t *out_len) {
+    const uint8_t *one[1] = { bup };
+    return saturn_volume(one, &len, 1, out_len);
+}
+
+/* The identity collect gives Zwei's saves on a per-game volume holding `bup`. */
+static bool zwei_identity(const uint8_t *bup, size_t len, char out[33]) {
+    size_t vol_len = 0;
+    uint8_t *vol = unit_of(bup, len, &vol_len);
+    mem_root root = {0};
+    if (vol) root_put(&root, "Panzer Dragoon II Zwei (USA).srm", vol, vol_len);
+    game g;
+    make_game(&g, &root, "mednafen_saturn", "saturn", ZWEI_CUE, SIGIL_SYNC_MANAGED);
+    sigil_sync_result *r = NULL;
+    bool ok = vol && sigil_collect(&g.req, &r) == SIGIL_OK && r->data;
+    if (ok) snprintf(out, 33, "%s", r->identity_hash);
+    sigil_sync_result_free(r);
+    root_free(&root);
+    free(vol);
+    return ok;
+}
+
+/* Unmanaged on a shared volume: restore injects only when the volume is as
+ * the last collect or restore saw it, so a second restore needs no collect
+ * between; a collect after the core overwrote the restore asks for it again,
+ * while local saves that match neither side come back as a change, with no
+ * flag picking a winner. */
+static void check_saturn_unmanaged(void) {
+    shared_saves s;
+    if (!load_shared_saves(&s)) { free_shared_saves(&s); fail("saturn unmanaged", "setup failed"); return; }
+    uint8_t *z1 = bup_variant(s.zwei, s.zwei_len, 1), *z2 = bup_variant(s.zwei, s.zwei_len, 2);
+    uint8_t *z3 = bup_variant(s.zwei, s.zwei_len, 3), *toki2 = bup_variant(s.toki, s.toki_len, 1);
+    const uint8_t *v0b[3] = { s.zwei, s.dwarf, s.toki }, *v0t[3] = { s.zwei, s.dwarf, toki2 };
+    const uint8_t *v1b[3] = { z1, s.dwarf, s.toki }, *v3b[3] = { z3, s.dwarf, s.toki };
+    size_t lens[3] = { s.zwei_len, s.dwarf_len, s.toki_len };
+    size_t v0_len = 0, v0t_len = 0, v1_len = 0, v3_len = 0, u1_len = 0, u2_len = 0;
+    uint8_t *v0 = saturn_volume(v0b, lens, 3, &v0_len), *v0_toki = saturn_volume(v0t, lens, 3, &v0t_len);
+    uint8_t *v1 = saturn_volume(v1b, lens, 3, &v1_len), *v3 = saturn_volume(v3b, lens, 3, &v3_len);
+    uint8_t *u1 = unit_of(z1, s.zwei_len, &u1_len), *u2 = unit_of(z2, s.zwei_len, &u2_len);
+    char id3[33] = "";
+    mem_root root = {0};
+    sigil_sync_result *seen = NULL, *r = NULL, *again = NULL, *after = NULL;
+    if (!v0 || !v0_toki || !v1 || !v3 || !u1 || !u2 || !zwei_identity(z3, s.zwei_len, id3)) {
+        fail("saturn unmanaged", "setup failed");
+        goto done;
+    }
+    root_put(&root, SHARED_BKR, v0, v0_len);
+    game g;
+    make_shared(&g, &root, ZWEI_CUE, ZWEI_IDS, 1, SIGIL_SYNC_UNMANAGED);
+    if (sigil_collect(&g.req, &seen) != SIGIL_OK || !seen->data) { fail("saturn unmanaged", "collect failed"); goto done; }
+    use_state(&g, seen);
+
+    root_put(&root, SHARED_BKR, v0_toki, v0t_len);
+    root.writes = 0;
+    if (sigil_restore(&g.req, u1, u1_len, &r) != SIGIL_ERR_UNCOLLECTED || root.writes != 0) {
+        fail("saturn unmanaged", "a volume changed since the collect took an inject");
+    }
+    sigil_sync_result_free(r);
+    r = NULL;
+
+    root_put(&root, SHARED_BKR, v0, v0_len);
+    if (sigil_restore(&g.req, u1, u1_len, &r) != SIGIL_OK) { fail("saturn unmanaged", "restore failed"); goto done; }
+    use_state(&g, r);
+    if (sigil_restore(&g.req, u2, u2_len, &again) != SIGIL_OK) {
+        fail("saturn unmanaged", "a second restore refused the volume the first one left");
+        goto done;
+    }
+    use_state(&g, again);
+
+    root_put(&root, SHARED_BKR, v1, v1_len);
+    if (sigil_collect(&g.req, &after) != SIGIL_OK || !after->restore_again || after->changed) {
+        fail("saturn unmanaged", "a core that wrote back the replaced save didn't ask for the restore again");
+    }
+    sigil_sync_result_free(after);
+    after = NULL;
+    root_put(&root, SHARED_BKR, v3, v3_len);
+    if (sigil_collect(&g.req, &after) != SIGIL_OK || after->restore_again || !after->changed ||
+        strcmp(after->identity_hash, id3) != 0) {
+        fail("saturn unmanaged", "local saves matching neither side didn't come back as a plain change");
+    }
+done:
+    sigil_sync_result_free(after);
+    sigil_sync_result_free(again);
+    sigil_sync_result_free(r);
+    sigil_sync_result_free(seen);
+    root_free(&root);
+    free(u1); free(u2); free(v0); free(v0_toki); free(v1); free(v3);
+    free(z1); free(z2); free(z3); free(toki2);
+    free_shared_saves(&s);
+}
+
+/* Managed: a swap refuses while a save with no owner changed after its
+ * holding unit went up, so it can't be swapped away unsaved. A managed
+ * swap's `prepared` doesn't make an unmanaged collect take others' saves. */
+static void check_saturn_swap_guard(void) {
+    shared_saves s;
+    if (!load_shared_saves(&s)) { free_shared_saves(&s); fail("saturn swap guard", "setup failed"); return; }
+    uint8_t *toki2 = bup_variant(s.toki, s.toki_len, 1), *z1 = bup_variant(s.zwei, s.zwei_len, 1);
+    const uint8_t *vb[2] = { s.zwei, s.toki }, *vt[2] = { s.zwei, toki2 };
+    size_t lens[2] = { s.zwei_len, s.toki_len };
+    size_t v_len = 0, vt_len = 0, u1_len = 0;
+    uint8_t *v = saturn_volume(vb, lens, 2, &v_len), *v_toki = saturn_volume(vt, lens, 2, &vt_len);
+    uint8_t *u1 = unit_of(z1, s.zwei_len, &u1_len);
+    mem_root root = {0};
+    sigil_sync_result *held = NULL, *r = NULL, *loose = NULL;
+    if (!v || !v_toki || !u1) { fail("saturn swap guard", "setup failed"); goto done; }
+    root_put(&root, SHARED_BKR, v, v_len);
+    game g;
+    make_shared(&g, &root, ZWEI_CUE, ZWEI_IDS, 1, SIGIL_SYNC_MANAGED);
+    if (sigil_collect(&g.req, &held) != SIGIL_OK || !held->holding) { fail("saturn swap guard", "collect held nothing"); goto done; }
+    use_state(&g, held);
+    root_put(&root, SHARED_BKR, v_toki, vt_len);
+    root.writes = 0;
+    if (sigil_restore(&g.req, u1, u1_len, &r) != SIGIL_ERR_UNCOLLECTED || root.writes != 0) {
+        fail("saturn swap guard", "a save changed after its holding unit went up was swapped away");
+    }
+    sigil_sync_result_free(r);
+    r = NULL;
+    root_put(&root, SHARED_BKR, v, v_len);
+    if (sigil_restore(&g.req, u1, u1_len, &r) != SIGIL_OK) { fail("saturn swap guard", "swap of a held volume failed"); goto done; }
+
+    root_put(&root, SHARED_BKR, v, v_len);
+    game u;
+    make_shared(&u, &root, ZWEI_CUE, ZWEI_IDS, 1, SIGIL_SYNC_UNMANAGED);
+    use_state(&u, r);
+    if (sigil_collect(&u.req, &loose) != SIGIL_OK || loose->unowned_count != 1 || strcmp(loose->unowned[0], "TOKIMEKI_99") != 0) {
+        fail("saturn swap guard", "a managed swap's prepared record gave an unmanaged collect another game's save");
+    }
+done:
+    sigil_sync_result_free(loose);
+    sigil_sync_result_free(r);
+    sigil_sync_result_free(held);
+    root_free(&root);
+    free(v); free(v_toki); free(u1); free(toki2); free(z1);
+    free_shared_saves(&s);
+}
+
+/* Who owns a save on a shared volume, each rule against the next: the
+ * user's claim beats a learned owner; a learned owner beats the name table
+ * and the managed swap record; on a per-game volume only a companion's
+ * learned owner counts. */
+static void check_owner_precedence(void) {
+    shared_saves s;
+    if (!load_shared_saves(&s)) { free_shared_saves(&s); fail("owner precedence", "setup failed"); return; }
+    const uint8_t *vb[2] = { s.zwei, s.dwarf };
+    size_t lens[2] = { s.zwei_len, s.dwarf_len };
+    size_t v_len = 0, du_len = 0;
+    uint8_t *v = saturn_volume(vb, lens, 2, &v_len), *dwarf_unit = unit_of(s.dwarf, s.dwarf_len, &du_len);
+    mem_root root = {0};
+    sigil_sync_result *learned = NULL, *r = NULL, *swapped = NULL;
+    if (!v || !dwarf_unit) { fail("owner precedence", "setup failed"); goto done; }
+    root_put(&root, SHARED_BKR, v, v_len);
+    game d;
+    make_shared(&d, &root, DWARF_CUE, DWARF_IDS, 1, SIGIL_SYNC_MANAGED);
+    if (sigil_collect(&d.req, &learned) != SIGIL_OK || !learned->data) { fail("owner precedence", "the Dwarves' collect failed"); goto done; }
+
+    static const char *const CLAIM[] = { "THREE_DIRTY" };
+    struct { const char *what; const char *const *ids; size_t id_count; const char *const *claimed; bool takes; } CASES[] = {
+        { "a claim lost to a learned owner", ZWEI_IDS, 1, CLAIM, true },
+        { "the name table beat a learned owner", ZWEI_AND_DWARF_IDS, 2, NULL, false },
+    };
+    for (size_t i = 0; i < sizeof(CASES) / sizeof(CASES[0]); i++) {
+        game g;
+        make_shared(&g, &root, ZWEI_CUE, CASES[i].ids, CASES[i].id_count, SIGIL_SYNC_MANAGED);
+        use_state(&g, learned);
+        g.req.claimed = CASES[i].claimed;
+        g.req.claimed_count = CASES[i].claimed ? 1 : 0;
+        r = NULL;
+        sigil_card_listing *l = NULL;
+        if (sigil_collect(&g.req, &r) != SIGIL_OK || !r->data) {
+            fail("owner precedence", "collect failed");
+        } else {
+            l = listing_of(r->data, r->len);
+            if (has_name(l, "THREE_DIRTY") != CASES[i].takes) fail("owner precedence", CASES[i].what);
+        }
+        sigil_card_listing_free(l);
+        sigil_sync_result_free(r);
+    }
+
+    game z;
+    make_shared(&z, &root, ZWEI_CUE, ZWEI_IDS, 1, SIGIL_SYNC_MANAGED);
+    use_state(&z, learned);
+    size_t zu_len = 0;
+    uint8_t *zwei_unit = unit_of(s.zwei, s.zwei_len, &zu_len);
+    if (!zwei_unit || sigil_restore(&z.req, zwei_unit, zu_len, &swapped) != SIGIL_OK) {
+        fail("owner precedence", "the managed swap failed");
+    } else {
+        root_put(&root, SHARED_BKR, v, v_len);
+        refresh(&z, &root);
+        use_state(&z, swapped);
+        r = NULL;
+        sigil_card_listing *l = NULL;
+        if (sigil_collect(&z.req, &r) != SIGIL_OK || !r->data || has_name(l = listing_of(r->data, r->len), "THREE_DIRTY")) {
+            fail("owner precedence", "the swap record beat a learned owner");
+        }
+        sigil_card_listing_free(l);
+        sigil_sync_result_free(r);
+    }
+    free(zwei_unit);
+
+    mem_root own = {0};
+    root_put(&own, "Panzer Dragoon II Zwei (USA).srm", v, v_len);
+    game p;
+    make_game(&p, &own, "mednafen_saturn", "saturn", ZWEI_CUE, SIGIL_SYNC_MANAGED);
+    p.req.game_ids = ZWEI_IDS;
+    p.req.game_id_count = 1;
+    sigil_sync_companion dwarves = { DWARF_IDS, 1, dwarf_unit, du_len };
+    p.req.companions = &dwarves;
+    p.req.companion_count = 1;
+    p.req.overwrite_local = 1;
+    size_t zu2_len = 0;
+    uint8_t *zwei_unit2 = unit_of(s.zwei, s.zwei_len, &zu2_len);
+    r = NULL;
+    sigil_sync_result *back = NULL;
+    if (!zwei_unit2 || sigil_restore(&p.req, zwei_unit2, zu2_len, &r) != SIGIL_OK) {
+        fail("owner precedence", "restore with the companion failed");
+    } else {
+        refresh(&p, &own);
+        use_state(&p, r);
+        p.req.companions = NULL;
+        p.req.companion_count = 0;
+        sigil_card_listing *l = NULL;
+        if (sigil_collect(&p.req, &back) != SIGIL_OK || !back->data || !has_name(l = listing_of(back->data, back->len), "THREE_DIRTY")) {
+            fail("owner precedence", "a former companion's learned owner took a save off the game's own volume");
+        }
+        sigil_card_listing_free(l);
+    }
+    free(zwei_unit2);
+    sigil_sync_result_free(back);
+    sigil_sync_result_free(r);
+    root_free(&own);
+done:
+    sigil_sync_result_free(swapped);
+    sigil_sync_result_free(learned);
+    root_free(&root);
+    free(v);
+    free(dwarf_unit);
+    free_shared_saves(&s);
+}
+
+/* Managed, a companion whose saves sit on a shared volume keeps them across
+ * a swap that carries no unit for it. */
+static void check_saturn_companion_shared(void) {
+    shared_saves s;
+    if (!load_shared_saves(&s)) { free_shared_saves(&s); fail("saturn companion shared", "setup failed"); return; }
+    uint8_t *z1 = bup_variant(s.zwei, s.zwei_len, 1);
+    size_t v_len = 0, zu_len = 0, z1u_len = 0, du_len = 0;
+    uint8_t *v = unit_of(s.zwei, s.zwei_len, &v_len);
+    uint8_t *zwei_unit = unit_of(s.zwei, s.zwei_len, &zu_len), *z1_unit = z1 ? unit_of(z1, s.zwei_len, &z1u_len) : NULL;
+    uint8_t *dwarf_unit = unit_of(s.dwarf, s.dwarf_len, &du_len);
+    mem_root root = {0};
+    sigil_sync_result *first = NULL, *r = NULL, *again = NULL;
+    if (!v || !zwei_unit || !z1_unit || !dwarf_unit) { fail("saturn companion shared", "setup failed"); goto done; }
+    root_put(&root, SHARED_BKR, v, v_len);
+    game g;
+    make_shared(&g, &root, ZWEI_CUE, ZWEI_IDS, 1, SIGIL_SYNC_MANAGED);
+    sigil_sync_companion dwarves = { DWARF_IDS, 1, dwarf_unit, du_len };
+    g.req.companions = &dwarves;
+    g.req.companion_count = 1;
+    if (sigil_collect(&g.req, &first) != SIGIL_OK) { fail("saturn companion shared", "collect failed"); goto done; }
+    use_state(&g, first);
+    if (sigil_restore(&g.req, zwei_unit, zu_len, &r) != SIGIL_OK) { fail("saturn companion shared", "restore with the companion's unit failed"); goto done; }
+    refresh(&g, &root);
+    use_state(&g, r);
+    dwarves.unit = NULL;
+    dwarves.unit_len = 0;
+    mem_file *f = NULL;
+    sigil_card_listing *l = NULL;
+    if (sigil_restore(&g.req, z1_unit, z1u_len, &again) != SIGIL_OK || !(f = root_find(&root, SHARED_BKR)) ||
+        !has_name(l = listing_of(f->data, f->len), "THREE_DIRTY")) {
+        fail("saturn companion shared", "a swap without the companion's unit dropped its save");
+    }
+    sigil_card_listing_free(l);
+done:
+    sigil_sync_result_free(again);
+    sigil_sync_result_free(r);
+    sigil_sync_result_free(first);
+    root_free(&root);
+    free(v); free(zwei_unit); free(z1_unit); free(dwarf_unit); free(z1);
+    free_shared_saves(&s);
+}
+
+/* A game with more saves than the standard 32 KiB volume holds, on Yaba
+ * Sanshiro's 4 MiB volume, travels in a unit the source volume's size and
+ * restores; a file that exists keeps its own form, not the layout's. */
+/* Every Saturn core keeps 32 KiB of internal backup RAM, so a unit whose
+ * internal saves need more (the 4 MiB fallback) is refused with the blocks
+ * the save lacks, counted at the volume's 64-byte blocks, and nothing is
+ * written. Kronos formats any other size on boot. */
+static void check_too_big_for_internal(void) {
+    size_t touge_len = 0;
+    uint8_t *touge = sample(&g_saturn, "saturn", "touge-king-bup", NULL, &touge_len);
+    sigil_saturn_volume big, small;
+    sigil_bram_storage raw;
+    memset(&raw, 0, sizeof(raw));
+    uint8_t *unit = NULL;
+    size_t unit_len = 0;
+    uint32_t need = 0, room = 0;
+    if (touge && sigil_saturn_volume_format(&big, 4u * 1024u * 1024u, &raw) == SIGIL_OK) {
+        sigil_card_listing *l = NULL;
+        if (sigil_saturn_inject(&big, touge, touge_len) == SIGIL_OK && sigil_saturn_list(&big, &l) == SIGIL_OK &&
+            l->entry_count == 1 && sigil_saturn_volume_write(&big, &unit, &unit_len) == SIGIL_OK) {
+            need = l->entries[0].blocks;
+        }
+        sigil_card_listing_free(l);
+        sigil_saturn_volume_free(&big);
+    }
+    if (sigil_saturn_volume_format(&small, SATURN_INTERNAL_SIZE, &raw) == SIGIL_OK) {
+        sigil_card_listing *l = NULL;
+        if (sigil_saturn_list(&small, &l) == SIGIL_OK) room = l->free_blocks;
+        sigil_card_listing_free(l);
+        sigil_saturn_volume_free(&small);
+    }
+    if (!unit || !need || !room || need <= room) {
+        fail("too big for internal", "setup failed");
+    } else {
+        static const char *const LAYOUTS[] = { "yabause", "kronos", "mednafen_saturn" };
+        for (size_t i = 0; i < 3; i++) {
+            mem_root root = {0};
+            game g;
+            make_game(&g, &root, LAYOUTS[i], "saturn", "Touge King the Spirits (Japan).cue", SIGIL_SYNC_MANAGED);
+            sigil_sync_result *r = NULL;
+            if (sigil_restore(&g.req, unit, unit_len, &r) != SIGIL_ERR_NO_SPACE || root.writes != 0 || !r ||
+                strcmp(r->problem, "TGKRPLY_RP1") != 0 || r->blocks_short != need - room) {
+                fail(LAYOUTS[i], "a save too big for 32 KiB of internal RAM wasn't refused with its shortfall");
+            }
+            sigil_sync_result_free(r);
+            root_free(&root);
+        }
+    }
+    free(unit);
+    free(touge);
+}
+
+static void check_big_units_and_forms(void) {
+    size_t yaba_len = 0, touge_len = 0;
+    uint8_t *yaba = sample(&g_saturn, "saturn", "yabasanshiro-backup", NULL, &yaba_len);
+    uint8_t *touge = sample(&g_saturn, "saturn", "touge-king-bup", NULL, &touge_len);
+    sigil_io *io = yaba ? mem_root_io(yaba, yaba_len) : NULL;
+    sigil_saturn_volume vol;
+    uint8_t *with = NULL;
+    size_t with_len = 0;
+    if (io && touge && sigil_saturn_volume_load_internal(io, &vol) == SIGIL_OK) {
+        if (sigil_saturn_inject(&vol, touge, touge_len) != SIGIL_OK || sigil_saturn_volume_write(&vol, &with, &with_len) != SIGIL_OK) with = NULL;
+        sigil_saturn_volume_free(&vol);
+    }
+    if (io) sigil_io_close(io);
+    if (!with) {
+        fail("big units", "setup failed");
+    } else {
+        mem_root root = {0};
+        root_put(&root, "yabasanshiro/backup.bin", with, with_len);
+        game g;
+        make_game(&g, &root, "yabasanshiro", "saturn", "Touge King the Spirits (Japan).cue", SIGIL_SYNC_MANAGED);
+        static const char *const TOUGE[] = { "TGKRPLY_RP1" };
+        g.req.claimed = TOUGE;
+        g.req.claimed_count = 1;
+        sigil_sync_result *r = NULL;
+        if (sigil_collect(&g.req, &r) != SIGIL_OK || !r->data || r->len <= SATURN_INTERNAL_SIZE) {
+            fail("big units", "a game's saves too big for 32 KiB didn't travel in a volume of the source's size");
+        } else if (!r->holding) {
+            fail("big units", "the other games' saves weren't held");
+        } else {
+            sigil_zip_member *m = NULL;
+            size_t n = 0;
+            if (sigil_zip_read_mem(r->holding, r->holding_len, 1u << 24, &m, &n) != SIGIL_OK || n != 1 ||
+                m[0].len != r->len) {
+                fail("big units", "the holding unit isn't the source volume's size");
+            }
+            sigil_zip_members_free(m, n);
+        }
+        sigil_sync_result_free(r);
+        root_free(&root);
+    }
+    free(with);
+    free(yaba);
+
+    size_t toki_len = 0;
+    uint8_t *toki = sample(&g_saturn, "saturn", "tokimeki-bup", "TOKIMEKI_99.BUP", &toki_len);
+    sigil_saturn_volume small;
+    sigil_bram_storage expanded;
+    memset(&expanded, 0, sizeof(expanded));
+    expanded.expanded = true;
+    expanded.filler = 0xFF;
+    uint8_t *few = NULL;
+    size_t few_len = 0;
+    if (toki && touge && sigil_saturn_volume_format(&small, 4u * 1024u * 1024u, &expanded) == SIGIL_OK) {
+        if (sigil_saturn_inject(&small, touge, touge_len) != SIGIL_OK || sigil_saturn_inject(&small, toki, toki_len) != SIGIL_OK ||
+            sigil_saturn_volume_write(&small, &few, &few_len) != SIGIL_OK) {
+            few = NULL;
+        }
+        sigil_saturn_volume_free(&small);
+    }
+    if (!few) {
+        fail("big units", "setup failed");
+    } else {
+        mem_root root = {0};
+        root_put(&root, "yabasanshiro/backup.bin", few, few_len);
+        game g;
+        make_game(&g, &root, "yabasanshiro", "saturn", "Touge King the Spirits (Japan).cue", SIGIL_SYNC_MANAGED);
+        static const char *const TOUGE[] = { "TGKRPLY_RP1" };
+        g.req.claimed = TOUGE;
+        g.req.claimed_count = 1;
+        sigil_sync_result *r = NULL;
+        sigil_zip_member *m = NULL;
+        size_t n = 0;
+        if (sigil_collect(&g.req, &r) != SIGIL_OK || !r->holding ||
+            sigil_zip_read_mem(r->holding, r->holding_len, 1u << 24, &m, &n) != SIGIL_OK || n != 1 ||
+            m[0].len != 4u * 1024u * 1024u) {
+            fail("big units", "a holding unit of a few small saves isn't the 4 MiB source volume's size");
+        }
+        sigil_zip_members_free(m, n);
+        sigil_sync_result_free(r);
+        root_free(&root);
+    }
+    free(few);
+    free(toki);
+    free(touge);
+
+    size_t hd_len = 0;
+    uint8_t *hd = sample(&g_saturn, "saturn", "hyper-duel-bkr", NULL, &hd_len);
+    if (!hd) return;
+    mem_root root = {0};
+    root_put(&root, "Hyper Duel (Japan).srm", hd, hd_len);
+    game g;
+    make_game(&g, &root, "yabause", "saturn", "Hyper Duel (Japan).cue", SIGIL_SYNC_MANAGED);
+    sigil_sync_result *r = NULL, *placed = NULL;
+    mem_file *f = NULL;
+    if (sigil_collect(&g.req, &r) != SIGIL_OK || !r->data) {
+        fail("saturn forms", "collect failed");
+    } else {
+        use_state(&g, r);
+        g.req.overwrite_local = 1;
+        root.writes = 0;
+        sigil_io *vio = mem_root_io(hd, hd_len);
+        sigil_saturn_volume hv;
+        uint8_t *bup = NULL, *newer = NULL, *other = NULL;
+        size_t bup_len = 0, other_len = 0;
+        if (sigil_saturn_volume_load(vio, &hv) == SIGIL_OK) {
+            sigil_card_listing *l = NULL;
+            if (sigil_saturn_list(&hv, &l) == SIGIL_OK && l->entry_count) {
+                sigil_saturn_extract(&hv, l->entries[0].first_block, &bup, &bup_len);
+            }
+            sigil_card_listing_free(l);
+            sigil_saturn_volume_free(&hv);
+        }
+        sigil_io_close(vio);
+        if (bup) newer = bup_variant(bup, bup_len, 1);
+        if (newer) other = unit_of(newer, bup_len, &other_len);
+        if (!other || sigil_restore(&g.req, other, other_len, &placed) != SIGIL_OK || root.writes == 0 ||
+            !(f = root_find(&root, "Hyper Duel (Japan).srm")) || f->len != hd_len) {
+            fail("saturn forms", "a raw file the core already has was rewritten in the layout's expanded form");
+        }
+        free(other);
+        free(newer);
+        free(bup);
+    }
+    sigil_sync_result_free(placed);
+    sigil_sync_result_free(r);
+    root_free(&root);
+    free(hd);
+}
+
+/* A new cart file is the size the core's option names, whatever size the
+ * unit's cart was: a core reads a cart of another size under that name
+ * wrongly. */
+static void check_cart_follows_option(void) {
+    static const struct { size_t from; const char *option; const char *path; size_t size; } KRONOS[] = {
+        { 512u * 1024u, "1M_backup_ram", "kronos/saturn/" RAYMAN "-ext1M.ram", 1024u * 1024u },
+        { 4096u * 1024u, "512K_backup_ram", "kronos/saturn/" RAYMAN "-ext512K.ram", 512u * 1024u },
+    };
+    for (size_t i = 0; i < sizeof(KRONOS) / sizeof(KRONOS[0]); i++) {
+        size_t cart_len = 0;
+        uint8_t *cart = rayman_cart_of(KRONOS[i].from, &cart_len);
+        if (!cart) { fail("cart size", "setup failed"); continue; }
+        mem_root root = {0};
+        root_put(&root, KRONOS[i].from == 512u * 1024u ? "kronos/saturn/" RAYMAN "-ext512K.ram"
+                                                         : "kronos/saturn/" RAYMAN "-ext4M.ram", cart, cart_len);
+        game g;
+        make_game(&g, &root, "kronos", "saturn", RAYMAN ".cue", SIGIL_SYNC_MANAGED);
+        if (KRONOS[i].from != 512u * 1024u) add_option(&g, "kronos_addon_cartridge", "4M_backup_ram");
+        sigil_sync_result *unit = NULL, *placed = NULL, *back = NULL;
+        mem_root empty = {0};
+        game fresh;
+        make_game(&fresh, &empty, "kronos", "saturn", RAYMAN ".cue", SIGIL_SYNC_MANAGED);
+        add_option(&fresh, "kronos_addon_cartridge", KRONOS[i].option);
+        mem_file *made = NULL;
+        if (sigil_collect(&g.req, &unit) != SIGIL_OK || !unit->data) {
+            fail("cart size", "kronos collect failed");
+        } else if (sigil_restore(&fresh.req, unit->data, unit->len, &placed) != SIGIL_OK ||
+                   !(made = root_find(&empty, KRONOS[i].path)) || made->len != KRONOS[i].size) {
+            fail("cart size", "the Kronos cart isn't the size its option names");
+        } else {
+            refresh(&fresh, &empty);
+            use_state(&fresh, placed);
+            if (sigil_collect(&fresh.req, &back) != SIGIL_OK || strcmp(back->identity_hash, unit->identity_hash) != 0) {
+                fail("cart size", "the Kronos saves differ on the resized cart");
+            }
+        }
+        sigil_sync_result_free(back);
+        sigil_sync_result_free(placed);
+        sigil_sync_result_free(unit);
+        root_free(&empty);
+        root_free(&root);
+        free(cart);
+    }
+
+    size_t popful_len = 0;
+    uint8_t *popful = segacd("popful-mail-cart-brm", &popful_len);
+    if (!popful) return;
+    const char *content = "Popful Mail (USA) (RE).cue";
+    mem_root root = {0};
+    root_put(&root, "Popful Mail (USA) (RE)_4Mbit_cart.brm", popful, popful_len);
+    game g;
+    make_game(&g, &root, "genesis_plus_gx", "segacd", content, SIGIL_SYNC_MANAGED);
+    add_option(&g, "genesis_plus_gx_cart_bram", "per game");
+    sigil_sync_result *unit = NULL, *placed = NULL, *back = NULL;
+    mem_root empty = {0};
+    game fresh;
+    make_game(&fresh, &empty, "genesis_plus_gx", "segacd", content, SIGIL_SYNC_MANAGED);
+    add_option(&fresh, "genesis_plus_gx_cart_bram", "per game");
+    add_option(&fresh, "genesis_plus_gx_cart_size", "1meg");
+    mem_file *made = NULL;
+    if (sigil_collect(&g.req, &unit) != SIGIL_OK || !unit->data) {
+        fail("cart size", "sega cd collect failed");
+    } else if (sigil_restore(&fresh.req, unit->data, unit->len, &placed) != SIGIL_OK ||
+               !(made = root_find(&empty, "Popful Mail (USA) (RE)_1Mbit_cart.brm")) || made->len != 128u * 1024u) {
+        fail("cart size", "the Sega CD cart isn't the size its option names");
+    } else {
+        refresh(&fresh, &empty);
+        use_state(&fresh, placed);
+        if (sigil_collect(&fresh.req, &back) != SIGIL_OK || strcmp(back->identity_hash, unit->identity_hash) != 0) {
+            fail("cart size", "the Sega CD saves differ on the resized cart");
+        }
+    }
+    sigil_sync_result_free(back);
+    sigil_sync_result_free(placed);
+    sigil_sync_result_free(unit);
+    root_free(&empty);
+    root_free(&root);
+    free(popful);
 }
 
 /* A game with saves on its cart alone travels as a zip, so the unit names
@@ -584,6 +1245,15 @@ static void check_segacd_holding_and_claims(sigil_sync_result **held_state) {
         sigil_card_listing *l = listing_of(r->data, r->len);
         if (!l || l->entry_count != 1 || !has_name(l, "SFCD_DAT_09")) fail("segacd claims", "the unit isn't the claimed save");
         if (r->unowned_count != entry_count(multi, len) - 1) fail("segacd claims", "the claimed save is still held back");
+        sigil_zip_member *m = NULL;
+        size_t n = 0;
+        sigil_card_listing *held = NULL;
+        if (!r->holding || sigil_zip_read_mem(r->holding, r->holding_len, 1u << 24, &m, &n) != SIGIL_OK || n != 1 ||
+            !(held = listing_of(m[0].data, m[0].len)) || has_name(held, "SFCD_DAT_09")) {
+            fail("segacd claims", "the holding unit still carries the claimed save");
+        }
+        sigil_card_listing_free(held);
+        sigil_zip_members_free(m, n);
         sigil_card_listing_free(l);
     }
     sigil_sync_result_free(r);
@@ -735,6 +1405,74 @@ static void check_segacd_region(void) {
     free(multi);
 }
 
+/* A file at a volume's path that isn't that volume (an 8 KiB internal
+ * volume where the 4 Mbit cart goes) is damaged, never formatted over:
+ * collect and restore refuse naming it, with or without repair. */
+static void check_unreadable_volume(const sigil_sync_result *lunar) {
+    size_t blank_len = 0;
+    uint8_t *blank = segacd("blank-internal", &blank_len);
+    if (!blank || !lunar) { fail("unreadable volume", "setup failed"); free(blank); return; }
+    for (int repair = 0; repair < 2; repair++) {
+        mem_root root = {0};
+        root_put(&root, "4Mbit_cart.brm", blank, blank_len);
+        game g;
+        make_game(&g, &root, "genesis_plus_gx", "segacd", LUNAR, SIGIL_SYNC_MANAGED);
+        add_option(&g, "genesis_plus_gx_system_bram", "per game");
+        g.req.repair = repair;
+        g.req.overwrite_local = 1;
+        sigil_sync_result *seen = NULL, *r = NULL;
+        if (sigil_collect(&g.req, &seen) != SIGIL_ERR_DAMAGED || !seen || strcmp(seen->problem, "4Mbit_cart.brm") != 0) {
+            fail("unreadable volume", "collect didn't refuse naming the file that isn't the cart");
+        }
+        if (sigil_restore(&g.req, lunar->data, lunar->len, &r) != SIGIL_ERR_DAMAGED || root.writes != 0) {
+            fail("unreadable volume", "restore wrote over a file that isn't the cart");
+        }
+        sigil_sync_result_free(r);
+        sigil_sync_result_free(seen);
+        root_free(&root);
+    }
+    free(blank);
+}
+
+/* Unmanaged into a shared volume that already holds the game's saves: the
+ * game's saves the unit lacks go, the others are replaced, and another
+ * game's save stays, though each Sega CD delete moves the saves after it. */
+static void check_segacd_unmanaged_replace(void) {
+    size_t dw_len = 0, lunar_len = 0, blank_len = 0;
+    uint8_t *dw = segacd("dark-wizard-brm", &dw_len), *lunar = segacd("lunar-ecc-brm", &lunar_len);
+    uint8_t *blank = segacd("blank-internal", &blank_len);
+    size_t ga_len = 0, vol_len = 0, dw0_len = 0, unit_len = 0;
+    uint8_t *ga = lunar ? segacd_save(lunar, lunar_len, "GA_LUNAR_01", &ga_len) : NULL;
+    uint8_t *vol = dw && ga ? segacd_with(dw, dw_len, ga, ga_len, &vol_len) : NULL;
+    uint8_t *dw0 = dw ? segacd_save(dw, dw_len, "DW__DATA_00", &dw0_len) : NULL;
+    uint8_t *unit = blank && dw0 ? segacd_with(blank, blank_len, dw0, dw0_len, &unit_len) : NULL;
+    mem_root root = {0};
+    sigil_sync_result *seen = NULL, *r = NULL;
+    if (!vol || !unit) { fail("segacd replace", "setup failed"); goto done; }
+    root_put(&root, "scd_U.brm", vol, vol_len);
+    static const char *const DW_IDS[] = { "G-6005" };
+    game g;
+    make_game(&g, &root, "genesis_plus_gx", "segacd", "Dark Wizard (USA).cue", SIGIL_SYNC_UNMANAGED);
+    g.req.game_ids = DW_IDS;
+    g.req.game_id_count = 1;
+    if (sigil_collect(&g.req, &seen) != SIGIL_OK || !seen->data) { fail("segacd replace", "collect failed"); goto done; }
+    use_state(&g, seen);
+    mem_file *f = NULL;
+    sigil_card_listing *l = NULL;
+    if (sigil_restore(&g.req, unit, unit_len, &r) != SIGIL_OK || !(f = root_find(&root, "scd_U.brm"))) {
+        fail("segacd replace", "restore failed");
+    } else if (!(l = listing_of(f->data, f->len)) || l->entry_count != 2 || !has_name(l, "DW__DATA_00") ||
+               has_name(l, "DW__DATA_01") || !has_name(l, "GA_LUNAR_01")) {
+        fail("segacd replace", "the game's saves weren't replaced exactly, or another game's save went");
+    }
+    sigil_card_listing_free(l);
+done:
+    sigil_sync_result_free(r);
+    sigil_sync_result_free(seen);
+    root_free(&root);
+    free(unit); free(dw0); free(vol); free(ga); free(blank); free(lunar); free(dw);
+}
+
 /* Unmanaged: restore injects beside other saves only when the volume is as
  * the last collect saw it, and a core that overwrites the injected save on
  * unload makes the next collect ask for the restore again. */
@@ -842,6 +1580,13 @@ int main(void) {
     check_saturn_single();
     check_kronos();
     check_cart_only_unit_is_zip();
+    check_cart_follows_option();
+    check_saturn_unmanaged();
+    check_saturn_swap_guard();
+    check_owner_precedence();
+    check_saturn_companion_shared();
+    check_big_units_and_forms();
+    check_too_big_for_internal();
     check_yabasanshiro();
     check_yabause();
     check_name_table();
@@ -853,6 +1598,12 @@ int main(void) {
     check_segacd_other_game(lunar);
     check_segacd_region();
     check_segacd_unmanaged(lunar);
+    check_segacd_unmanaged_replace();
+    check_unreadable_volume(lunar);
+    if (lunar) {
+        check_faulty_write("segacd faulty write", "genesis_plus_gx", "segacd", LUNAR, "genesis_plus_gx_system_bram",
+                           "per game", lunar->data, lunar->len, first_set_byte);
+    }
     sigil_sync_result_free(held);
     sigil_sync_result_free(lunar);
 

@@ -35,6 +35,8 @@ int main(void) {
     expect("a name two products share", !match("saturn", "VFIGHTER2_X", "GS-9001"));
     expect("a Sega CD code as the header spells it", match("segacd", "DW__DATA_00", "GM G-6005  -00"));
     expect("a Sega CD code with its version", match("segacd", "DW__DATA_01", "G-6005-00"));
+    expect("a Sega CD code with the AI type prefix", match("segacd", "DW__DATA_00", "AI G-6005"));
+    expect("an unknown type prefix isn't dropped", !match("segacd", "DW__DATA_00", "XX G-6005"));
     expect("a code that only starts like the row's", !match("segacd", "DW__DATA_00", "G-60051"));
     expect("the shipped table names Zwei's save",
            sigil_save_names_match(sigil_save_name_table, sigil_save_name_table_count, "saturn", "PANDRA_ZWEI",

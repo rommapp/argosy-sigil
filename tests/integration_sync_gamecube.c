@@ -9,6 +9,14 @@
 #define FZERO_DISC "F-Zero GX (USA).rvz"
 #define LIB_FOLDER "User/GC/USA/Card A/"
 #define LIB_RAW    "User/GC/MemoryCardA.USA.raw"
+#define SA_FOLDER  "GC/USA/Card A/"
+#define NFSU2      "47554745"
+#define NFSU2_ISO  "NFSU2 (USA).iso"
+#define NFSU2_FILE SA_FOLDER "69-GUGE-NFSU2.gci"
+#define GCI_MAKER  0x04u
+#define GCI_NAME   0x08u
+#define GCI_MTIME  0x28u
+#define GCI_COPY   0x35u
 
 static int g_fails = 0;
 
@@ -93,6 +101,51 @@ static size_t zip_count(const uint8_t *data, size_t len) {
     return n;
 }
 
+/* A copy of `gci` with `n` bytes at `at` replaced by `bytes`. */
+static uint8_t *gci_with(const uint8_t *gci, size_t len, size_t at, const void *bytes, size_t n) {
+    uint8_t *out = (uint8_t *)malloc(len);
+    memcpy(out, gci, len);
+    memcpy(out + at, bytes, n);
+    return out;
+}
+
+/* The unit of the one game in `root`, collected under `layout`. */
+static sigil_sync_result *unit_from(mem_root *root, const char *layout, const char *title_id, const char *serial,
+                                    const char *content, bool raw) {
+    game g;
+    make_game(&g, root, layout, title_id, serial, content);
+    if (raw) raw_mode(&g);
+    sigil_sync_result *r = NULL;
+    if (sigil_collect(&g.req, &r) != SIGIL_OK || !r->data) {
+        sigil_sync_result_free(r);
+        return NULL;
+    }
+    return r;
+}
+
+static sigil_sync_result *nfsu2_unit(void) {
+    size_t len = 0;
+    uint8_t *gci = sample("nfsu2-gci", NULL, &len);
+    if (!gci) return NULL;
+    mem_root root = {0};
+    root_put(&root, NFSU2_FILE, gci, len);
+    sigil_sync_result *r = unit_from(&root, "dolphin_standalone", NFSU2, "GUGE", NFSU2_ISO, false);
+    root_free(&root);
+    free(gci);
+    return r;
+}
+
+static uint32_t first_block_of(const uint8_t *card, size_t len, const char *name) {
+    sigil_card_listing *l = NULL;
+    uint32_t first = 0xFFFF;
+    if (sigil_gamecube_card_list(card, len, &l) != SIGIL_OK) return first;
+    for (size_t i = 0; i < l->entry_count; i++) {
+        if (strcmp(l->entries[i].name, name) == 0) first = l->entries[i].first_block;
+    }
+    sigil_card_listing_free(l);
+    return first;
+}
+
 static size_t card_saves_of(const uint8_t *card, size_t len, const char *owner) {
     sigil_card_listing *l = NULL;
     size_t n = 0;
@@ -123,6 +176,35 @@ static void check_folder_collect(sigil_sync_result **kept) {
     sigil_sync_result_free(r);
     root_free(&root);
     free(nfsu2);
+}
+
+/* Dolphin reads the folder's files in name order, so of two files with one
+ * identity the first by name is the save and the other is stale, whatever
+ * order the listing gives: a restore that writes (fzc.dat is missing) keeps
+ * f_zero.dat and drops f_zero.dat0. */
+static void check_folder_order(const sigil_sync_result *sorted) {
+    if (!sorted) return;
+    mem_root root = {0};
+    for (size_t i = 6; i-- > 0;) {
+        if (strcmp(FZERO_FILES[i], "8P-GFZE-fzc.dat.gci") == 0) continue;
+        size_t len = 0;
+        uint8_t *data = sample("fzero-gx-dolphin-gci-set", FZERO_FILES[i], &len);
+        if (!data) { fail("folder order", "setup failed"); root_free(&root); return; }
+        char path[512];
+        snprintf(path, sizeof(path), LIB_FOLDER "%s", FZERO_FILES[i]);
+        root_put(&root, path, data, len);
+        free(data);
+    }
+    game g;
+    make_game(&g, &root, "dolphin", FZERO, "GFZE", FZERO_DISC);
+    g.req.overwrite_local = 1;
+    sigil_sync_result *r = NULL;
+    if (sigil_restore(&g.req, sorted->data, sorted->len, &r) != SIGIL_OK ||
+        !root_find(&root, LIB_FOLDER "8P-GFZE-f_zero.dat.gci") || root_find(&root, LIB_FOLDER "8P-GFZE-f_zero.dat0.gci")) {
+        fail("folder order", "a listing in another order kept the other file of a duplicate pair");
+    }
+    sigil_sync_result_free(r);
+    root_free(&root);
 }
 
 /* The unit restored into an empty Dolphin folder lands as Dolphin's file
@@ -290,35 +372,60 @@ static void check_regions_and_standalone(void) {
     free(bleach);
 }
 
-/* Dolphin escapes characters a file name can't hold as __xx__, and a double
- * underscore as __5f____5f__. */
+/* Dolphin escapes characters a file name can't hold, control characters
+ * among them, as __xx__, and a double underscore as __5f____5f__. */
 static void check_escaped_names(void) {
+    static const struct { const char *name; size_t len; const char *file; } NAMES[] = {
+        { "a/b__c?", 8, "69-GUGE-a__2f__b__5f____5f__c__3f__.gci" },
+        { "d\x01\"*:<>\\|\x7f", 11, "69-GUGE-d__01____22____2a____3a____3c____3e____5c____7c____7f__.gci" },
+        /* A USA save's name is CP1252: é is U+00E9, 0x80 the euro sign; 0x81 has no character. */
+        { "NFSU\xE9\x80\x81", 8, "69-GUGE-NFSU\xC3\xA9\xE2\x82\xAC__81__.gci" },
+    };
     size_t len = 0;
     uint8_t *gci = sample("nfsu2-gci", NULL, &len);
     if (!gci) return;
-    memcpy(gci + 0x08, "a/b__c?", 8);
-    mem_root src = {0};
-    root_put(&src, "GC/USA/Card A/x.gci", gci, len);
-    game g;
-    make_game(&g, &src, "dolphin_standalone", "47554745", "GUGE", "NFSU2 (USA).iso");
-    sigil_sync_result *r = NULL, *restored = NULL;
-    if (sigil_collect(&g.req, &r) == SIGIL_OK && r->data) {
-        if (strcmp(r->artifact, "69-GUGE-a__2f__b__5f____5f__c__3f__.gci") != 0) fail("escaped names", "artifact isn't escaped as Dolphin escapes");
-        mem_root empty = {0};
-        game fresh;
-        make_game(&fresh, &empty, "dolphin_standalone", "47554745", "GUGE", "NFSU2 (USA).iso");
-        if (sigil_restore(&fresh.req, r->data, r->len, &restored) != SIGIL_OK ||
-            !root_find(&empty, "GC/USA/Card A/69-GUGE-a__2f__b__5f____5f__c__3f__.gci")) {
-            fail("escaped names", "the file isn't named as Dolphin names it");
+    for (size_t i = 0; i < sizeof(NAMES) / sizeof(NAMES[0]); i++) {
+        memset(gci + GCI_NAME, 0, 32);
+        memcpy(gci + GCI_NAME, NAMES[i].name, NAMES[i].len);
+        mem_root src = {0};
+        root_put(&src, SA_FOLDER "x.gci", gci, len);
+        sigil_sync_result *r = unit_from(&src, "dolphin_standalone", NFSU2, "GUGE", NFSU2_ISO, false), *restored = NULL;
+        char want[SIGIL_SAVE_PATH_MAX];
+        snprintf(want, sizeof(want), SA_FOLDER "%s", NAMES[i].file);
+        if (!r) {
+            fail("escaped names", "collect failed");
+        } else {
+            if (strcmp(r->artifact, NAMES[i].file) != 0) fail("escaped names", "artifact isn't escaped as Dolphin escapes");
+            mem_root empty = {0};
+            game fresh;
+            make_game(&fresh, &empty, "dolphin_standalone", NFSU2, "GUGE", NFSU2_ISO);
+            if (sigil_restore(&fresh.req, r->data, r->len, &restored) != SIGIL_OK || !root_find(&empty, want)) {
+                fail("escaped names", "the file isn't named as Dolphin names it");
+            }
+            root_free(&empty);
         }
-        root_free(&empty);
-    } else {
-        fail("escaped names", "collect failed");
+        sigil_sync_result_free(restored);
+        sigil_sync_result_free(r);
+        root_free(&src);
     }
-    sigil_sync_result_free(restored);
+    free(gci);
+
+    /* A Japanese save's name is Shift-JIS, which Dolphin decodes; sigil
+     * escapes those bytes, so the name is always UTF-8 and Dolphin, which
+     * loads every .gci in the folder, still loads it. */
+    uint8_t *jp = sample("bleach-gc-jp-gci", NULL, &len);
+    if (!jp) return;
+    memset(jp + GCI_NAME, 0, 32);
+    memcpy(jp + GCI_NAME, "bl\x82\xA0", 4);
+    mem_root src = {0};
+    root_put(&src, "GC/JAP/Card A/x.gci", jp, len);
+    sigil_sync_result *r = unit_from(&src, "dolphin_standalone", "4749474A", "GIGJ", "Bleach GC (Japan).iso", false);
+    if (!r || strcmp(r->artifact, "8P-GIGJ-bl__82____a0__.gci") != 0) {
+        fail("escaped names", "a Japanese save's Shift-JIS bytes weren't escaped");
+    }
     sigil_sync_result_free(r);
     root_free(&src);
-    free(gci);
+    free(jp);
 }
 
 /* A companion in Dolphin's GCI folder: its .gci files go in beside the game's,
@@ -396,8 +503,10 @@ static void check_folder_companion(const sigil_sync_result *fzero) {
         g.req.companions = &foreign;
         g.req.companion_count = 1;
         r = NULL;
-        if (sigil_restore(&g.req, own->data, own->len, &r) != SIGIL_ERR_INVALID_ARG || other.writes != 0) {
+        if (sigil_restore(&g.req, own->data, own->len, &r) != SIGIL_ERR_REGION || other.writes != 0) {
             fail("folder companion", "a companion from another region went on the game's card");
+        } else if (!r || strncmp(r->problem, "4749474A-", 9) != 0) {
+            fail("folder companion", "the region refusal doesn't name the companion's save");
         }
         sigil_sync_result_free(r);
         root_free(&other);
@@ -409,6 +518,499 @@ done:
     sigil_sync_result_free(own);
     root_free(&src);
     free(gci);
+}
+
+/* Another game's file under the name Dolphin gives the incoming save: the save
+ * goes in under the name with a 0 before .gci, another 0 for each name still
+ * taken, as Dolphin's GCI folder names one, and the other game's file stays
+ * as it was. */
+static void check_digit_suffix(const sigil_sync_result *nfsu2) {
+    size_t len = 0;
+    uint8_t *other = sample("bleach-gc-jp-gci", NULL, &len);
+    if (!other || !nfsu2) { free(other); fail("digit suffix", "setup failed"); return; }
+    char taken_paths[3][SIGIL_SAVE_PATH_MAX];
+    int stem_len = (int)strlen(nfsu2->artifact) - 4;
+    snprintf(taken_paths[0], SIGIL_SAVE_PATH_MAX, SA_FOLDER "%s", nfsu2->artifact);
+    snprintf(taken_paths[1], SIGIL_SAVE_PATH_MAX, SA_FOLDER "%.*s0.gci", stem_len, nfsu2->artifact);
+    snprintf(taken_paths[2], SIGIL_SAVE_PATH_MAX, SA_FOLDER "%.*s00.gci", stem_len, nfsu2->artifact);
+    const char *TAKEN[] = { taken_paths[0], taken_paths[1] };
+    for (size_t taken = 1; taken <= 2; taken++) {
+        mem_root root = {0};
+        for (size_t i = 0; i < taken; i++) root_put(&root, TAKEN[i], other, len);
+        game g;
+        make_game(&g, &root, "dolphin_standalone", NFSU2, "GUGE", NFSU2_ISO);
+        sigil_sync_result *r = NULL;
+        const char *want = taken_paths[taken];
+        if (sigil_restore(&g.req, nfsu2->data, nfsu2->len, &r) != SIGIL_OK || root.writes != 1 ||
+            strcmp(root.first_write, want) != 0) {
+            fail("digit suffix", "the save didn't go in under the next free numbered name");
+        }
+        bool kept = true;
+        for (size_t i = 0; i < taken; i++) kept = kept && memcmp(root_find(&root, TAKEN[i])->data, other, len) == 0;
+        if (!kept) fail("digit suffix", "another game's file was overwritten");
+        sigil_sync_result_free(r);
+        root_free(&root);
+    }
+    free(other);
+}
+
+/* A companion the restore carries a unit for loses the files its unit lacks,
+ * as the game does. */
+static void check_companion_removal(const sigil_sync_result *nfsu2) {
+    mem_root four = {0};
+    if (!nfsu2 || !put_fzero(&four, SA_FOLDER, "8P-GFZE-fzc.dat.gci")) { fail("companion removal", "setup failed"); root_free(&four); return; }
+    sigil_sync_result *smaller = unit_from(&four, "dolphin_standalone", FZERO, "GFZE", FZERO_DISC, false);
+    mem_root root = {0};
+    size_t len = 0;
+    uint8_t *gci = sample("nfsu2-gci", NULL, &len);
+    put_fzero(&root, SA_FOLDER, NULL);
+    if (gci) root_put(&root, NFSU2_FILE, gci, len);
+    const char *ids[] = { FZERO };
+    sigil_sync_companion companion = { ids, 1, smaller ? smaller->data : NULL, smaller ? smaller->len : 0 };
+    game g;
+    make_game(&g, &root, "dolphin_standalone", NFSU2, "GUGE", NFSU2_ISO);
+    g.req.companions = &companion;
+    g.req.companion_count = 1;
+    g.req.overwrite_local = 1;
+    sigil_sync_result *r = NULL;
+    if (!smaller || !gci || sigil_restore(&g.req, nfsu2->data, nfsu2->len, &r) != SIGIL_OK) {
+        fail("companion removal", "restore failed");
+    } else if (root_find(&root, SA_FOLDER "8P-GFZE-fzc.dat.gci") || root_find(&root, SA_FOLDER "8P-GFZE-f_zero.dat0.gci") ||
+               !root_find(&root, SA_FOLDER "8P-GFZE-f_zero.dat.gci") || !root_find(&root, NFSU2_FILE) || root.count != 5) {
+        fail("companion removal", "the companion's file its unit lacks, or its stale duplicate, is still there");
+    }
+    sigil_sync_result_free(r);
+    sigil_sync_result_free(smaller);
+    root_free(&root);
+    root_free(&four);
+    free(gci);
+}
+
+/* A new raw card is Dolphin's 2043-block card, Shift-JIS for a Japanese
+ * game; a smaller card already there keeps its size and name. */
+static void check_raw_card_forms(const sigil_sync_result *raw_unit) {
+    size_t len = 0;
+    uint8_t *bleach = sample("bleach-gc-jp-gci", NULL, &len);
+    if (!bleach || !raw_unit) { free(bleach); fail("raw card forms", "setup failed"); return; }
+    mem_root src = {0};
+    root_put(&src, "GC/JAP/Card A/8P-GIGJ-bleach.gci", bleach, len);
+    sigil_sync_result *jp = unit_from(&src, "dolphin_standalone", "4749474A", "GIGJ", "Bleach GC (Japan).iso", false);
+    mem_root root = {0};
+    game g;
+    make_game(&g, &root, "dolphin_standalone", "4749474A", "GIGJ", "Bleach GC (Japan).iso");
+    raw_mode(&g);
+    sigil_sync_result *r = NULL;
+    mem_file *f = NULL;
+    if (!jp || sigil_restore(&g.req, jp->data, jp->len, &r) != SIGIL_OK || !(f = root_find(&root, "GC/MemoryCardA.JAP.raw")) ||
+        f->len != GC_MAX_CARD_SIZE || f->data[0x24] != 0 || f->data[0x25] != 1) {
+        fail("raw card forms", "a Japanese game's new card isn't a 2043-block Shift-JIS card");
+    }
+    sigil_sync_result_free(r);
+    r = NULL;
+    root_free(&root);
+
+    make_game(&g, &root, "dolphin", FZERO, "GFZE", FZERO_DISC);
+    raw_mode(&g);
+    if (sigil_restore(&g.req, raw_unit->data, raw_unit->len, &r) != SIGIL_OK || !(f = root_find(&root, LIB_RAW)) ||
+        f->len != GC_MAX_CARD_SIZE || f->data[0x24] != 0 || f->data[0x25] != 0) {
+        fail("raw card forms", "a USA game's new card isn't a 2043-block Windows-1252 card");
+    }
+    sigil_sync_result_free(r);
+    r = NULL;
+    root_free(&root);
+
+    size_t small_len = 64u * GC_BLOCK_SIZE;
+    uint8_t *small = (uint8_t *)malloc(small_len);
+    sigil_gamecube_format(small, small_len, false);
+    root_put(&root, "User/GC/MemoryCardA.USA.59.raw", small, small_len);
+    make_game(&g, &root, "dolphin", FZERO, "GFZE", FZERO_DISC);
+    raw_mode(&g);
+    if (sigil_restore(&g.req, raw_unit->data, raw_unit->len, &r) != SIGIL_OK || root.count != 1 ||
+        !(f = root_find(&root, "User/GC/MemoryCardA.USA.59.raw")) || f->len != small_len ||
+        card_saves_of(f->data, f->len, FZERO) != 1) {
+        fail("raw card forms", "the 59-block card there didn't take the save at its size");
+    }
+    sigil_sync_result_free(r);
+    root_free(&root);
+    free(small);
+    sigil_sync_result_free(jp);
+    root_free(&src);
+    free(bleach);
+}
+
+/* A save bigger than the whole card there is refused with the blocks it
+ * lacks, not read as a missing directory slot. */
+static void check_save_bigger_than_card(void) {
+    size_t len = 0;
+    uint8_t *gci = sample("nfsu2-gci", NULL, &len);
+    if (!gci) return;
+    const uint16_t blocks = 70;
+    size_t big_len = GC_DENTRY_SIZE + (size_t)blocks * GC_BLOCK_SIZE;
+    uint8_t *big = (uint8_t *)calloc(1, big_len);
+    memcpy(big, gci, len);
+    big[0x38] = (uint8_t)(blocks >> 8);
+    big[0x39] = (uint8_t)blocks;
+    size_t card_len = 64u * GC_BLOCK_SIZE;
+    uint8_t *card = (uint8_t *)malloc(card_len);
+    sigil_gamecube_format(card, card_len, false);
+    mem_root root = {0};
+    root_put(&root, "GC/MemoryCardA.USA.59.raw", card, card_len);
+    game g;
+    make_game(&g, &root, "dolphin_standalone", NFSU2, "GUGE", NFSU2_ISO);
+    raw_mode(&g);
+    sigil_sync_result *r = NULL;
+    if (sigil_restore(&g.req, big, big_len, &r) != SIGIL_ERR_NO_SPACE || !r || r->blocks_short != blocks - 59u ||
+        strncmp(r->problem, NFSU2 "-", 9) != 0 || root.writes != 0) {
+        fail("save bigger than card", "the refusal doesn't say how many blocks the save lacks");
+    }
+    sigil_sync_result_free(r);
+    root_free(&root);
+    free(card);
+    free(big);
+    free(gci);
+}
+
+/* Dolphin loads the running game's .gci files first, then other games' in
+ * name order while each leaves 204 of the card's blocks free
+ * (GCMemcardDirectory). A companion counts as another game, so in a folder
+ * holding 1830 blocks of other saves its first file wouldn't load: restore
+ * refuses naming it, with the blocks it lacks, and writes nothing. */
+static void check_folder_capacity(const sigil_sync_result *nfsu2, const sigil_sync_result *fzero) {
+    size_t len = 0;
+    uint8_t *gci = sample("nfsu2-gci", NULL, &len);
+    size_t big_len = GC_DENTRY_SIZE + 610u * GC_BLOCK_SIZE;
+    uint8_t *big = (uint8_t *)calloc(1, big_len);
+    if (!gci || !big || !nfsu2 || !fzero) { fail("folder capacity", "setup failed"); free(gci); free(big); return; }
+    mem_root root = {0};
+    for (int i = 0; i < 3; i++) {
+        memcpy(big, gci, GC_DENTRY_SIZE);
+        memcpy(big, i == 0 ? "GOTA" : i == 1 ? "GOTB" : "GOTC", 4);
+        big[0x38] = (uint8_t)(610 >> 8);
+        big[0x39] = (uint8_t)(610 & 0xFF);
+        char path[SIGIL_SAVE_PATH_MAX];
+        snprintf(path, sizeof(path), SA_FOLDER "01-GOT%c-big.gci", 'A' + i);
+        root_put(&root, path, big, big_len);
+    }
+    const char *ids[] = { FZERO };
+    sigil_sync_companion companion = { ids, 1, fzero->data, fzero->len };
+    game g;
+    make_game(&g, &root, "dolphin_standalone", NFSU2, "GUGE", NFSU2_ISO);
+    g.req.companions = &companion;
+    g.req.companion_count = 1;
+    sigil_sync_result *r = NULL;
+    if (sigil_restore(&g.req, nfsu2->data, nfsu2->len, &r) != SIGIL_ERR_NO_SPACE || !r ||
+        strncmp(r->problem, FZERO "-", 9) != 0 || r->blocks_short != 2 || root.writes != 0) {
+        fail("folder capacity", "a companion Dolphin wouldn't load went into the folder");
+    }
+    sigil_sync_result_free(r);
+    r = NULL;
+    companion.unit = NULL;
+    companion.unit_len = 0;
+    if (sigil_restore(&g.req, nfsu2->data, nfsu2->len, &r) != SIGIL_OK || root.writes != 1) {
+        fail("folder capacity", "the game's own save, which Dolphin loads first, was refused");
+    }
+    sigil_sync_result_free(r);
+    root_free(&root);
+    free(big);
+    free(gci);
+}
+
+/* Dolphin uses one raw card for slot A, picked by MemoryCardSize (-1 for the
+ * 2043-block card, 0 to 4 for 59 to 1019 blocks). With an old .raw beside a
+ * newer .59.raw, the option picks; without it sigil can't tell which Dolphin
+ * reads, so collect and restore refuse naming both. */
+static void check_card_size_option(const sigil_sync_result *raw_unit, const sigil_sync_result *fzero) {
+    size_t len = 0;
+    uint8_t *card = sample("card-raw-usa", NULL, &len);
+    size_t small_len = 64u * GC_BLOCK_SIZE;
+    uint8_t *small = (uint8_t *)malloc(small_len);
+    if (!card || !small || !raw_unit || !fzero || sigil_gamecube_format(small, small_len, false) != SIGIL_OK ||
+        sigil_gamecube_inject(small, small_len, raw_unit->data, raw_unit->len) != SIGIL_OK) {
+        fail("card size option", "setup failed");
+        free(card);
+        free(small);
+        return;
+    }
+    static const struct { const char *value; const char *card; } PICKS[] = {
+        { "-1", LIB_RAW }, { "0", "User/GC/MemoryCardA.USA.59.raw" },
+    };
+    for (size_t i = 0; i < 3; i++) {
+        mem_root root = {0};
+        root_put(&root, LIB_RAW, card, len);
+        root_put(&root, "User/GC/MemoryCardA.USA.59.raw", small, small_len);
+        game g;
+        make_game(&g, &root, "dolphin", FZERO, "GFZE", FZERO_DISC);
+        g.options[0].key = "SlotA";
+        g.options[0].value = "1";
+        g.options[1].key = "MemoryCardSize";
+        g.options[1].value = i < 2 ? PICKS[i].value : NULL;
+        g.req.save.options = g.options;
+        g.req.save.option_count = i < 2 ? 2 : 1;
+        sigil_sync_result *r = NULL, *restored = NULL;
+        int collected = sigil_collect(&g.req, &r);
+        if (i == 2) {
+            if (collected != SIGIL_ERR_AMBIGUOUS || !r || !strstr(r->problem, LIB_RAW) ||
+                !strstr(r->problem, "MemoryCardA.USA.59.raw")) {
+                fail("card size option", "two raw cards and no MemoryCardSize didn't refuse naming both");
+            }
+            if (sigil_restore(&g.req, raw_unit->data, raw_unit->len, &restored) != SIGIL_ERR_AMBIGUOUS || root.writes != 0) {
+                fail("card size option", "restore picked a card without MemoryCardSize");
+            }
+        } else {
+            g.req.overwrite_local = 1;
+            if (collected != SIGIL_OK || !r->data) {
+                fail("card size option", "collect with MemoryCardSize failed");
+            } else if (sigil_restore(&g.req, fzero->data, fzero->len, &restored) != SIGIL_OK || root.writes != 1 ||
+                       strcmp(root.first_write, PICKS[i].card) != 0) {
+                fail("card size option", "restore didn't write the card MemoryCardSize picks, alone");
+            }
+        }
+        sigil_sync_result_free(restored);
+        sigil_sync_result_free(r);
+        root_free(&root);
+    }
+    free(small);
+    free(card);
+}
+
+/* A card with every directory entry taken but blocks to spare refuses with
+ * no blocks short: what it lacks is a slot. */
+static void check_directory_full(const sigil_sync_result *nfsu2) {
+    size_t len = 0;
+    uint8_t *gci = sample("nfsu2-gci", NULL, &len);
+    uint8_t *card = (uint8_t *)malloc(GC_MAX_CARD_SIZE);
+    uint8_t *small = (uint8_t *)malloc(GC_DENTRY_SIZE + GC_BLOCK_SIZE);
+    bool ok = gci && card && small && nfsu2 && sigil_gamecube_format(card, GC_MAX_CARD_SIZE, false) == SIGIL_OK;
+    for (int i = 0; ok && i < 127; i++) {
+        memset(small, 0, GC_DENTRY_SIZE + GC_BLOCK_SIZE);
+        memcpy(small, gci, GC_DENTRY_SIZE);
+        memcpy(small, "GOTE", 4);
+        memset(small + GCI_NAME, 0, 32);
+        snprintf((char *)small + GCI_NAME, 32, "slot%03d", i);
+        small[0x38] = 0;
+        small[0x39] = 1;
+        ok = sigil_gamecube_inject(card, GC_MAX_CARD_SIZE, small, GC_DENTRY_SIZE + GC_BLOCK_SIZE) == SIGIL_OK;
+    }
+    if (!ok) {
+        fail("directory full", "setup failed");
+    } else {
+        mem_root root = {0};
+        root_put(&root, "GC/MemoryCardA.USA.raw", card, GC_MAX_CARD_SIZE);
+        game g;
+        make_game(&g, &root, "dolphin_standalone", NFSU2, "GUGE", NFSU2_ISO);
+        raw_mode(&g);
+        sigil_sync_result *r = NULL;
+        if (sigil_restore(&g.req, nfsu2->data, nfsu2->len, &r) != SIGIL_ERR_NO_SPACE || !r || r->blocks_short != 0 ||
+            strncmp(r->problem, NFSU2 "-", 9) != 0 || root.writes != 0) {
+            fail("directory full", "a card out of directory entries didn't refuse with no blocks short");
+        }
+        sigil_sync_result_free(r);
+        root_free(&root);
+    }
+    free(small);
+    free(card);
+    free(gci);
+}
+
+/* A companion from another region than the game's is refused whichever
+ * region each is. */
+static void check_foreign_companions(const sigil_sync_result *fzero) {
+    size_t len = 0, jp_len = 0;
+    uint8_t *gci = sample("nfsu2-gci", NULL, &len);
+    uint8_t *jp = sample("bleach-gc-jp-gci", NULL, &jp_len);
+    if (!gci || !jp || !fzero) { free(gci); free(jp); fail("foreign companions", "setup failed"); return; }
+    uint8_t *pal = gci_with(gci, len, 3, "P", 1);
+    mem_root jp_src = {0}, pal_src = {0};
+    root_put(&jp_src, "GC/JAP/Card A/8P-GIGJ-bleach.gci", jp, jp_len);
+    root_put(&pal_src, "GC/EUR/Card A/69-GUGP-NFSU2.gci", pal, len);
+    const struct { const char *what; mem_root *src; const char *title_id, *serial, *content; } GAMES[] = {
+        { "Japanese game", &jp_src, "4749474A", "GIGJ", "Bleach GC (Japan).iso" },
+        { "European game", &pal_src, "47554750", "GUGP", "NFSU2 (Europe).iso" },
+    };
+    const char *ids[] = { FZERO };
+    for (size_t i = 0; i < 2; i++) {
+        sigil_sync_result *own = unit_from(GAMES[i].src, "dolphin_standalone", GAMES[i].title_id, GAMES[i].serial,
+                                           GAMES[i].content, false);
+        mem_root root = {0};
+        sigil_sync_companion companion = { ids, 1, fzero->data, fzero->len };
+        game g;
+        make_game(&g, &root, "dolphin_standalone", GAMES[i].title_id, GAMES[i].serial, GAMES[i].content);
+        g.req.companions = &companion;
+        g.req.companion_count = 1;
+        sigil_sync_result *r = NULL;
+        if (!own || sigil_restore(&g.req, own->data, own->len, &r) != SIGIL_ERR_REGION || root.writes != 0 ||
+            strncmp(r->problem, FZERO "-", 9) != 0) {
+            fail("foreign companions", GAMES[i].what);
+        }
+        sigil_sync_result_free(r);
+        sigil_sync_result_free(own);
+        root_free(&root);
+    }
+    root_free(&pal_src);
+    root_free(&jp_src);
+    free(pal);
+    free(jp);
+    free(gci);
+}
+
+/* Dolphin loads only .gci files directly in the folder: a save in a
+ * subfolder or under another extension is neither collected nor removed. */
+static void check_folder_filters(const sigil_sync_result *fzero) {
+    size_t len = 0;
+    uint8_t *gci = sample("fzero-gx-dolphin-gci-set", "8P-GFZE-fzc.dat.gci", &len);
+    if (!gci || !fzero) { free(gci); fail("folder filters", "setup failed"); return; }
+    uint8_t *other = gci_with(gci, len, GCI_NAME, "fzx.dat", 8);
+    mem_root root = {0};
+    put_fzero(&root, LIB_FOLDER, NULL);
+    root_put(&root, LIB_FOLDER "old/8P-GFZE-fzx.dat.gci", other, len);
+    root_put(&root, LIB_FOLDER "8P-GFZE-fzx.dat.gci.bak", other, len);
+    sigil_sync_result *r = unit_from(&root, "dolphin", FZERO, "GFZE", FZERO_DISC, false);
+    if (!r || zip_count(r->data, r->len) != 5) fail("folder filters", "a save outside Dolphin's load joined the unit");
+    game g;
+    make_game(&g, &root, "dolphin", FZERO, "GFZE", FZERO_DISC);
+    g.req.overwrite_local = 1;
+    sigil_sync_result *restored = NULL;
+    if (sigil_restore(&g.req, fzero->data, fzero->len, &restored) != SIGIL_OK ||
+        !root_find(&root, LIB_FOLDER "old/8P-GFZE-fzx.dat.gci") || !root_find(&root, LIB_FOLDER "8P-GFZE-fzx.dat.gci.bak")) {
+        fail("folder filters", "restore removed a file Dolphin doesn't load");
+    }
+    sigil_sync_result_free(restored);
+    sigil_sync_result_free(r);
+    root_free(&root);
+    free(other);
+    free(gci);
+}
+
+/* A save's identity leaves out its time and copy counter: written again it
+ * isn't a change, and new data in it is. */
+static void check_identity_masks(void) {
+    size_t len = 0;
+    uint8_t *gci = sample("nfsu2-gci", NULL, &len);
+    if (!gci) return;
+    mem_root root = {0};
+    root_put(&root, NFSU2_FILE, gci, len);
+    game g;
+    make_game(&g, &root, "dolphin_standalone", NFSU2, "GUGE", NFSU2_ISO);
+    sigil_sync_result *first = NULL;
+    if (sigil_collect(&g.req, &first) != SIGIL_OK || !first->data) { fail("identity masks", "setup failed"); goto done; }
+    g.req.state = first->state;
+    g.req.state_len = first->state_len;
+    const uint8_t later[4] = { 0x7F, 0x00, 0x12, 0x34 }, copies = 0x42, flipped = (uint8_t)(gci[len - 1] ^ 0xFF);
+    const struct { const char *what; size_t at; const void *bytes; size_t n; bool changed; } EDITS[] = {
+        { "a new time", GCI_MTIME, later, 4, false },
+        { "a new copy count", GCI_COPY, &copies, 1, false },
+        { "new data", len - 1, &flipped, 1, true },
+    };
+    for (size_t i = 0; i < sizeof(EDITS) / sizeof(EDITS[0]); i++) {
+        uint8_t *edited = gci_with(gci, len, EDITS[i].at, EDITS[i].bytes, EDITS[i].n);
+        root_put(&root, NFSU2_FILE, edited, len);
+        sigil_sync_result *r = NULL;
+        if (sigil_collect(&g.req, &r) != SIGIL_OK || (bool)r->changed != EDITS[i].changed) fail("identity masks", EDITS[i].what);
+        sigil_sync_result_free(r);
+        free(edited);
+    }
+done:
+    sigil_sync_result_free(first);
+    root_free(&root);
+    free(gci);
+}
+
+/* Two saves with one game code and file name but different maker codes are
+ * two saves, as Dolphin tells them apart. */
+static void check_maker_code(void) {
+    size_t len = 0;
+    uint8_t *gci = sample("nfsu2-gci", NULL, &len);
+    if (!gci) return;
+    uint8_t *other = gci_with(gci, len, GCI_MAKER, "70", 2);
+    mem_root root = {0};
+    root_put(&root, NFSU2_FILE, gci, len);
+    root_put(&root, SA_FOLDER "70-GUGE-NFSU2.gci", other, len);
+    sigil_sync_result *r = unit_from(&root, "dolphin_standalone", NFSU2, "GUGE", NFSU2_ISO, false);
+    if (!r || r->shape != SIGIL_SAVE_SHAPE_MULTI || zip_count(r->data, r->len) != 2) {
+        fail("maker code", "saves differing only by maker code collapsed into one");
+    }
+    sigil_sync_result_free(r);
+    root_free(&root);
+    free(other);
+    free(gci);
+}
+
+/* A unit collected off a raw card restores into a GCI folder, and a
+ * companion's saves go onto a raw card beside the game's and come back as
+ * its own unit. */
+static void check_raw_and_folder_cross(const sigil_sync_result *raw_unit, const sigil_sync_result *fzero,
+                                       const sigil_sync_result *nfsu2) {
+    if (!raw_unit || !fzero || !nfsu2) { fail("raw and folder", "setup failed"); return; }
+    mem_root root = {0};
+    game g;
+    make_game(&g, &root, "dolphin", FZERO, "GFZE", FZERO_DISC);
+    sigil_sync_result *r = NULL, *back = NULL;
+    if (sigil_restore(&g.req, raw_unit->data, raw_unit->len, &r) != SIGIL_OK || root.count != 1 ||
+        !root_find(&root, LIB_FOLDER "8P-GFZE-f_zero.dat.gci")) {
+        fail("raw and folder", "a raw card's unit didn't land as Dolphin's file");
+    }
+    sigil_sync_result_free(r);
+    r = NULL;
+    root_free(&root);
+
+    const char *ids[] = { FZERO };
+    sigil_sync_companion companion = { ids, 1, fzero->data, fzero->len };
+    make_game(&g, &root, "dolphin_standalone", NFSU2, "GUGE", NFSU2_ISO);
+    raw_mode(&g);
+    g.req.companions = &companion;
+    g.req.companion_count = 1;
+    mem_file *f = NULL;
+    if (sigil_restore(&g.req, nfsu2->data, nfsu2->len, &r) != SIGIL_OK || !(f = root_find(&root, "GC/MemoryCardA.USA.raw")) ||
+        card_saves_of(f->data, f->len, NFSU2) != 1 || card_saves_of(f->data, f->len, FZERO) != 5) {
+        fail("raw and folder", "the companion's saves didn't go onto the raw card beside the game's");
+    } else {
+        refresh(&g, &root);
+        g.req.state = r->state;
+        g.req.state_len = r->state_len;
+        companion.unit = NULL;
+        companion.unit_len = 0;
+        if (sigil_collect(&g.req, &back) != SIGIL_OK || strcmp(back->identity_hash, nfsu2->identity_hash) != 0 ||
+            back->companion_count != 1 || strcmp(back->companions[0].identity_hash, fzero->identity_hash) != 0) {
+            fail("raw and folder", "the raw card's saves didn't split back into the game's and the companion's units");
+        }
+    }
+    sigil_sync_result_free(back);
+    sigil_sync_result_free(r);
+    root_free(&root);
+}
+
+/* A save that reads back wrong fails the restore, on a raw card and in the
+ * GCI folder. */
+static void check_faulty_writes(const sigil_sync_result *raw_unit) {
+    if (!raw_unit) { fail("faulty writes", "setup failed"); return; }
+    mem_root clean = {0}, faulty = {0};
+    game g;
+    make_game(&g, &clean, "dolphin", FZERO, "GFZE", FZERO_DISC);
+    raw_mode(&g);
+    sigil_sync_result *r = NULL;
+    uint32_t first = 0xFFFF;
+    if (sigil_restore(&g.req, raw_unit->data, raw_unit->len, &r) != SIGIL_OK ||
+        (first = first_block_of(clean.files[0].data, clean.files[0].len, "f_zero.dat")) == 0xFFFF) {
+        fail("faulty writes", "clean restore failed");
+    } else {
+        sigil_sync_result_free(r);
+        r = NULL;
+        faulty.corrupt_write = 1;
+        faulty.corrupt_at = (size_t)first * GC_BLOCK_SIZE + 100u;
+        make_game(&g, &faulty, "dolphin", FZERO, "GFZE", FZERO_DISC);
+        raw_mode(&g);
+        if (sigil_restore(&g.req, raw_unit->data, raw_unit->len, &r) != SIGIL_ERR_IO) fail("faulty writes", "a raw card that read back wrong passed");
+    }
+    sigil_sync_result_free(r);
+    r = NULL;
+    root_free(&faulty);
+    root_free(&clean);
+
+    faulty.corrupt_write = 1;
+    make_game(&g, &faulty, "dolphin", FZERO, "GFZE", FZERO_DISC);
+    if (sigil_restore(&g.req, raw_unit->data, raw_unit->len, &r) != SIGIL_ERR_IO) fail("faulty writes", "a .gci that read back wrong passed");
+    sigil_sync_result_free(r);
+    root_free(&faulty);
 }
 
 int main(void) {
@@ -426,10 +1028,35 @@ int main(void) {
     sigil_sync_result *folder_unit = NULL;
     check_folder_collect(&folder_unit);
     check_folder_restore(folder_unit);
+    check_folder_order(folder_unit);
     check_raw_card(folder_unit);
     check_regions_and_standalone();
     check_escaped_names();
     check_folder_companion(folder_unit);
+
+    size_t card_len = 0;
+    uint8_t *card = sample("card-raw-usa", NULL, &card_len);
+    mem_root card_root = {0};
+    if (card) root_put(&card_root, LIB_RAW, card, card_len);
+    sigil_sync_result *raw_unit = unit_from(&card_root, "dolphin", FZERO, "GFZE", FZERO_DISC, true);
+    sigil_sync_result *nfsu2 = nfsu2_unit();
+    check_digit_suffix(nfsu2);
+    check_companion_removal(nfsu2);
+    check_raw_card_forms(raw_unit);
+    check_save_bigger_than_card();
+    check_directory_full(nfsu2);
+    check_card_size_option(raw_unit, folder_unit);
+    check_folder_capacity(nfsu2, folder_unit);
+    check_foreign_companions(folder_unit);
+    check_folder_filters(folder_unit);
+    check_identity_masks();
+    check_maker_code();
+    check_raw_and_folder_cross(raw_unit, folder_unit, nfsu2);
+    check_faulty_writes(raw_unit);
+    sigil_sync_result_free(nfsu2);
+    sigil_sync_result_free(raw_unit);
+    root_free(&card_root);
+    free(card);
     sigil_sync_result_free(folder_unit);
 
     corpus_free(&g_manifest);

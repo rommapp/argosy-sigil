@@ -94,6 +94,10 @@ const char *sigil_strerror(int code) {
     case SIGIL_ERR_EXISTS:               return "a save with that name already exists";
     case SIGIL_ERR_NO_SPACE:             return "not enough free space";
     case SIGIL_ERR_UNCOLLECTED:          return "the volume holds saves not collected yet";
+    case SIGIL_ERR_DAMAGED:              return "a save structure is damaged";
+    case SIGIL_ERR_REGION:               return "the save is from another region";
+    case SIGIL_ERR_NO_TARGET:            return "the emulator's settings keep no file for a volume in the unit";
+    case SIGIL_ERR_AMBIGUOUS:            return "more than one file could be the emulator's card";
     default:                             return "unknown error";
     }
 }

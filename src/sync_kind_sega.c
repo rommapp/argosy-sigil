@@ -74,6 +74,11 @@ static int saturn_inject(void *card, const void *save) {
     return sigil_saturn_inject((sigil_saturn_volume *)card, s->data, s->len);
 }
 
+static uint32_t saturn_cost(const void *card, const void *save) {
+    const sigil_sync_blob *s = (const sigil_sync_blob *)save;
+    return sigil_saturn_cost((const sigil_saturn_volume *)card, s->data, s->len);
+}
+
 static int saturn_remove(void *card, const sigil_card_entry *entry) {
     return sigil_saturn_delete((sigil_saturn_volume *)card, entry->first_block);
 }
@@ -97,9 +102,8 @@ const sigil_sync_kind sigil_sync_saturn_kind = {
     .platform = "saturn", .has_ids = false, .main_device = SIGIL_DEVICE_INTERNAL,
     .load = saturn_load, .blank = saturn_blank, .free_card = saturn_free_card, .size = saturn_size,
     .unit_size = saturn_unit_size, .list = saturn_list, .extract = saturn_extract,
-    .free_save = sigil_sync_blob_free, .inject = saturn_inject, .remove = saturn_remove,
+    .free_save = sigil_sync_blob_free, .inject = saturn_inject, .cost = saturn_cost, .remove = saturn_remove,
     .verify = saturn_verify, .image = saturn_image, .identity = saturn_identity,
-    .writable = sigil_sync_any_format,
 };
 
 /* Sega CD: a save is sigil's unit of its stored ECC-encoded blocks. */
@@ -165,6 +169,11 @@ static int segacd_inject(void *card, const void *save) {
     return sigil_segacd_inject((sigil_segacd_volume *)card, s->data, s->len);
 }
 
+static uint32_t segacd_cost(const void *card, const void *save) {
+    const sigil_sync_blob *s = (const sigil_sync_blob *)save;
+    return sigil_segacd_cost((const sigil_segacd_volume *)card, s->data, s->len);
+}
+
 static int segacd_remove(void *card, const sigil_card_entry *entry) {
     return sigil_segacd_delete((sigil_segacd_volume *)card, entry->first_block);
 }
@@ -188,9 +197,8 @@ const sigil_sync_kind sigil_sync_segacd_kind = {
     .platform = "segacd", .has_ids = false, .main_device = SIGIL_DEVICE_INTERNAL,
     .load = segacd_load, .blank = segacd_blank, .free_card = segacd_free_card, .size = segacd_size,
     .unit_size = segacd_unit_size, .list = segacd_list, .extract = segacd_extract,
-    .free_save = sigil_sync_blob_free, .inject = segacd_inject, .remove = segacd_remove,
+    .free_save = sigil_sync_blob_free, .inject = segacd_inject, .cost = segacd_cost, .remove = segacd_remove,
     .verify = segacd_verify, .image = segacd_image, .identity = segacd_identity,
-    .writable = sigil_sync_any_format,
 };
 
 /* Dreamcast VMU: a save is a .dci. */
@@ -210,10 +218,9 @@ static int vmu_blank(void **card, int *format, int device, size_t size, int form
     (void)device;
     (void)size;
     (void)form;
-    (void)like;
     uint8_t *image = (uint8_t *)malloc(VMU_CARD_SIZE);
     if (!image) return SIGIL_ERR_OOM;
-    sigil_dreamcast_format(image);
+    sigil_dreamcast_format_like(image, (const uint8_t *)like);
     *card = image;
     *format = SIGIL_CARD_FORMAT_DREAMCAST_VMU;
     return SIGIL_OK;
@@ -250,6 +257,12 @@ static int vmu_inject(void *card, const void *save) {
     return sigil_dreamcast_inject((uint8_t *)card, s->data, s->len);
 }
 
+static uint32_t vmu_cost(const void *card, const void *save) {
+    (void)card;
+    const sigil_sync_blob *s = (const sigil_sync_blob *)save;
+    return sigil_dreamcast_cost(s->data, s->len);
+}
+
 static int vmu_remove(void *card, const sigil_card_entry *entry) {
     return sigil_dreamcast_delete((uint8_t *)card, entry->first_block);
 }
@@ -283,6 +296,6 @@ const sigil_sync_kind sigil_sync_vmu_kind = {
     .platform = "dreamcast", .has_ids = false, .main_device = SIGIL_DEVICE_VMU_A1,
     .load = vmu_load, .blank = vmu_blank, .free_card = free, .size = vmu_size, .unit_size = vmu_unit_size,
     .list = vmu_list, .extract = vmu_extract, .free_save = sigil_sync_blob_free, .inject = vmu_inject,
+    .cost = vmu_cost,
     .remove = vmu_remove, .verify = vmu_verify, .image = vmu_image, .identity = vmu_identity,
-    .writable = sigil_sync_any_format,
 };

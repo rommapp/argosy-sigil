@@ -200,7 +200,7 @@ static int find_identity(const uint8_t *dir, const uint8_t *dentry) {
     for (uint32_t i = 0; i < GC_DIR_ENTRIES; i++) {
         const uint8_t *d = dentry_at(dir, i);
         if (dentry_live(d) && memcmp(d, dentry, DENTRY_MAKERCODE_END) == 0 &&
-            memcmp(d + DENTRY_FILENAME, dentry + DENTRY_FILENAME, GC_FILENAME_LEN) == 0) {
+            strncmp((const char *)d + DENTRY_FILENAME, (const char *)dentry + DENTRY_FILENAME, GC_FILENAME_LEN) == 0) {
             return (int)i;
         }
     }
@@ -270,17 +270,21 @@ int sigil_gamecube_card_list(const uint8_t *image, size_t size, sigil_card_listi
         }
         uint32_t first = sigil_read_be16(d + DENTRY_FIRST_BLOCK);
         uint32_t blocks = sigil_read_be16(d + DENTRY_BLOCK_COUNT);
+        char name[GC_FILENAME_LEN + 1];
+        size_t name_len = 0;
+        while (name_len < GC_FILENAME_LEN && d[DENTRY_FILENAME + name_len] != '\0') name_len++;
+        memcpy(name, d + DENTRY_FILENAME, name_len);
+        name[name_len] = '\0';
+        char owner[SIGIL_CARD_OWNER_MAX];
+        snprintf(owner, sizeof(owner), "%02X%02X%02X%02X", d[DENTRY_GAMECODE], d[DENTRY_GAMECODE + 1],
+                 d[DENTRY_GAMECODE + 2], d[DENTRY_GAMECODE + 3]);
         if (blocks == 0 || walk_chain(bat, v.total_blocks, first, NULL) != blocks) {
-            listing->corrupt_count++;
+            sigil_card_listing_corrupt(listing, name, owner, first);
             continue;
         }
         sigil_card_entry *e = &listing->entries[listing->entry_count++];
-        size_t name_len = 0;
-        while (name_len < GC_FILENAME_LEN && d[DENTRY_FILENAME + name_len] != '\0') name_len++;
-        memcpy(e->name, d + DENTRY_FILENAME, name_len);
-        e->name[name_len] = '\0';
-        snprintf(e->owner_id, sizeof(e->owner_id), "%02X%02X%02X%02X",
-                 d[DENTRY_GAMECODE], d[DENTRY_GAMECODE + 1], d[DENTRY_GAMECODE + 2], d[DENTRY_GAMECODE + 3]);
+        memcpy(e->name, name, name_len + 1);
+        memcpy(e->owner_id, owner, sizeof(owner));
         e->blocks = blocks;
         e->first_block = first;
     }
@@ -374,6 +378,10 @@ static uint32_t gci_blocks(const uint8_t *gci, size_t len) {
     if (blocks > GC_MAX_DATA_BLOCKS || sigil_read_be16(gci + DENTRY_BLOCK_COUNT) != blocks) return 0;
     if (!dentry_live(gci)) return 0;
     return (uint32_t)blocks;
+}
+
+uint32_t sigil_gamecube_cost(const uint8_t *gci, size_t len) {
+    return gci_blocks(gci, len);
 }
 
 int sigil_gamecube_inject(uint8_t *image, size_t size, const uint8_t *gci, size_t len) {

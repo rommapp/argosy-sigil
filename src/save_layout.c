@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "save_layout.h"
+#include "card_saturn.h"
 
 #define M(t, r)                 { t, SIGIL_SAVE_ROLE_##r, NULL, NULL, false, SIGIL_DEVICE_NONE }
 #define M_OPT(t, r, k, v, d)    { t, SIGIL_SAVE_ROLE_##r, k, v, d, SIGIL_DEVICE_NONE }
@@ -46,9 +47,11 @@ static const sigil_layout_shared BEETLE_PSX_SHARED[] = {
  * `.smpc` and the cart `.bcr` move to the shared files with shared_int and
  * shared_ext (sega.md section 1, Beetle Saturn rows). */
 static const sigil_layout_member BEETLE_SATURN_MEMBERS[] = {
-    M_OPT_DEV("{stem}.srm", PRIMARY, "beetle_saturn_save_method", "libretro", true, INTERNAL),
-    M_OPT2_DEV("{stem}.bkr", PRIMARY, "beetle_saturn_save_method", "mednafen", false,
-               "beetle_saturn_shared_int", "disabled", true, INTERNAL),
+    { .template_ = "{stem}.srm", .role = SIGIL_SAVE_ROLE_PRIMARY, .opt_key = "beetle_saturn_save_method",
+      .opt_value = "libretro", .opt_default = true, .device = SIGIL_DEVICE_INTERNAL, .new_size = SATURN_INTERNAL_SIZE },
+    { .template_ = "{stem}.bkr", .role = SIGIL_SAVE_ROLE_PRIMARY, .opt_key = "beetle_saturn_save_method",
+      .opt_value = "mednafen", .opt_default = false, .device = SIGIL_DEVICE_INTERNAL, .opt2_key = "beetle_saturn_shared_int",
+      .opt2_value = "disabled", .opt2_default = true, .new_size = SATURN_INTERNAL_SIZE },
     M_OPT_DEV("{stem}.bcr", SIDECAR, "beetle_saturn_shared_ext", "disabled", true, CART),
     M_OPT("{stem}.smpc", SIDECAR, "beetle_saturn_shared_int", "disabled", true),
 };
@@ -62,16 +65,21 @@ static const sigil_layout_shared BEETLE_SATURN_SHARED[] = {
 /* Kronos (libretro/yabause `kronos`): libretro.c configure_saturn_addon_cart
  * and the bup_path in retro_load_game; the cart file is named by
  * kronos_addon_cartridge, default 512K_backup_ram. */
-#define KRONOS_OWN(t, r, dev) M_OPT_DEV(t, r, "kronos_use_beetle_saves", "disabled", true, dev)
-#define KRONOS_CART(t, value, d) \
-    M_OPT2_DEV(t, SIDECAR, "kronos_use_beetle_saves", "disabled", true, "kronos_addon_cartridge", value, d, CART)
+#define KRONOS_INTERNAL(t) \
+    { .template_ = t, .role = SIGIL_SAVE_ROLE_PRIMARY, .opt_key = "kronos_use_beetle_saves", .opt_value = "disabled", \
+      .opt_default = true, .device = SIGIL_DEVICE_INTERNAL, .new_size = SATURN_INTERNAL_SIZE }
+#define KRONOS_CART(t, value, d, size) \
+    { .template_ = t, .role = SIGIL_SAVE_ROLE_SIDECAR, .opt_key = "kronos_use_beetle_saves", .opt_value = "disabled", \
+      .opt_default = true, .device = SIGIL_DEVICE_CART, .opt2_key = "kronos_addon_cartridge", .opt2_value = value, \
+      .opt2_default = d, .new_size = size }
 static const sigil_layout_member KRONOS_MEMBERS[] = {
-    KRONOS_OWN("kronos/saturn/{stem}.ram", PRIMARY, INTERNAL),
-    M_OPT_DEV("{stem}.bkr", PRIMARY, "kronos_use_beetle_saves", "enabled", false, INTERNAL),
-    KRONOS_CART("kronos/saturn/{stem}-ext512K.ram", "512K_backup_ram", true),
-    KRONOS_CART("kronos/saturn/{stem}-ext1M.ram", "1M_backup_ram", false),
-    KRONOS_CART("kronos/saturn/{stem}-ext2M.ram", "2M_backup_ram", false),
-    KRONOS_CART("kronos/saturn/{stem}-ext4M.ram", "4M_backup_ram", false),
+    KRONOS_INTERNAL("kronos/saturn/{stem}.ram"),
+    { .template_ = "{stem}.bkr", .role = SIGIL_SAVE_ROLE_PRIMARY, .opt_key = "kronos_use_beetle_saves",
+      .opt_value = "enabled", .opt_default = false, .device = SIGIL_DEVICE_INTERNAL, .new_size = SATURN_INTERNAL_SIZE },
+    KRONOS_CART("kronos/saturn/{stem}-ext512K.ram", "512K_backup_ram", true, 512u * 1024u),
+    KRONOS_CART("kronos/saturn/{stem}-ext1M.ram", "1M_backup_ram", false, 1024u * 1024u),
+    KRONOS_CART("kronos/saturn/{stem}-ext2M.ram", "2M_backup_ram", false, 2048u * 1024u),
+    KRONOS_CART("kronos/saturn/{stem}-ext4M.ram", "4M_backup_ram", false, 4096u * 1024u),
     M_OPT_DEV("{stem}.bcr", SIDECAR, "kronos_use_beetle_saves", "enabled", false, CART),
 };
 static const char *const KRONOS_SUBDIRS[] = { "kronos/saturn" };
@@ -80,7 +88,7 @@ static const char *const KRONOS_SUBDIRS[] = { "kronos/saturn" };
  * 0xFF filler (sega.md section 1). */
 static const sigil_layout_member YABAUSE_MEMBERS[] = {
     { .template_ = "{stem}.srm", .role = SIGIL_SAVE_ROLE_PRIMARY, .device = SIGIL_DEVICE_INTERNAL,
-      .form = SIGIL_FORM_EXPANDED_FF, .new_size = 32768 },
+      .form = SIGIL_FORM_EXPANDED_FF, .new_size = SATURN_INTERNAL_SIZE },
 };
 
 /* Yaba Sanshiro keeps one memory-mapped backup.bin for every game, 8 MiB
@@ -143,13 +151,17 @@ static const sigil_layout_shared FLYCAST_STANDALONE_SHARED[] = {
  * The libretro core's User folder is the save folder's User/. */
 #define GC_FOLDER(t) { .template_ = t, .opt_key = "SlotA", .opt_value = "8", .opt_default = true, \
                        .device = SIGIL_DEVICE_GC_FOLDER }
-#define GC_CARD(t)   { .template_ = t, .opt_key = "SlotA", .opt_value = "1", .opt_default = false, \
-                       .device = SIGIL_DEVICE_GC_CARD }
+/* MemoryCardSize (-1 for 2043 blocks, 0 to 4 for 59 to 1019) picks the raw
+ * card; without it every name applies and sigil_sync_gather_cards refuses
+ * when more than one is there. */
+#define GC_CARD(t, size) \
+    { .template_ = t, .opt_key = "SlotA", .opt_value = "1", .opt_default = false, .device = SIGIL_DEVICE_GC_CARD, \
+      .opt2_key = "MemoryCardSize", .opt2_value = size, .opt2_default = true }
 #define GC_SLOT_A(user) \
     GC_FOLDER(user "GC/{gc_region}/Card A/"), \
-    GC_CARD(user "GC/MemoryCardA.{gc_region}.raw"), GC_CARD(user "GC/MemoryCardA.{gc_region}.1019.raw"), \
-    GC_CARD(user "GC/MemoryCardA.{gc_region}.507.raw"), GC_CARD(user "GC/MemoryCardA.{gc_region}.251.raw"), \
-    GC_CARD(user "GC/MemoryCardA.{gc_region}.123.raw"), GC_CARD(user "GC/MemoryCardA.{gc_region}.59.raw")
+    GC_CARD(user "GC/MemoryCardA.{gc_region}.raw", "-1"), GC_CARD(user "GC/MemoryCardA.{gc_region}.1019.raw", "4"), \
+    GC_CARD(user "GC/MemoryCardA.{gc_region}.507.raw", "3"), GC_CARD(user "GC/MemoryCardA.{gc_region}.251.raw", "2"), \
+    GC_CARD(user "GC/MemoryCardA.{gc_region}.123.raw", "1"), GC_CARD(user "GC/MemoryCardA.{gc_region}.59.raw", "0")
 static const sigil_layout_shared DOLPHIN_SHARED[] = { GC_SLOT_A("User/") };
 static const sigil_layout_shared DOLPHIN_STANDALONE_SHARED[] = { GC_SLOT_A("") };
 static const char *const DOLPHIN_SUBDIRS[] = { "User/GC" };
@@ -161,6 +173,16 @@ static const sigil_layout_member PCSX_REARMED_MEMBERS[] = {
 static const sigil_layout_shared PCSX_REARMED_SHARED[] = {
     S_OPT("pcsx-card2.mcd", "pcsx_rearmed_memcard2", "shared", true),
 };
+
+/* PS1 classics on a PSP, and on a Vita through its PSP emulator (official
+ * PS1 Classics and Adrenaline): PSP/SAVEDATA/<DISC_ID>/ under ms0:/ or
+ * ux0:pspemu/, slot 1 in SCEVMC0.VMP and slot 2 in SCEVMC1.VMP. DISC_ID is the
+ * EBOOT's, the disc serial with its punctuation dropped (SLUS01040). */
+static const sigil_layout_member VITA_POPS_MEMBERS[] = {
+    M("PSP/SAVEDATA/{disc_id}/SCEVMC0.VMP", PRIMARY),
+    M("PSP/SAVEDATA/{disc_id}/SCEVMC1.VMP", SIDECAR),
+};
+static const char *const VITA_POPS_SUBDIRS[] = { "PSP/SAVEDATA" };
 
 static const sigil_layout_member LRPS2_MEMBERS[] = {
     M_OPT("{stem}.ps2", PRIMARY, "pcsx2_shared_memory_cards", "disabled", false),
@@ -259,6 +281,7 @@ static const sigil_layout LAYOUTS[] = {
     ROW_REGION("genesis_plus_gx", "segacd", GPGX_SEGACD_MEMBERS, GPGX_SEGACD_SHARED, "genesis_plus_gx_region_detect"),
     ROW_SHARED("mednafen_psx_hw", NULL, BEETLE_PSX_MEMBERS, BEETLE_PSX_SHARED),
     ROW_SHARED("pcsx_rearmed", NULL, PCSX_REARMED_MEMBERS, PCSX_REARMED_SHARED),
+    ROW_DIRS("vita_pops", "psx", VITA_POPS_MEMBERS, VITA_POPS_SUBDIRS),
     ROW_SHARED("pcsx2", NULL, LRPS2_MEMBERS, LRPS2_SHARED),
     { "pcsx2_standalone", "ps2", NULL, 0, PCSX2_STANDALONE_SHARED, COUNT(PCSX2_STANDALONE_SHARED),
       PCSX2_STANDALONE_SUBDIRS, COUNT(PCSX2_STANDALONE_SUBDIRS), NULL },
