@@ -18,6 +18,9 @@ sigil can't decide (3) for the client ([sigil reports, the client decides](../sa
 
 - **verified**: saves are per application per user, plus "device" saves with no user. yuzu forks keep device saves under user `0` (32 zeros) in the legacy layout, and under `user/save/device/<TITLEID>/0/` in the newer layout. Ryujinx keys every save by `(ProgramId, UserId, Type)` in `imkvdb.arc`, where the type tells account from device saves (enum values UNVERIFIED). See [nintendo-disc.md](nintendo-disc.md) rows 7 and 8.
 - **verified**: JKSV backups carry `.nx_save_meta.bin` with `saveDataType`, the account id and the declared save size, so a JKSV unit says whether it is an account or device save. See row 9.
+- **verified (AYN Odin 3, Eden and Citron on Android, 2026-10-04)**: each emulator's `nand/system/save/8000000000000010/su/avators/profiles.dat` holds one profile, and that profile's save folder is its UUID with the bytes reversed (Eden: UUID `01F4CB1E1E6E290010B1DEEBBA2D5D12`, folder `125D2DBAEBDEB11000296E1E1ECBF401`; fixtures `eden-profile`, `citron-profile`). Eden also keeps a stray folder `1000296E1E1ECBF40100000000000000` matching no profile, holding only `.yuzu_save_size`: folders that match no profile are not a user's.
+- **verified**: Animal Crossing: New Horizons is a device save. Its JKSV `.nx_save_meta.bin` (from a real console) has `saveDataType` 3, Device in the Switch's enum (Account is 1), account id all zeros, owner `01006F8002326000`; Eden keeps it in the all-zero user folder. The whole island travels as one device save with no profile.
+- **not shown**: Mario Kart 8 Deluxe splitting its data. On the Odin, its device folder's `sg33.dat` is byte-identical to the account copy beside `ghostlist.dat` and `userdata.dat` (fixture `mk8d-eden-split`), so it reads as a copy, not a device save the game wrote. Its NACP device save size would settle it.
 - **lead**: each game's control data (NACP, in the control NCA's RomFS as `control.nacp`) declares the save areas the game asks the system to create: user account save size and journal size, device save size and journal size, BCAT delivery cache size, temporary storage size, cache storage size, plus `StartupUserAccount` (whether the game requires a user to be picked at boot). A nonzero device save size would be the flag that a game keeps device-wide data. Field offsets are on switchbrew's NACP page; check them before use.
 - **lead**: Animal Crossing: New Horizons keeps the island for every resident in one save, and its island transfer tool exists because the island is tied to the console. Whether that save is an account save, a device save or both is what the NACP check above would answer. Mario Kart 8 Deluxe: same question, not checked.
 - What sigil reads today: Switch NSP, XCI and NCA headers, decrypted with the header key, for the title id (`src/switch_nca.c`). Reading the NACP needs the control NCA's section decrypted, which needs the key-area keys (and the title key for NCAs with a rights id) from the user's `prod.keys` and `title.keys`. That is a larger step than anything sigil does with keys now.
@@ -25,7 +28,7 @@ sigil can't decide (3) for the client ([sigil reports, the client decides](../sa
 ### Wii U
 
 - **verified**: each title's save directory holds `user/<persistentId>/` per account and `user/common/` shared by every account on the console, plus `meta/`. Cemu's own export drops `common/`, so a client must carry it itself. See [nintendo-disc.md](nintendo-disc.md) row 6.
-- **lead**: the title's `meta/meta.xml` declares `common_save_size` and `account_save_size`. A nonzero common size would be the flag that a game uses the shared area. sigil already opens WUA archives (`src/wiiu_wua.c`), which are decrypted, so reading `meta.xml` from a WUA looks cheap. Encrypted WUD/WUX would need keys.
+- **verified (Cemu on an AYN Odin 3, 2026-10-04)**: the `meta/meta.xml` in each save folder declares `common_save_size` and `account_save_size`, and they predict where the save sits. Nintendo Land declares common 4 MiB and account 256 KiB and keeps its whole save in `user/common/`, with nothing under the account; Wind Waker HD, MH3U, Splatoon and Breath of the Wild declare common 0 and keep everything under `user/80000001/`. So sigil reads the split from the save folder itself, with no keys. One account, `act/80000001/account.dat` (fixture `cemu-account`). The same `meta.xml` sits in the title's own `meta/` (WUA archives are decrypted; encrypted WUD/WUX need keys).
 
 ### 3DS
 
@@ -75,7 +78,7 @@ Open questions for the discussion:
 - The account-versus-device split is per save, not per game. Collect knows each save's kind from where it sits (a user's folder or the device location; Ryubing's indexer records the type). The unit records each part's kind, likely as a top-level folder per kind in the zip, so restore puts account saves under the given profile and device saves in the device location without asking for a profile.
 - Folder units already carry `save_id` and its usage (exact, prefix, or the 3DS split `00040000/00033500`); the profile only decides the parent folder.
 - Ryubing (the live Ryujinx fork, git.ryujinx.app) names save folders by an allocated id from `imkvdb.arc`, so its restore needs that lookup, and a title it has never booted has no folder yet.
-- Still to verify: whether Animal Crossing: New Horizons keeps its island in an account save, a device save, or both.
+- Animal Crossing: New Horizons is a device save (see Switch); Mario Kart 8 Deluxe's split is not shown yet.
 
 ## Next checks, cheapest first
 
