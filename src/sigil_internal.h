@@ -185,6 +185,23 @@ int sigil_sfo_get_string(const uint8_t *data, size_t len,
                          const char *key,
                          char *out, size_t out_cap);
 
+/** Where the value of `key` sits in SFO `data`: its byte offset and stated
+ *  length, clipped to the data. SIGIL_ERR_NOT_FOUND when `data` isn't an SFO
+ *  or lacks the key. */
+int sigil_sfo_find(const uint8_t *data, size_t len, const char *key, size_t *offset, size_t *size);
+
+#define SIGIL_POPS_SFO_SIZE 4912u
+
+/** Signs a PSP save PARAM.SFO as the PSP save utility does: sets the
+ *  SAVEDATA_PARAMS flag 0x41 and writes the hashes at 0x70 and 0x10
+ *  (AES-CMAC under public KIRK key slots). The hash at 0x20 needs the
+ *  console's own key; it is left as it is, and POPS doesn't check it. */
+int sigil_psp_sfo_sign(uint8_t *sfo, size_t len);
+
+/** The PARAM.SFO POPS writes in a PS1 classic's save folder, for folder
+ *  `directory` and display title `title`, signed. */
+int sigil_pops_param_sfo(const char *directory, const char *title, uint8_t out[SIGIL_POPS_SFO_SIZE]);
+
 int sigil_extract_psp(const sigil_io *io, const char *filename_hint,
                       const sigil_options *opts, sigil_result *out);
 int sigil_extract_psx(const sigil_io *io, const char *filename_hint,

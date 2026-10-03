@@ -321,9 +321,10 @@ letter on retail discs.
 
 Every row but `vita_pops` was read from the core's source or its libretro
 docs page; the names are the core's literals. The PSP and Vita firmware
-isn't open, so `vita_pops` follows PS1-to-EBOOT converters (pop-fe), save
-tools (Apollo) and their guides, and its `.vmp` format was checked against
-real cards.
+isn't open, so `vita_pops` was checked on a PS Vita running PS1 games under
+Adrenaline: the folder names, the files POPS writes, its `.vmp` signatures
+(a new card from sigil is byte-identical to the console's), and that POPS
+boots a folder sigil created from nothing.
 
 | Layout | Platform | Members (role, option) | Shared | Source |
 |---|---|---|---|---|
@@ -333,7 +334,7 @@ real cards.
 | `genesis_plus_gx` | `segacd` | `{stem}.brm` primary when `genesis_plus_gx_system_bram` = `per game`; `{stem}_{cart_size}_cart.brm` sidecar when `genesis_plus_gx_cart_bram` = `per game`. No `.srm`: the core writes none for a disc | `scd_E.brm`, `scd_U.brm`, `scd_J.brm` when `system_bram` = `per bios` (default), one per disc region; `{cart_size}_cart.brm` when `cart_bram` = `per cart` (default) | `libretro/libretro.c` `check_variables`, `bram_load`, `bram_save` |
 | `mednafen_psx_hw` | any | `{stem}.srm` primary when `beetle_psx_hw_use_mednafen_memcard0_method` = `libretro` (default); `{stem}.{left_index}.mcr` primary when `mednafen`; `{stem}.{right_index}.mcr` sidecar when `beetle_psx_hw_enable_memcard1` = `enabled` | `mednafen_psx_libretro_shared.0.mcr`, `.1.mcr` when `beetle_psx_hw_shared_memory_cards` = `enabled` | commit `707d1be`; docs.libretro.com/library/beetle_psx_hw |
 | `pcsx_rearmed` | any | `{stem}.srm` primary | `pcsx-card2.mcd` when `pcsx_rearmed_memcard2` = `shared` (default) | observed on device |
-| `vita_pops` | `psx` | `PSP/SAVEDATA/{disc_id}/SCEVMC0.VMP` primary (slot 1); `PSP/SAVEDATA/{disc_id}/SCEVMC1.VMP` sidecar (slot 2). `{disc_id}` is the title id's letters and digits (`SLUS01040`), the EBOOT's `DISC_ID`. Signed `.vmp` cards; the folder's `PARAM.SFO` and `ICON0.PNG` stay as the console wrote them | | PS1 classics on a PSP, and on a Vita (official PS1 Classics and Adrenaline): the save root is the folder holding `PSP/` (`ms0:/` or `ux0:pspemu/`); subdir `PSP/SAVEDATA` |
+| `vita_pops` | `psx` | `PSP/SAVEDATA/{disc_id}/SCEVMC0.VMP` primary (slot 1); `PSP/SAVEDATA/{disc_id}/SCEVMC1.VMP` sidecar (slot 2). `{disc_id}` is the title id's letters and digits (`SLUS01040`), the EBOOT's `DISC_ID`. Signed `.vmp` cards; the folder's `PARAM.SFO` and `ICON0.PNG` stay as the console wrote them. POPS won't read a card whose folder has no `PARAM.SFO`, so a restore into a folder without one also writes it: the folder's name, the content's name as its title, signed as the PSP save utility signs it. POPS checks the hash at 0x70, not the console-keyed one at 0x20, and rewrites the file with all three when the game runs | | PS1 classics on a PSP, and on a Vita (official PS1 Classics and Adrenaline): the save root is the folder holding `PSP/` (`ms0:/` or `ux0:pspemu/`); subdir `PSP/SAVEDATA` |
 | `pcsx2` | any | `{stem}.ps2` primary when `pcsx2_shared_memory_cards` = `disabled` | `Mcd001.ps2`, `Mcd002.ps2` when `enabled` (default). The core keeps them in `<system>/pcsx2/memcards/`, so pass that folder as the save root | libretro/ps2 `libretro/main.cpp`, `pcsx2/VMManager.cpp` |
 | `pcsx2_standalone` | `ps2` | | `memcards/Mcd001.ps2`, `memcards/Mcd002.ps2`, each a file card or a folder card (a directory of save folders and `_pcsx2_superblock`). Covers PCSX2, AetherSX2, NetherSX2 and ARMSX2; the save root is the folder that holds `memcards/` | PCSX2 `pcsx2/Pcsx2Config.cpp`, `pcsx2/SIO/Memcard/MemoryCardFolder.cpp`; subdir `memcards` |
 | `mednafen_saturn` | any | `{stem}.srm` primary when `beetle_saturn_save_method` = `libretro` (default); `{stem}.bkr` primary when `mednafen` and `beetle_saturn_shared_int` = `disabled` (default); `{stem}.bcr` sidecar when `beetle_saturn_shared_ext` = `disabled` (default); `{stem}.smpc` sidecar when `shared_int` = `disabled` | `mednafen_saturn_libretro_shared.bkr` when `shared_int` = `enabled` and `save_method` = `mednafen`; `.smpc` when `shared_int` = `enabled`; `.bcr` when `shared_ext` = `enabled`. A new `.bkr` is 32 KiB and a new `.bcr` a 512 KiB cart; restore refuses with `SIGIL_ERR_NO_SPACE` saves that don't fit | `mednafen/ss/ss.c`, `libretro.c`; sega.md section 1 |

@@ -28,6 +28,8 @@ After step 8, six reviewers mutation-tested the work at `52fbb39`. Their finding
 
 All eight steps landed on 2026-10-03; see Done. Each step: what done looks like.
 
+Next, once preparation is finished: per-system pages. The README's per-system detail (layout rows, file formats, quirks, how each fact was verified, open items) moves to `docs/platforms/<system>.md`, with `docs/save-research/` folded in. The README keeps what sigil is, build and test, the API and binding guides, and a table of systems linking to the pages. Done looks like: every layout row in `src/save_layout.c` has an entry on its system's page, and the contract test fails when one is missing.
+
 1. Claim names round-trip in every binding. A save name with bytes outside printable ASCII comes back in `unowned` in a form the same binding accepts in `claimed`, and the claim moves the save. Python and Kotlin tests prove it with a Saturn volume whose save name holds such bytes.
 2. Kronos and Yaba Sanshiro layout rows. Kronos libretro default (`kronos/saturn/{stem}.ram`, `{stem}-ext{size}.ram`) and `kronos_use_beetle_saves` (`{stem}.bkr`, `.bcr`); Yaba Sanshiro libretro `yabasanshiro/backup.bin`, shared, 8 MiB expanded. Sync tests collect and restore through each, and the Yaba volume keeps its expanded form.
 3. Dreamcast sync. A VMU kind over the existing `card_dreamcast` code, the flycast libretro rows (`reicast_per_content_vmus` disabled: shared `dc/vmu_save_A1.bin`; `VMU A1`: `{gameId}.A1.bin`) and flycast standalone (`{gameId}_vmu_save_A1.bin`). Units are the A1 VMU. Tests: per-game round trip, shared VMU swap with holding.

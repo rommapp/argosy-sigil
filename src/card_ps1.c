@@ -10,6 +10,7 @@
 #define PS1_STATE_FREE         0xA0u
 #define PS1_STATE_DELETED_LAST 0xA3u
 #define PS1_LINK_END           0xFFFFu
+#define PS1_WRITE_TEST_FRAME   63u
 
 #define VMP_SEED       0x0Cu
 #define VMP_SIGNATURE  0x20u
@@ -110,6 +111,9 @@ void sigil_ps1_file_format(sigil_ps1_file *f, int format) {
     f->format = format == SIGIL_CARD_FORMAT_PS1_VMP ? format : SIGIL_CARD_FORMAT_PS1_RAW;
     memset(f->header, 0, sizeof(f->header));
     if (f->format == SIGIL_CARD_FORMAT_PS1_VMP) {
+        /* A Vita's POPS leaves the write-test frame zero where a PS1 BIOS
+         * copies the header there (chrono-trigger-vita-pops). */
+        memset(f->image + (size_t)PS1_WRITE_TEST_FRAME * PS1_FRAME_SIZE, 0, PS1_FRAME_SIZE);
         memcpy(f->header, "\0PMV", 4);
         sigil_write_le32(f->header + 4, PS1_VMP_HEADER_SIZE);
         for (uint8_t i = 0; i < VMP_SIGN_LEN; i++) f->header[VMP_SEED + i] = i;
@@ -277,7 +281,6 @@ int sigil_ps1_entry_data(const uint8_t image[PS1_CARD_SIZE], uint32_t first_bloc
 #define PS1_FRAME_CHECKSUM       (PS1_FRAME_SIZE - 1)
 #define PS1_BROKEN_FIRST_FRAME   16u
 #define PS1_BROKEN_FRAMES        20u
-#define PS1_WRITE_TEST_FRAME     63u
 
 static uint8_t *frame_mut(uint8_t *image, uint32_t frame) {
     return image + frame * PS1_FRAME_SIZE;

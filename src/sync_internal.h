@@ -80,6 +80,9 @@ typedef struct {
     /* Optional. A unit is a raw card: when the game's card file is in another
      * form (a .vmp), the unit is named <stem> with this extension instead. */
     const char *raw_ext;
+    /* Optional. Writes the files the emulator needs beside card file `path`
+     * after restore wrote it, when they aren't there (POPS's PARAM.SFO). */
+    int    (*beside)(const sigil_sync_request *req, const char *path, const void *card);
     /* The unit is the game's saves as files instead of a card: each travels
      * under file_name and reads back through file_to_save. */
     bool        save_files;

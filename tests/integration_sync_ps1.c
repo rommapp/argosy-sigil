@@ -708,6 +708,99 @@ static size_t saves_on(const uint8_t *file, size_t len, sigil_ps1_file *out) {
 /* A restore onto a DexDrive .gme or a PSP/Vita .vmp writes the card back in
  * its own form with the other games' saves kept; a .vmp whose signature
  * doesn't match its card is damaged until the client asks for a repair. */
+#define CT_DIR "PSP/SAVEDATA/SLUS01363/"
+static const char *const CT_FILES[] = { "CONFIG.BIN", "ICON0.PNG", "PARAM.SFO", "SCEVMC0.VMP", "SCEVMC1.VMP" };
+static const char *const CHRONO_TRIGGER[] = { "SLUS-01363" };
+
+/* A PS Vita's own PS1 save folder (Chrono Trigger): the console's signatures
+ * read, and a restore that has to make the card anew writes the .vmp the
+ * Vita wrote, byte for byte. Its seed is the one sigil gives a new card, so
+ * the card, header and signature all compare. The Vita leaves the card's
+ * write-test frame zero. */
+static void check_vita_console_card(void) {
+    mem_root vita = {0}, fresh = {0};
+    uint8_t *files[5] = { NULL };
+    size_t lens[5] = { 0 };
+    bool loaded = true;
+    for (size_t i = 0; i < 5; i++) {
+        char path[128];
+        snprintf(path, sizeof(path), CT_DIR "%s", CT_FILES[i]);
+        files[i] = corpus_sample(&g_manifest, "psx", "chrono-trigger-vita-pops", path, &lens[i]);
+        loaded = loaded && files[i];
+        if (!files[i]) continue;
+        root_put(&vita, path, files[i], lens[i]);
+        if (i != 3) root_put(&fresh, path, files[i], lens[i]);
+    }
+    sigil_sync_result *unit = NULL, *r = NULL;
+    game g;
+    if (!loaded) { fail("vita console card", "setup failed"); goto done; }
+    make_game(&g, &vita, "vita_pops", "Chrono Trigger.cue", "SLUS-01363", CHRONO_TRIGGER, 1);
+    if (sigil_collect(&g.req, &unit) != SIGIL_OK || !unit->data || strcmp(unit->artifact, "Chrono Trigger.mcr") != 0) {
+        fail("vita console card", "the Vita's signed card didn't collect");
+        goto done;
+    }
+    make_game(&g, &fresh, "vita_pops", "Chrono Trigger.cue", "SLUS-01363", CHRONO_TRIGGER, 1);
+    mem_file *made = NULL;
+    if (sigil_restore(&g.req, unit->data, unit->len, &r) != SIGIL_OK ||
+        !(made = root_find(&fresh, CT_DIR "SCEVMC0.VMP")) || made->len != lens[3] ||
+        memcmp(made->data, files[3], lens[3]) != 0) {
+        fail("vita console card", "a new .vmp differs from the one the Vita wrote");
+    }
+    mem_file *kept = root_find(&fresh, CT_DIR "PARAM.SFO");
+    if (!kept || kept->len != lens[2] || memcmp(kept->data, files[2], lens[2]) != 0) {
+        fail("vita console card", "restore rewrote the PARAM.SFO the Vita wrote");
+    }
+done:
+    sigil_sync_result_free(r);
+    sigil_sync_result_free(unit);
+    root_free(&vita);
+    root_free(&fresh);
+    for (size_t i = 0; i < 5; i++) free(files[i]);
+}
+
+/* PARAM.SFO as a PS Vita's POPS writes it: sigil's signer gives back the
+ * console's hashes at 0x10 and 0x70 on both real files, and sigil's file
+ * for Xenogears matches the Vita's byte for byte outside the file list and
+ * the hash at 0x20, which needs the console's own key. */
+static void check_pops_param_sfo(void) {
+    static const struct { const char *id, *path, *directory, *title; } REAL[] = {
+        { "vita-pops-empty", "PSP/SAVEDATA/SLUS00664/PARAM.SFO", "SLUS00664", "Xenogears\xC2\xAE" },
+        { "chrono-trigger-vita-pops", "PSP/SAVEDATA/SLUS01363/PARAM.SFO", "SLUS01363", "CHRONO TRIGGER\xC2\xAE" },
+    };
+    for (size_t i = 0; i < sizeof(REAL) / sizeof(REAL[0]); i++) {
+        size_t len = 0, params = 0, params_len = 0, list = 0, list_len = 0;
+        uint8_t *real = corpus_sample(&g_manifest, "psx", REAL[i].id, REAL[i].path, &len);
+        uint8_t *copy = real ? (uint8_t *)malloc(len) : NULL;
+        if (!copy || len != SIGIL_POPS_SFO_SIZE ||
+            sigil_sfo_find(real, len, "SAVEDATA_PARAMS", &params, &params_len) != SIGIL_OK ||
+            sigil_sfo_find(real, len, "SAVEDATA_FILE_LIST", &list, &list_len) != SIGIL_OK) {
+            fail("pops param.sfo", "setup failed");
+            free(real);
+            free(copy);
+            continue;
+        }
+        memcpy(copy, real, len);
+        memset(copy + params + 0x10, 0, 16);
+        memset(copy + params + 0x70, 0, 16);
+        if (sigil_psp_sfo_sign(copy, len) != SIGIL_OK || memcmp(copy, real, len) != 0) {
+            fail("pops param.sfo", "re-signing a Vita's PARAM.SFO didn't give back its hashes");
+        }
+        uint8_t built[SIGIL_POPS_SFO_SIZE];
+        bool same = sigil_pops_param_sfo(REAL[i].directory, REAL[i].title, built) == SIGIL_OK;
+        for (size_t at = 0; same && at < len; at++) {
+            bool in_list = at >= list && at < list + list_len;
+            bool in_params = at >= params && at < params + params_len;
+            same = in_list || in_params || built[at] == real[at];
+        }
+        same = same && built[params] == real[params];
+        memcpy(copy, built, len);
+        same = same && sigil_psp_sfo_sign(copy, len) == SIGIL_OK && memcmp(copy, built, len) == 0;
+        if (!same) fail("pops param.sfo", "a built PARAM.SFO differs from the Vita's outside the file list and the console's hash");
+        free(real);
+        free(copy);
+    }
+}
+
 static void check_wrapped_cards(void) {
     size_t mcs_len = 0;
     uint8_t *mcs = sample("bugs-bunny-mcs", &mcs_len);
@@ -769,15 +862,31 @@ static void check_wrapped_cards(void) {
         root_free(&root);
     }
 
-    /* A game a PSP or Vita hasn't run yet gets a signed .vmp, never a raw card. */
+    /* A game a PSP or Vita hasn't run yet gets a signed .vmp, never a raw
+     * card, and the PARAM.SFO POPS needs to read it: the folder's name, the
+     * content's name as its title, signed. */
     if (unit) {
         mem_root root = {0};
         game g;
         make_game(&g, &root, "vita_pops", BUGS_CUE, "SLES-01726", BUGS, 1);
         sigil_sync_result *r = NULL;
-        mem_file *f = NULL;
-        if (sigil_restore(&g.req, unit, PS1_CARD_SIZE, &r) != SIGIL_OK || root.count != 1 ||
-            !(f = root_find(&root, "PSP/SAVEDATA/SLES01726/SCEVMC0.VMP")) || f->len != PS1_VMP_HEADER_SIZE + PS1_CARD_SIZE ||
+        mem_file *f = NULL, *sfo = NULL;
+        char dir[32] = "", title[64] = "";
+        uint8_t resigned[SIGIL_POPS_SFO_SIZE];
+        int restored = sigil_restore(&g.req, unit, PS1_CARD_SIZE, &r);
+        sfo = root_find(&root, "PSP/SAVEDATA/SLES01726/PARAM.SFO");
+        bool signed_sfo = sfo && sfo->len == SIGIL_POPS_SFO_SIZE;
+        if (signed_sfo) {
+            memcpy(resigned, sfo->data, sfo->len);
+            signed_sfo = sigil_psp_sfo_sign(resigned, sfo->len) == SIGIL_OK && memcmp(resigned, sfo->data, sfo->len) == 0 &&
+                         sigil_sfo_get_string(sfo->data, sfo->len, "SAVEDATA_DIRECTORY", dir, sizeof(dir)) == SIGIL_OK &&
+                         sigil_sfo_get_string(sfo->data, sfo->len, "TITLE", title, sizeof(title)) == SIGIL_OK &&
+                         strcmp(dir, "SLES01726") == 0 && strcmp(title, "Bugs Bunny - Lost in Time (Europe)") == 0;
+        }
+        if (restored != SIGIL_OK || root.count != 2 || !signed_sfo) {
+            fail("vita pops", "a first restore didn't write POPS's PARAM.SFO, named and signed, beside the card");
+        }
+        if (!(f = root_find(&root, "PSP/SAVEDATA/SLES01726/SCEVMC0.VMP")) || f->len != PS1_VMP_HEADER_SIZE + PS1_CARD_SIZE ||
             saves_on(f->data, f->len, after) != 1 || after->format != SIGIL_CARD_FORMAT_PS1_VMP ||
             sigil_ps1_file_check(after) != SIGIL_OK) {
             fail("vita pops", "a new card isn't a signed .vmp in the game's SAVEDATA folder");
@@ -864,6 +973,8 @@ int main(void) {
     check_faulty_writes(first);
     check_wrapped_cards();
     check_broken_own_save();
+    check_vita_console_card();
+    check_pops_param_sfo();
     sigil_sync_result_free(first);
 
     corpus_free(&g_manifest);

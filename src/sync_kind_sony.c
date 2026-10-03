@@ -78,6 +78,25 @@ static int ps1_new_form(const sigil_sync_request *req, const char *path) {
     return len >= 4 && strcmp(path + len - 4, ".VMP") == 0 ? SIGIL_FORM_VMP : SIGIL_FORM_RAW;
 }
 
+/* POPS won't read a .vmp whose folder has no PARAM.SFO, and writes one only
+ * when it runs the game, so a first restore writes the file POPS would:
+ * the folder's name, the content's name as its title, signed. */
+static int ps1_beside(const sigil_sync_request *req, const char *path, const void *card) {
+    if (((const sigil_ps1_file *)card)->format != SIGIL_CARD_FORMAT_PS1_VMP) return SIGIL_OK;
+    const char *slash = strrchr(path, '/');
+    if (!slash) return SIGIL_OK;
+    char dir[SIGIL_SAVE_PATH_MAX], sfo_path[SIGIL_SAVE_PATH_MAX];
+    snprintf(dir, sizeof(dir), "%.*s", (int)(slash - path), path);
+    snprintf(sfo_path, sizeof(sfo_path), "%s/PARAM.SFO", dir);
+    if (sigil_sync_listed(req, sfo_path)) return SIGIL_OK;
+    const char *name = strrchr(dir, '/');
+    char title[256];
+    sigil_content_stem(req->save.content_path, title, sizeof(title));
+    uint8_t sfo[SIGIL_POPS_SFO_SIZE];
+    int rc = sigil_pops_param_sfo(name ? name + 1 : dir, title, sfo);
+    return rc == SIGIL_OK ? sigil_sync_put(req, sfo_path, sfo, sizeof(sfo)) : rc;
+}
+
 /* Hashes the save as it goes on a card: sigil_ps1_inject rewrites the
  * directory frame's size field, so a card that stored it wrong and the unit
  * built from it hash alike. */
@@ -103,7 +122,7 @@ const sigil_sync_kind sigil_sync_ps1_kind = {
     .unit_size = sigil_sync_no_unit_size, .list = ps1_list, .extract = ps1_extract,
     .free_save = sigil_sync_blob_free, .inject = ps1_inject, .cost = ps1_cost, .remove = ps1_remove, .verify = ps1_verify,
     .image = ps1_image, .identity = ps1_identity, .check = ps1_check, .new_form = ps1_new_form,
-    .raw_ext = ".mcr",
+    .raw_ext = ".mcr", .beside = ps1_beside,
 };
 
 /* PS2: a save is a save folder lifted off the card. */

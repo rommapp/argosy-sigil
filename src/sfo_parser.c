@@ -3,10 +3,8 @@
 
 #define SFO_MAGIC 0x46535000u  /* "\0PSF" little-endian */
 
-int sigil_sfo_get_string(const uint8_t *data, size_t len,
-                         const char *key,
-                         char *out, size_t out_cap) {
-    if (!data || !key || !out || out_cap == 0) return SIGIL_ERR_INVALID_ARG;
+int sigil_sfo_find(const uint8_t *data, size_t len, const char *key, size_t *offset, size_t *size) {
+    if (!data || !key || !offset || !size) return SIGIL_ERR_INVALID_ARG;
     if (len < 20) return SIGIL_ERR_NOT_FOUND;
 
     uint32_t magic            = sigil_read_le32(data + 0);
@@ -35,19 +33,29 @@ int sigil_sfo_get_string(const uint8_t *data, size_t len,
 
         size_t d_abs = (size_t)data_table_start + data_off;
         if (d_abs >= len) return SIGIL_ERR_IO;
-        size_t avail = len - d_abs;
-        size_t copy  = data_len < avail ? data_len : avail;
-        if (copy > out_cap - 1) copy = out_cap - 1;
-
-        size_t out_i = 0;
-        for (size_t j = 0; j < copy; j++) {
-            uint8_t c = data[d_abs + j];
-            if (c == 0) break;
-            if (c < 0x20 || c > 0x7E) break;
-            out[out_i++] = (char)c;
-        }
-        out[out_i] = '\0';
-        return out_i > 0 ? SIGIL_OK : SIGIL_ERR_NOT_FOUND;
+        *offset = d_abs;
+        *size = data_len < len - d_abs ? data_len : len - d_abs;
+        return SIGIL_OK;
     }
     return SIGIL_ERR_NOT_FOUND;
+}
+
+int sigil_sfo_get_string(const uint8_t *data, size_t len,
+                         const char *key,
+                         char *out, size_t out_cap) {
+    if (!data || !key || !out || out_cap == 0) return SIGIL_ERR_INVALID_ARG;
+    size_t at = 0, size = 0;
+    int rc = sigil_sfo_find(data, len, key, &at, &size);
+    if (rc != SIGIL_OK) return rc;
+    size_t copy = size < out_cap - 1 ? size : out_cap - 1;
+
+    size_t out_i = 0;
+    for (size_t j = 0; j < copy; j++) {
+        uint8_t c = data[at + j];
+        if (c == 0) break;
+        if (c < 0x20 || c > 0x7E) break;
+        out[out_i++] = (char)c;
+    }
+    out[out_i] = '\0';
+    return out_i > 0 ? SIGIL_OK : SIGIL_ERR_NOT_FOUND;
 }
