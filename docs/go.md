@@ -197,14 +197,16 @@ sigil.Restore(unit []byte, game *Result, core, contentPath, saveRoot string, opt
     //   sigil.ErrNoSpace (BlocksShort says by how much), sigil.ErrRegion (a companion's save
     //   from another region), sigil.ErrNoTarget (the unit holds a volume the emulator's
     //   settings keep no file for), sigil.ErrAmbiguous (more than one file could be the
-    //   emulator's card) and sigil.ErrDamaged (unless Repair rebuilt it; a card sigil can't read
-    //   stays ErrDamaged). Problem names the save, member or files. Collect returns ErrDamaged
+    //   emulator's card) and sigil.ErrDamaged (unless Repair rebuilt it; a card sigil can't read,
+    //   or one holding a corrupt save of the game or a companion, stays ErrDamaged), and
+    //   sigil.ErrExists (Dolphin's GCI folder has no free name for a new save). Problem names the save, member or files. Collect returns ErrDamaged
     //   and ErrAmbiguous the same way. c.md, "Sync", has the table.
 
 type ProblemError struct {
-    Err         error   // sigil.ErrNoSpace, ErrRegion, ErrNoTarget, ErrAmbiguous or ErrDamaged.
+    Err         error   // sigil.ErrNoSpace, ErrRegion, ErrNoTarget, ErrAmbiguous, ErrDamaged or ErrExists.
     Problem     string  // The save, unit member or file at fault; for ErrAmbiguous the files, one per line.
-    BlocksShort uint32  // ErrNoSpace: blocks the save lacked; 0 when a directory slot ran out.
+    BlocksShort uint32  // ErrNoSpace: blocks the save lacked; 0 when the free blocks were there but a
+                        // directory slot or a Dreamcast game file's starting blocks weren't.
 }
 
 type Companion struct {

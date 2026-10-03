@@ -60,8 +60,8 @@ static void throw_sigil_problem(JNIEnv *env, int code, const char *problem, uint
     if ((*env)->ExceptionCheck(env)) return;
     load_exception_class(env);
     if (g_exception_class && g_exception_ctor) {
-        char escaped[3 * SIGIL_SAVE_PATH_MAX + 1];
-        sigil_save_name_escape(problem ? problem : "", escaped, sizeof(escaped));
+        char escaped[3 * SIGIL_SAVE_PATH_MAX + 1] = "";
+        sigil_save_lines_escape(problem ? problem : "", escaped, sizeof(escaped));
         jstring jmessage = (*env)->NewStringUTF(env, sigil_strerror(code));
         jstring jproblem = (*env)->NewStringUTF(env, escaped);
         jobject ex = (*env)->NewObject(env, g_exception_class, g_exception_ctor, (jint)code, jmessage, jproblem,

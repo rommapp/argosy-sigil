@@ -167,6 +167,12 @@ void sigil_ps2_card_free(sigil_ps2_card *card) {
     card->dirty = NULL;
 }
 
+/* A save folder or file name that stays one path segment on any host: not
+ * empty, ".", "..", and no '/' or '\\'. */
+static bool plain_name(const char *name) {
+    return name[0] && strcmp(name, ".") != 0 && strcmp(name, "..") != 0 && !strpbrk(name, "/\\");
+}
+
 static uint32_t clusters_for(uint32_t bytes, uint32_t cluster_size) {
     return (uint32_t)(((uint64_t)bytes + cluster_size - 1) / cluster_size);
 }
@@ -192,6 +198,37 @@ static bool save_clusters(const sigil_ps2_card *card, uint32_t first, uint32_t c
     return ok;
 }
 
+/* Counts the first `span` clusters of the chain from `first` in `claims`,
+ * or with `check` reports whether any of them another chain also reached. */
+static bool claim_chain(const sigil_ps2_card *card, uint32_t first, uint32_t span, uint8_t *claims,
+                        uint32_t *order, bool check) {
+    uint32_t n = walk_chain(card, first, order);
+    if (span > n) span = n;
+    for (uint32_t i = 0; i < span; i++) {
+        if (check && claims[order[i]] > 1) return true;
+        if (!check && claims[order[i]] < UINT8_MAX) claims[order[i]]++;
+    }
+    return false;
+}
+
+/* The clusters a save folder takes, its directory's and each file's, as
+ * claim_chain counts or checks them. */
+static bool claim_folder(const sigil_ps2_card *card, uint32_t first, uint32_t count, uint8_t *claims,
+                         uint32_t *order, bool check) {
+    uint8_t *entries = NULL;
+    if (!read_dir(card, first, count, &entries)) return false;
+    bool shared = claim_chain(card, first, clusters_for(count * PS2_ENTRY_SIZE, card->cluster_size), claims, order, check);
+    for (uint32_t i = 2; i < count && !shared; i++) {
+        const uint8_t *e = entries + (size_t)i * PS2_ENTRY_SIZE;
+        uint16_t mode = sigil_read_le16(e + PS2_ENTRY_MODE);
+        if (!(mode & PS2_MODE_EXISTS) || !(mode & PS2_MODE_FILE)) continue;
+        uint32_t need = clusters_for(sigil_read_le32(e + PS2_ENTRY_LENGTH), card->cluster_size);
+        shared = claim_chain(card, sigil_read_le32(e + PS2_ENTRY_CLUSTER), need, claims, order, check);
+    }
+    free(entries);
+    return shared;
+}
+
 int sigil_ps2_card_list(const sigil_ps2_card *card, sigil_card_listing **out) {
     if (!card || !card->clusters || !out) return SIGIL_ERR_INVALID_ARG;
     *out = NULL;
@@ -199,8 +236,22 @@ int sigil_ps2_card_list(const sigil_ps2_card *card, sigil_card_listing **out) {
     uint8_t *root = NULL;
     if (!read_dir(card, card->rootdir_cluster, count, &root)) return SIGIL_ERR_UNSUPPORTED_FORMAT;
 
-    sigil_card_listing *listing = sigil_card_listing_new(SIGIL_CARD_FORMAT_PS2, count);
-    if (!listing) { free(root); return SIGIL_ERR_OOM; }
+    /* How many chains reach each cluster: a cluster two saves share, or a
+     * save shares with the root, marks the saves broken, since deleting one
+     * frees the other's. */
+    uint8_t *claims = (uint8_t *)calloc(card->alloc_end ? card->alloc_end : 1, 1);
+    uint32_t *order = (uint32_t *)malloc(((size_t)card->alloc_end + 1) * sizeof(uint32_t));
+    sigil_card_listing *listing = claims && order ? sigil_card_listing_new(SIGIL_CARD_FORMAT_PS2, count) : NULL;
+    if (!listing) { free(root); free(claims); free(order); return SIGIL_ERR_OOM; }
+    claim_chain(card, card->rootdir_cluster, clusters_for(count * PS2_ENTRY_SIZE, card->cluster_size), claims, order,
+                false);
+    for (uint32_t i = 2; i < count; i++) {
+        const uint8_t *e = root + (size_t)i * PS2_ENTRY_SIZE;
+        uint16_t mode = sigil_read_le16(e + PS2_ENTRY_MODE);
+        if (!(mode & PS2_MODE_EXISTS) || !(mode & PS2_MODE_DIR)) continue;
+        claim_folder(card, sigil_read_le32(e + PS2_ENTRY_CLUSTER), sigil_read_le32(e + PS2_ENTRY_LENGTH), claims, order,
+                     false);
+    }
     listing->total_blocks = card->alloc_end;
     for (uint32_t n = 0; n < card->alloc_end; n++) {
         uint32_t value;
@@ -219,7 +270,9 @@ int sigil_ps2_card_list(const sigil_ps2_card *card, sigil_card_listing **out) {
         name[PS2_NAME_LEN] = '\0';
         char owner[SIGIL_CARD_OWNER_MAX];
         sigil_card_sony_owner(name, owner);
-        if (!save_clusters(card, first, sigil_read_le32(e + PS2_ENTRY_LENGTH), &blocks)) {
+        uint32_t entries = sigil_read_le32(e + PS2_ENTRY_LENGTH);
+        if (!plain_name(name) || !save_clusters(card, first, entries, &blocks) ||
+            claim_folder(card, first, entries, claims, order, true)) {
             sigil_card_listing_corrupt(listing, name, owner, first);
             continue;
         }
@@ -230,6 +283,8 @@ int sigil_ps2_card_list(const sigil_ps2_card *card, sigil_card_listing **out) {
         entry->first_block = first;
     }
     free(root);
+    free(claims);
+    free(order);
     *out = listing;
     return SIGIL_OK;
 }
@@ -1108,7 +1163,7 @@ int sigil_ps2_unpack(const sigil_ps2_save *save, sigil_ps2_folder_file **files, 
         const sigil_ps2_file *f = &save->files[i];
         char name[PS2_NAME_LEN + 1], key[2 * PS2_NAME_LEN + 3];
         entry_name(f->entry, name);
-        if (!name[0] || strchr(name, '/') || strncmp(name, PCSX2_PREFIX, strlen(PCSX2_PREFIX)) == 0) {
+        if (!plain_name(name) || strncmp(name, PCSX2_PREFIX, strlen(PCSX2_PREFIX)) == 0) {
             rc = SIGIL_ERR_UNSUPPORTED_FORMAT;
             break;
         }
@@ -1164,7 +1219,7 @@ static void entry_from_meta(uint8_t e[PS2_ENTRY_SIZE], const sigil_ps2_folder_fi
 int sigil_ps2_pack(const char *folder, const sigil_ps2_folder_file *files, size_t count, sigil_ps2_save *out) {
     if (!folder || !out || (!files && count)) return SIGIL_ERR_INVALID_ARG;
     memset(out, 0, sizeof(*out));
-    if (!folder[0] || strlen(folder) > PS2_NAME_LEN) return SIGIL_ERR_UNSUPPORTED_FORMAT;
+    if (!plain_name(folder) || strlen(folder) > PS2_NAME_LEN) return SIGIL_ERR_UNSUPPORTED_FORMAT;
 
     index_table index = { NULL, 0, 0 };
     const sigil_ps2_folder_file *index_file = find_folder_file(files, count, PCSX2_INDEX);
@@ -1183,7 +1238,7 @@ int sigil_ps2_pack(const char *folder, const sigil_ps2_folder_file *files, size_
     int64_t legacy_order = -1;
     for (size_t i = 0; i < count; i++) {
         if (strncmp(files[i].path, PCSX2_PREFIX, strlen(PCSX2_PREFIX)) == 0) continue;
-        if (strchr(files[i].path, '/') || strlen(files[i].path) > PS2_NAME_LEN) {
+        if (!plain_name(files[i].path) || strlen(files[i].path) > PS2_NAME_LEN) {
             free(items); free(index.rows); sigil_ps2_save_free(out);
             return SIGIL_ERR_UNSUPPORTED_FORMAT;
         }

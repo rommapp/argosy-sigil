@@ -632,6 +632,59 @@ done:
 
 /* Unmanaged into the shared A1: the name table gives Gundam its save, and a
  * restore replaces that save and keeps every other game's. */
+/* A data file of `blocks` zero blocks named `name`, laid out like `like`. */
+static uint8_t *filler_dci(const uint8_t *like, uint32_t blocks, const char *name, size_t *len) {
+    *len = sigil_dreamcast_dci_size(blocks);
+    uint8_t *out = (uint8_t *)calloc(1, *len);
+    if (!out) return NULL;
+    memcpy(out, like, VMU_DIR_ENTRY_SIZE);
+    memset(out + 0x04, ' ', 12);
+    memcpy(out + 0x04, name, strlen(name));
+    out[0x18] = (uint8_t)blocks;
+    out[0x19] = (uint8_t)(blocks >> 8);
+    return out;
+}
+
+/* A shared VMU two blocks short of Gundam's save refuses the restore with
+ * that shortfall, in VMU blocks. */
+static void check_no_space(void) {
+    size_t len = 0, nine_len = 0, dci_len = 0, like_len = 0, fill_len = 0;
+    uint8_t *vmu = sample("gundam-0079-flycast", &len);
+    uint8_t *nine = sample("vmu-a1-nine-games", &nine_len);
+    uint8_t *like = nine ? save_of(nine, "R2RUMBLE.001", &like_len) : NULL;
+    uint32_t first = 0, blocks = 0;
+    uint8_t *filled = NULL, *fill = NULL;
+    sigil_card_listing *l = NULL;
+    if (vmu && nine && like && find_entry(vmu, GUNDAM_SAVE, &first, &blocks) &&
+        sigil_dreamcast_card_list(nine, &l) == SIGIL_OK && l->free_blocks > blocks) {
+        fill = filler_dci(like, l->free_blocks - (blocks - 2), "FILLER", &fill_len);
+        filled = fill ? vmu_with(nine, fill, fill_len) : NULL;
+    }
+    sigil_card_listing_free(l);
+    mem_root root = {0};
+    sigil_sync_result *seen = NULL, *r = NULL;
+    if (!filled) { fail("dreamcast no space", "setup failed"); goto done; }
+    root_put(&root, "vmu_save_A1.bin", filled, VMU_CARD_SIZE);
+    game g;
+    make_game(&g, &root, "flycast", GAME_ID, SIGIL_SYNC_UNMANAGED);
+    if (sigil_collect(&g.req, &seen) != SIGIL_OK) { fail("dreamcast no space", "setup collect failed"); goto done; }
+    g.req.state = seen->state;
+    g.req.state_len = seen->state_len;
+    if (sigil_restore(&g.req, vmu, VMU_CARD_SIZE, &r) != SIGIL_ERR_NO_SPACE || !r || root.writes != 0 ||
+        strcmp(r->problem, GUNDAM_SAVE) != 0 || r->blocks_short != 2) {
+        fail("dreamcast no space", "a save two blocks too big wasn't refused with that shortfall");
+    }
+done:
+    sigil_sync_result_free(r);
+    sigil_sync_result_free(seen);
+    root_free(&root);
+    free(filled);
+    free(fill);
+    free(like);
+    free(nine);
+    free(vmu);
+}
+
 static void check_unmanaged(void) {
     size_t len = 0, nine_len = 0, dci_len = 0;
     uint8_t *vmu = sample("gundam-0079-flycast", &len);
@@ -727,6 +780,7 @@ int main(void) {
     check_unmanaged();
     check_swap_keeps_layout();
     check_name_table();
+    check_no_space();
 
     corpus_free(&g_manifest);
     printf("dreamcast sync: %d failures\n", g_fails);

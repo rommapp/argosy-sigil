@@ -63,6 +63,9 @@ static int sigil_go_remove_member(void *ctx, const char *relative_path) {
     char path[SIGIL_SAVE_PATH_MAX * 2];
     int n = snprintf(path, sizeof(path), "%s/%s", (const char *)ctx, relative_path);
     if (n <= 0 || (size_t)n >= sizeof(path)) return -1;
+#ifdef _WIN32
+    if (path[n - 1] == '/') return _rmdir(path) == 0 ? 0 : -1;
+#endif
     return remove(path) == 0 ? 0 : -1;
 }
 
@@ -869,11 +872,12 @@ type CompanionResult struct {
 
 // ProblemError is an error of Collect or Restore that names what is at fault:
 // the save that didn't fit (ErrNoSpace, with BlocksShort the blocks it lacked,
-// 0 when a directory slot was missing instead), the companion's save from
-// another region (ErrRegion), the damaged file (ErrDamaged), the unit member
-// the emulator's settings keep no file for (ErrNoTarget), or the files that
-// could each be the emulator's card, one per line (ErrAmbiguous). It matches
-// its error with errors.Is.
+// 0 when the free blocks were there but a directory slot or a Dreamcast game
+// file's starting blocks weren't), the companion's save from another region
+// (ErrRegion), the damaged file (ErrDamaged), the unit member the emulator's
+// settings keep no file for (ErrNoTarget), the files that could each be the
+// emulator's card, one per line (ErrAmbiguous), or the save Dolphin's GCI
+// folder has no free name for (ErrExists). It matches its error with errors.Is.
 type ProblemError struct {
 	Err         error
 	Problem     string

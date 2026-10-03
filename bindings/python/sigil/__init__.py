@@ -59,8 +59,8 @@ FEATURE_RTC: int = lib.SIGIL_FEATURE_RTC
 
 class SigilError(Exception):
     """Base error for sigil failures. `code` holds the C error code. After collect or restore,
-    `problem` names the save or file at fault when the error has one (no space, region,
-    damaged), decoded as SigilCardEntry.name is."""
+    `problem` names the save, unit member or files at fault when the error has one (no space,
+    region, damaged, no target, ambiguous, exists), decoded as SigilCardEntry.name is."""
 
     problem: str = ""
 
@@ -111,7 +111,8 @@ class SigilExistsError(SigilError):
 
 class SigilNoSpaceError(SigilError):
     """The saves don't fit; `problem` names the save that didn't and `blocks_short` the blocks
-    it lacked (0 when a directory slot was missing instead)."""
+    it lacked (0 when the free blocks were there but a directory slot or a Dreamcast game file's
+    starting blocks weren't)."""
 
     blocks_short: int = 0
 
@@ -762,8 +763,8 @@ def collect(
     """`game`'s saves under `save_root` gathered into the unit that travels to RomM.
 
     Store the returned `state` once the unit, `holding` and each changed companion unit reached
-    RomM. Raises SigilDamagedError when a file holding the saves is damaged and `repair` is
-    False, or isn't a card sigil can read at all. docs/python.md defines every input.
+    RomM. Raises SigilDamagedError and SigilAmbiguousError as `restore` does. docs/python.md
+    defines every input.
     """
     return _sync(None, game, core, content_path, save_root, listing, options, game_ids, state, mode, False, claimed,
                  companions, repair)
@@ -794,7 +795,10 @@ def restore(
     SigilRegionError for a companion's save from another region; SigilNoTargetError when the
     unit holds a volume the emulator's settings keep no file for; SigilAmbiguousError when more
     than one file could be the emulator's card; SigilDamagedError when a file the saves go in is
-    damaged and `repair` is False. The last five name the save, member or files in `problem`.
+    damaged and `repair` is False, isn't a card sigil can read at all, or holds a corrupt save of
+    the game or a companion (`repair` changes neither of the last two); SigilExistsError when
+    Dolphin's GCI folder has no free name for a new save. The last six name the save, member or
+    files in `problem`.
     """
     return _sync(unit, game, core, content_path, save_root, listing, options, game_ids, state, mode, overwrite_local,
                  claimed, companions, repair)

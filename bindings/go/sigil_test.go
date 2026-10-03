@@ -150,6 +150,99 @@ func TestCollectGathersOnlyTheGamesSaves(t *testing.T) {
 	}
 }
 
+// brokenCrossCard holds Chrono Cross's 2-block save with its first block
+// linking to a free one.
+func brokenCrossCard() []byte {
+	card := ps1Card([]cardSave{{"BASLUSP01041CROSS", 2}})
+	card[128+8], card[128+9] = 4, 0
+	return card
+}
+
+func TestListCardNamesACorruptSave(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "card.mcr")
+	if err := os.WriteFile(path, brokenCrossCard(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	listing, err := ListCard(path)
+	if err != nil || len(listing.Entries) != 0 || listing.CorruptCount != 1 || len(listing.CorruptEntries) != 1 ||
+		listing.CorruptEntries[0].Name != "BASLUSP01041CROSS" || listing.CorruptEntries[0].OwnerID != "SLUS-01041" {
+		t.Fatalf("listing = %+v, %v", listing, err)
+	}
+}
+
+func TestABrokenSaveOfTheGameIsDamagedNamingTheCard(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Chrono Cross.srm"), brokenCrossCard(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Collect(chronoCross, "pcsx_rearmed", "Chrono Cross.cue", root, &SyncOptions{Repair: true})
+	var damaged *ProblemError
+	if !errors.Is(err, ErrDamaged) || !errors.As(err, &damaged) || damaged.Problem != "Chrono Cross.srm" {
+		t.Fatalf("err = %v, want ErrDamaged naming the card", err)
+	}
+}
+
+func TestTwoDolphinCardSizesAreAmbiguousNamingBoth(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "tests", "fixtures", "saves", "ngc", "files", "card-raw-usa", "memcard-image.raw"))
+	if err != nil {
+		t.Skip("GameCube card sample missing")
+	}
+	root := t.TempDir()
+	gc := filepath.Join(root, "User", "GC")
+	if err := os.MkdirAll(gc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"MemoryCardA.USA.raw", "MemoryCardA.USA.59.raw"} {
+		if err := os.WriteFile(filepath.Join(gc, name), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fzero := PersistedResult("gamecube", "47465A45", "GFZE", 0)
+	_, err = Collect(fzero, "dolphin", "F-Zero GX (USA).rvz", root, &SyncOptions{Options: map[string]string{"SlotA": "1"}})
+	var ambiguous *ProblemError
+	if !errors.Is(err, ErrAmbiguous) || !errors.As(err, &ambiguous) {
+		t.Fatalf("err = %v, want ErrAmbiguous", err)
+	}
+	lines := strings.Split(ambiguous.Problem, "\n")
+	sort.Strings(lines)
+	if strings.Join(lines, ",") != "User/GC/MemoryCardA.USA.59.raw,User/GC/MemoryCardA.USA.raw" {
+		t.Fatalf("problem = %q", ambiguous.Problem)
+	}
+}
+
+func TestAVMUTheSettingsKeepNoFileForIsNoTarget(t *testing.T) {
+	samples := filepath.Join("..", "..", "tests", "fixtures", "saves", "dc", "files")
+	a1, _ := filepath.Glob(filepath.Join(samples, "gundam-0079-flycast", "*.bin"))
+	b1, err := os.ReadFile(filepath.Join(samples, "vmoooo-vmu", "vmoooo.bin"))
+	if len(a1) == 0 || err != nil {
+		t.Skip("Dreamcast samples missing")
+	}
+	a1Data, err := os.ReadFile(a1[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, target := t.TempDir(), t.TempDir()
+	if os.WriteFile(filepath.Join(source, "T13301N.A1.bin"), a1Data, 0o644) != nil ||
+		os.WriteFile(filepath.Join(source, "T13301N.B1.bin"), b1, 0o644) != nil {
+		t.Fatal("setup failed")
+	}
+	gundam := PersistedResult("dc", "T13301N", "T13301N", 0)
+	unit, err := Collect(gundam, "flycast", "Gundam.gdi", source,
+		&SyncOptions{Options: map[string]string{"reicast_per_content_vmus": "All VMUs"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Restore(unit.Data, gundam, "flycast", "Gundam.gdi", target,
+		&SyncOptions{Options: map[string]string{"reicast_per_content_vmus": "VMU A1"}})
+	var missing *ProblemError
+	if !errors.Is(err, ErrNoTarget) || !errors.As(err, &missing) || missing.Problem != "vmu_B1.bin" {
+		t.Fatalf("err = %v, want ErrNoTarget naming vmu_B1.bin", err)
+	}
+	if left, _ := os.ReadDir(target); len(left) != 0 {
+		t.Fatalf("restore wrote %d files", len(left))
+	}
+}
+
 func TestRestoreWritesTheUnitAndRefusesOverUnsyncedChanges(t *testing.T) {
 	source, target := t.TempDir(), t.TempDir()
 	if err := os.WriteFile(filepath.Join(source, "Chrono Cross.srm"), ps1Card([]cardSave{{"BASLUSP01041CROSS", 2}}), 0o644); err != nil {

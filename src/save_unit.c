@@ -39,7 +39,7 @@ const char *sigil_content_stem(const char *content_path, char *out, size_t cap) 
 
 /* ---- options and template expansion ------------------------------------- */
 
-static const char *option_value(const sigil_save_request *req, const char *key) {
+const char *sigil_save_option_value(const sigil_save_request *req, const char *key) {
     for (size_t i = 0; i < req->option_count; i++) {
         if (req->options[i].key && strcmp(req->options[i].key, key) == 0) return req->options[i].value;
     }
@@ -49,7 +49,7 @@ static const char *option_value(const sigil_save_request *req, const char *key) 
 static bool condition_holds(const sigil_save_request *req, const char *key,
                             const char *value, bool holds_when_absent) {
     if (!key) return true;
-    const char *actual = option_value(req, key);
+    const char *actual = sigil_save_option_value(req, key);
     if (!actual) return holds_when_absent;
     return strcmp(actual, value) == 0;
 }
@@ -82,7 +82,7 @@ static const gpgx_cart GPGX_CARTS[] = {
 };
 
 static const gpgx_cart *gpgx_cart_for(const sigil_save_request *req) {
-    const char *value = option_value(req, "genesis_plus_gx_cart_size");
+    const char *value = sigil_save_option_value(req, "genesis_plus_gx_cart_size");
     if (!value) value = "4meg";
     for (size_t i = 0; i < sizeof(GPGX_CARTS) / sizeof(GPGX_CARTS[0]); i++) {
         if (strcmp(GPGX_CARTS[i].value, value) == 0) return &GPGX_CARTS[i];
@@ -167,15 +167,15 @@ static const char *variable_value(const expand_ctx *ctx, const char *name, size_
         return cart ? cart->name : NULL;
     }
     if (len == 13 && strncmp(name, "nvram_version", 13) == 0) {
-        const char *v = option_value(req, "opera_nvram_version");
+        const char *v = sigil_save_option_value(req, "opera_nvram_version");
         return v ? v : "0";
     }
     if (len == 10 && strncmp(name, "left_index", 10) == 0) {
-        const char *v = option_value(req, "beetle_psx_hw_memcard_left_index");
+        const char *v = sigil_save_option_value(req, "beetle_psx_hw_memcard_left_index");
         return v ? v : "0";
     }
     if (len == 11 && strncmp(name, "right_index", 11) == 0) {
-        const char *v = option_value(req, "beetle_psx_hw_memcard_right_index");
+        const char *v = sigil_save_option_value(req, "beetle_psx_hw_memcard_right_index");
         return v ? v : "1";
     }
     return NULL;
@@ -550,7 +550,7 @@ int sigil_save_volume_targets(const sigil_save_request *req, sigil_volume_target
     expand_ctx ctx;
     expand_ctx_init(&ctx, req);
     const sigil_layout *layout = sigil_layout_find(req->layout, req->platform);
-    char region = layout->region_option ? region_from_option(option_value(req, layout->region_option)) : 0;
+    char region = layout->region_option ? region_from_option(sigil_save_option_value(req, layout->region_option)) : 0;
     if (!region) region = region_from_name(req->content_path);
 
     for (int device = SIGIL_DEVICE_INTERNAL; device < SIGIL_DEVICE_COUNT && *count < SIGIL_VOLUME_TARGETS_MAX; device++) {

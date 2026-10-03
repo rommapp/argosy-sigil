@@ -2,7 +2,7 @@
 
 The working log for `collect`/`restore` beyond what [save-roadmap.md](save-roadmap.md) describes. Each step lands with tests written first and seen failing. Update this file as each step lands, so the state survives a context reset.
 
-Branch `save-cards`. Nothing since `be0aba7` is committed; commits wait for an explicit instruction.
+Branch `save-cards`. Committed through `68fd4e5` (review rounds 1 and 2); round 3 is in the working tree. Commits wait for an explicit instruction.
 
 ## Done
 
@@ -22,7 +22,7 @@ Branch `save-cards`. Nothing since `be0aba7` is committed; commits wait for an e
 
 ## Review follow-up
 
-After step 8, six reviewers mutation-tested the work at `52fbb39`. Their findings, the decisions taken on them (D1-D6), the order of work and each finding's status live in [save-sync-review.md](save-sync-review.md); that file is now the rolling doc for this work. Commits so far: `76bdae6` (sync.c split), `cdb51ad` (test harness).
+After step 8, six reviewers mutation-tested the work at `52fbb39`. Their findings, the decisions taken on them (D1-D6), the order of work and each finding's status live in [save-sync-review.md](save-sync-review.md); that file is now the rolling doc for this work. Commits so far: `76bdae6` (sync.c split), `cdb51ad` (test harness), `68fd4e5` (rounds 1 and 2). Round 3 (seven reviewers on round 2's code) is closed in the working tree; `tests/mem_root.h` now holds 160 files, for the GCI folder's 112-save rule.
 
 ## Plan
 

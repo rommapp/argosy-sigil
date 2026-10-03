@@ -194,7 +194,9 @@ Sigil.collect(
     repair: Boolean = false,                // Rebuild what SigilException.DAMAGED named, where sigil can.
 ): SigilSyncResult
     // Raises SigilException.DAMAGED when a file holding the saves is damaged and repair is false,
-    //   or isn't a card sigil can read at all (repair doesn't change that).
+    //   isn't a card sigil can read at all, or holds a corrupt save of the game or a companion
+    //   (repair changes neither of the last two), and AMBIGUOUS when more than one file could
+    //   be the emulator's card.
 
 Sigil.restore(unit: ByteArray, /* same inputs */, overwriteLocal: Boolean = false): SigilSyncResult
     // Each of these raises SigilException and writes nothing: CONFLICT (the saves under
@@ -202,8 +204,9 @@ Sigil.restore(unit: ByteArray, /* same inputs */, overwriteLocal: Boolean = fals
     //   collect has passed on yet), NO_SPACE (the saves don't fit; `blocksShort` says by how
     //   much), REGION (a companion's save from another region), NO_TARGET (the unit holds a
     //   volume the emulator's settings keep no file for), AMBIGUOUS (more than one file could be
-    //   the emulator's card) and DAMAGED. The last five name the save, member or files in
-    //   `problem`. c.md, "Sync", has the table.
+    //   the emulator's card), DAMAGED and EXISTS (Dolphin's GCI folder has no free name for a
+    //   new save). The last six name the save, member or files in `problem`, each line escaped
+    //   as SigilCardEntry.name. c.md, "Sync", has the table.
 
 class SigilCompanion(
     gameIds: List<String>,      // The companion's ids, as for gameIds.

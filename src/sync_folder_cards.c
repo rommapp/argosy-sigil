@@ -37,11 +37,14 @@ static bool system_folder(const char *name) {
     return strstr(name, "DATA-SYSTEM") || strstr(name, "BWNETCNF");
 }
 
-static bool shown_to_game(const sigil_sync_request *req, const char *name) {
-    if (system_folder(name)) return true;
+static bool game_or_companion(const sigil_sync_request *req, const char *name) {
     char owner[SIGIL_CARD_OWNER_MAX];
     sigil_card_sony_owner(name, owner);
     return owner[0] && (sigil_sync_owned_by_game(req, owner) || sigil_sync_companion_of(req, owner) != SIZE_MAX);
+}
+
+static bool shown_to_game(const sigil_sync_request *req, const char *name) {
+    return system_folder(name) || game_or_companion(req, name);
 }
 
 #define PCSX2_INDEX "_pcsx2_index"
@@ -97,7 +100,8 @@ static size_t shown_folders(const sigil_sync_request *req, const char *dir, char
  * index, or with repair, the folder without it. A folder of the game or a
  * companion that sigil can't pack (a subdirectory, a name too long for a card
  * entry) still shows in PCSX2, so it is damaged too, naming the folder, and
- * repair can't change that; a system folder sigil can't pack is left off
+ * repair can't change that, even when its name also matches PCSX2's system
+ * filter; another system folder sigil can't pack is left off
  * (SIGIL_ERR_NOT_FOUND). */
 static int read_shown_folder(const sigil_sync_ctx *x, const char *dir, const char *name, sigil_sync_cards *s,
                              sigil_ps2_save *out) {
@@ -105,7 +109,7 @@ static int read_shown_folder(const sigil_sync_ctx *x, const char *dir, const cha
     if (rc != SIGIL_ERR_UNSUPPORTED_FORMAT) return rc;
     rc = read_save_folder(x->req, dir, name, true, out);
     if (rc == SIGIL_ERR_UNSUPPORTED_FORMAT) {
-        if (system_folder(name)) return SIGIL_ERR_NOT_FOUND;
+        if (system_folder(name) && !game_or_companion(x->req, name)) return SIGIL_ERR_NOT_FOUND;
         snprintf(s->problem, sizeof(s->problem), "%s/%s", dir, name);
         return SIGIL_ERR_DAMAGED;
     }
@@ -193,10 +197,8 @@ static int write_save_folder(const sigil_sync_ctx *x, const char *prefix, const 
     for (size_t i = 0; i < n && rc == SIGIL_OK && apply; i++) {
         char path[SIGIL_SAVE_PATH_MAX];
         snprintf(path, sizeof(path), "%s%s", prefix, files[i].path);
-        if (sigil_sync_file_holds(x->req, path, files[i].data, files[i].len)) continue;
-        if (x->req->write(x->req->write_ctx, path, files[i].data, files[i].len) != 0 ||
-            !sigil_sync_file_holds(x->req, path, files[i].data, files[i].len)) {
-            rc = SIGIL_ERR_IO;
+        if (!sigil_sync_file_holds(x->req, path, files[i].data, files[i].len)) {
+            rc = sigil_sync_put(x->req, path, files[i].data, files[i].len);
         }
     }
     if (rc == SIGIL_OK) doom_files(x, prefix, files, n, doomed);
@@ -243,9 +245,7 @@ static int sync_folder_card(const sigil_sync_ctx *x, const sigil_sync_card_file 
     }
     sigil_card_listing_free(listing);
     *removes = doomed.count;
-    for (size_t i = 0; rc == SIGIL_OK && apply && i < doomed.count; i++) {
-        if (x->req->remove(x->req->write_ctx, doomed.paths[i]) != 0) rc = SIGIL_ERR_IO;
-    }
+    for (size_t i = 0; rc == SIGIL_OK && apply && i < doomed.count; i++) rc = sigil_sync_drop(x->req, doomed.paths[i]);
     free(doomed.paths);
     return rc;
 }
@@ -284,11 +284,7 @@ static int ensure_superblock(const sigil_sync_ctx *x, const char *dir) {
     superblock_path(dir, path);
     uint8_t sb[PS2_FOLDER_SUPERBLOCK_SIZE];
     sigil_ps2_folder_superblock(sb);
-    if (x->req->write(x->req->write_ctx, path, sb, sizeof(sb)) != 0 ||
-        !sigil_sync_file_holds(x->req, path, sb, sizeof(sb))) {
-        return SIGIL_ERR_IO;
-    }
-    return SIGIL_OK;
+    return sigil_sync_put(x->req, path, sb, sizeof(sb));
 }
 
 /* A card with no saves and no usable superblock is new, and restore formats

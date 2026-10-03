@@ -641,22 +641,44 @@ static void check_broken_own_save(void) {
     size_t lens[] = { len };
     uint8_t *card = mcs ? card_of(one, lens, 1) : NULL;
     uint8_t *unit = mcs ? card_of(one, lens, 1) : NULL;
-    if (!card || !unit) { fail("broken own save", "setup failed"); free(card); free(unit); free(mcs); return; }
+    size_t digimon_len = 0;
+    uint8_t *digimon = sample("digimon-world-2-mcr", &digimon_len);
+    char digimon_id[SIGIL_CARD_OWNER_MAX] = "";
+    sigil_card_listing *dl = NULL;
+    if (digimon && sigil_ps1_card_list(digimon, SIGIL_CARD_FORMAT_PS1_RAW, &dl) == SIGIL_OK && dl->entry_count) {
+        snprintf(digimon_id, sizeof(digimon_id), "%s", dl->entries[0].owner_id);
+    }
+    sigil_card_listing_free(dl);
+    const char *const digimon_ids[] = { digimon_id };
+    if (!card || !unit || !digimon_id[0]) {
+        fail("broken own save", "setup failed");
+        free(card); free(unit); free(digimon); free(mcs);
+        return;
+    }
     uint8_t *link = card + PS1_FRAME_SIZE + 8;
     link[0] = 9;
     link[1] = 0;
     static const char *const OTHER[] = { "SLUS-00001" };
-    for (int own = 1; own >= 0; own--) {
+    /* own: 2 the save is a companion's, 1 the game's, 0 another game's. */
+    for (int own = 2; own >= 0; own--) {
         mem_root root = {0};
         root_put(&root, BUGS_CARD, card, PS1_CARD_SIZE);
         game g;
-        make_game(&g, &root, "pcsx_rearmed", BUGS_CUE, own ? "SLES-01726" : "SLUS-00001", own ? BUGS : OTHER, 1);
+        const char *id = own == 2 ? digimon_id : own == 1 ? "SLES-01726" : "SLUS-00001";
+        make_game(&g, &root, "pcsx_rearmed", BUGS_CUE, id, own == 2 ? digimon_ids : own == 1 ? BUGS : OTHER, 1);
+        sigil_sync_companion bugs = { BUGS, 1, NULL, 0 };
+        if (own == 2) {
+            g.req.companions = &bugs;
+            g.req.companion_count = 1;
+        }
         sigil_sync_result *seen = NULL, *r = NULL;
         int collected = sigil_collect(&g.req, &seen);
-        int restored = own ? sigil_restore(&g.req, unit, PS1_CARD_SIZE, &r) : SIGIL_ERR_DAMAGED;
+        if (own == 2) bugs.unit = unit, bugs.unit_len = PS1_CARD_SIZE;
+        int restored = own ? sigil_restore(&g.req, own == 2 ? digimon : unit, PS1_CARD_SIZE, &r) : SIGIL_ERR_DAMAGED;
         if (own && (collected != SIGIL_ERR_DAMAGED || strcmp(seen->problem, BUGS_CARD) != 0 ||
                     restored != SIGIL_ERR_DAMAGED || root.writes != 0)) {
-            fail("broken own save", "the game's broken save read as missing");
+            fail("broken own save", own == 1 ? "the game's broken save read as missing"
+                                             : "a companion's broken save read as missing");
         }
         if (!own && collected != SIGIL_OK) fail("broken own save", "another game's broken save stopped the collect");
         sigil_sync_result_free(seen);
@@ -665,6 +687,7 @@ static void check_broken_own_save(void) {
     }
     free(card);
     free(unit);
+    free(digimon);
     free(mcs);
 }
 

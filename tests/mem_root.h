@@ -9,7 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MEM_ROOT_FILES 48
+#define MEM_ROOT_FILES 160
 
 typedef struct {
     char     path[SIGIL_SAVE_PATH_MAX];

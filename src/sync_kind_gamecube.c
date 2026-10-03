@@ -226,9 +226,14 @@ static size_t cp1252_utf8(unsigned char c, char *out) {
 /* The name Dolphin gives a .gci (GCMemcardUtils GenerateFilename and
  * NandPaths EscapeFileName): maker-gamecode-filename, decoded from CP1252,
  * with each "__" doubled into escapes and characters a file name can't hold
- * as __xx__. Dolphin decodes a Japanese save's name from Shift-JIS; sigil
- * escapes its bytes above 0x7F instead, which keeps the name UTF-8, and
- * Dolphin loads every .gci in the folder whatever its name. */
+ * as __xx__. Where sigil's name can differ from Dolphin's: Dolphin decodes a
+ * Japanese save's name from Shift-JIS, where sigil escapes its bytes above
+ * 0x7F; Dolphin drops a byte CP1252 leaves undefined on Linux and macOS and
+ * keeps it as U+0081 and the like on Windows, where sigil escapes it; and
+ * Dolphin cuts the maker and game code at a NUL, where sigil escapes it.
+ * Each keeps the name UTF-8. None changes which save Dolphin loads: it loads
+ * every .gci in the folder and keeps a loaded file's name when it writes
+ * the save back (GCMemcardDirectory FlushToFile). */
 static void gc_file_name(const void *save, char *out, size_t cap) {
     const uint8_t *gci = ((const sigil_sync_blob *)save)->data;
     const char *region = sigil_gc_region_folder((char)gci[GCI_GAMECODE + 3]);

@@ -257,10 +257,23 @@ int sigil_gamecube_card_list(const uint8_t *image, size_t size, sigil_card_listi
     const uint8_t *dir = block_at(image, v.dir_block);
     const uint8_t *bat = block_at(image, v.bat_block);
 
-    sigil_card_listing *listing = sigil_card_listing_new(SIGIL_CARD_FORMAT_GAMECUBE_RAW, GC_DIR_ENTRIES);
-    if (!listing) return SIGIL_ERR_OOM;
+    /* How many live entries' chains reach each block: a block two entries
+     * share marks both broken, since deleting either frees the other's. */
+    uint8_t *claims = (uint8_t *)calloc(v.total_blocks, 1);
+    uint32_t *order = (uint32_t *)malloc(GC_MAX_DATA_BLOCKS * sizeof(uint32_t));
+    sigil_card_listing *listing = claims && order ? sigil_card_listing_new(SIGIL_CARD_FORMAT_GAMECUBE_RAW, GC_DIR_ENTRIES)
+                                                  : NULL;
+    if (!listing) { free(claims); free(order); return SIGIL_ERR_OOM; }
     listing->total_blocks = v.total_blocks - GC_SYSTEM_BLOCKS;
     listing->free_blocks = free_block_count(bat, v.total_blocks);
+    for (uint32_t i = 0; i < GC_DIR_ENTRIES; i++) {
+        const uint8_t *d = dentry_at(dir, i);
+        if (!dentry_live(d)) continue;
+        uint32_t n = walk_chain(bat, v.total_blocks, sigil_read_be16(d + DENTRY_FIRST_BLOCK), order);
+        for (uint32_t k = 0; k < n; k++) {
+            if (claims[order[k]] < UINT8_MAX) claims[order[k]]++;
+        }
+    }
 
     for (uint32_t i = 0; i < GC_DIR_ENTRIES; i++) {
         const uint8_t *d = dentry_at(dir, i);
@@ -278,7 +291,10 @@ int sigil_gamecube_card_list(const uint8_t *image, size_t size, sigil_card_listi
         char owner[SIGIL_CARD_OWNER_MAX];
         snprintf(owner, sizeof(owner), "%02X%02X%02X%02X", d[DENTRY_GAMECODE], d[DENTRY_GAMECODE + 1],
                  d[DENTRY_GAMECODE + 2], d[DENTRY_GAMECODE + 3]);
-        if (blocks == 0 || walk_chain(bat, v.total_blocks, first, NULL) != blocks) {
+        uint32_t walked = blocks ? walk_chain(bat, v.total_blocks, first, order) : 0;
+        bool shared = false;
+        for (uint32_t k = 0; k < walked && !shared; k++) shared = claims[order[k]] > 1;
+        if (blocks == 0 || walked != blocks || shared) {
             sigil_card_listing_corrupt(listing, name, owner, first);
             continue;
         }
@@ -288,6 +304,8 @@ int sigil_gamecube_card_list(const uint8_t *image, size_t size, sigil_card_listi
         e->blocks = blocks;
         e->first_block = first;
     }
+    free(claims);
+    free(order);
     *out = listing;
     return SIGIL_OK;
 }

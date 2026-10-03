@@ -72,6 +72,24 @@ def test_list_card_reports_saves_owners_and_space(tmp_path):
     ]
 
 
+def _broken_cross_card():
+    """Chrono Cross's 2-block save with its first block linking to a free one."""
+    card = bytearray(_ps1_card([("BASLUSP01041CROSS", 2)]))
+    card[128 + 8 : 128 + 10] = struct.pack("<H", 4)
+    return bytes(card)
+
+
+def test_list_card_names_a_corrupt_save(tmp_path):
+    path = tmp_path / "card.mcr"
+    path.write_bytes(_broken_cross_card())
+    listing = sigil.list_card(path)
+    assert listing.entries == ()
+    assert listing.corrupt_count == 1
+    assert [(e.name, e.owner_id, e.first_block) for e in listing.corrupt_entries] == [
+        ("BASLUSP01041CROSS", "SLUS-01041", 1)
+    ]
+
+
 def test_list_card_rejects_a_file_that_is_not_a_card(tmp_path):
     path = tmp_path / "save.mcs"
     path.write_bytes(b"Q\0\0\0" + bytes(8316))
@@ -92,6 +110,50 @@ def test_collect_gathers_only_the_games_saves(tmp_path):
     unit = tmp_path / "unit.srm"
     unit.write_bytes(result.data)
     assert [e.name for e in sigil.list_card(unit).entries] == ["BASLUSP01041CROSS"]
+
+
+def test_a_broken_save_of_the_game_is_damaged_naming_the_card(tmp_path):
+    (tmp_path / "Chrono Cross.srm").write_bytes(_broken_cross_card())
+    with pytest.raises(sigil.SigilDamagedError) as excinfo:
+        sigil.collect(_CROSS, "pcsx_rearmed", "Chrono Cross.cue", tmp_path, repair=True)
+    assert excinfo.value.problem == "Chrono Cross.srm"
+
+
+_RAW_USA = Path(__file__).resolve().parents[2] / "tests/fixtures/saves/ngc/files/card-raw-usa/memcard-image.raw"
+
+
+@pytest.mark.skipif(not _RAW_USA.exists(), reason="GameCube card sample missing")
+def test_two_dolphin_card_sizes_are_ambiguous_naming_both(tmp_path):
+    gc = tmp_path / "User" / "GC"
+    gc.mkdir(parents=True)
+    for name in ("MemoryCardA.USA.raw", "MemoryCardA.USA.59.raw"):
+        (gc / name).write_bytes(_RAW_USA.read_bytes())
+    with pytest.raises(sigil.SigilAmbiguousError) as excinfo:
+        sigil.collect(_FZERO, "dolphin", "F-Zero GX (USA).rvz", tmp_path, options={"SlotA": "1"})
+    assert sorted(excinfo.value.problem.splitlines()) == [
+        "User/GC/MemoryCardA.USA.59.raw",
+        "User/GC/MemoryCardA.USA.raw",
+    ]
+
+
+_DC_DIR = Path(__file__).resolve().parents[2] / "tests/fixtures/saves/dc/files"
+_GUNDAM = sigil.SigilResult.persisted("dc", "T13301N", "T13301N", 0)
+
+
+@pytest.mark.skipif(not _DC_DIR.exists(), reason="Dreamcast samples missing")
+def test_a_vmu_the_settings_keep_no_file_for_is_no_target(tmp_path):
+    source, target = tmp_path / "source", tmp_path / "target"
+    source.mkdir()
+    target.mkdir()
+    (source / "T13301N.A1.bin").write_bytes(next((_DC_DIR / "gundam-0079-flycast").glob("*.bin")).read_bytes())
+    (source / "T13301N.B1.bin").write_bytes((_DC_DIR / "vmoooo-vmu" / "vmoooo.bin").read_bytes())
+    all_vmus = {"reicast_per_content_vmus": "All VMUs"}
+    unit = sigil.collect(_GUNDAM, "flycast", "Gundam.gdi", source, options=all_vmus)
+    with pytest.raises(sigil.SigilNoTargetError) as excinfo:
+        sigil.restore(unit.data, _GUNDAM, "flycast", "Gundam.gdi", target,
+                      options={"reicast_per_content_vmus": "VMU A1"})
+    assert excinfo.value.problem == "vmu_B1.bin"
+    assert list(target.iterdir()) == []
 
 
 def test_restore_writes_the_unit_and_refuses_over_unsynced_changes(tmp_path):

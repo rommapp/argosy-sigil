@@ -523,6 +523,37 @@ typedef enum { EXPECT_BAT4, EXPECT_BAT3 } bat_expectation;
 /* The USA card's two allocation tables differ only in RogueLeader's chain,
  * which BAT block 3 (counter 40, 0x6006 free = 0x00C2 = 194) lacks and BAT
  * block 4 (counter 41) holds. Which one lists shows which copy was chosen. */
+/* A second directory entry naming the first save's chain under another
+ * name: deleting either would free the other's blocks, so both are corrupt. */
+static void check_shared_chain(const corpus_table *manifest) {
+    uint8_t *image = NULL;
+    size_t size = 0;
+    if (!load_card_sample(manifest, "card-raw-usa", &image, &size)) return;
+    g_checks++;
+    for (uint32_t block = 1; block <= 2; block++) {
+        uint8_t *dir = image + (size_t)block * GC_BLOCK_SIZE;
+        uint8_t *spare = NULL;
+        for (uint32_t i = 0; i < 127 && !spare; i++) {
+            if (dir[i * 64] == 0xFF) spare = dir + i * 64;
+        }
+        if (!spare) { fail("shared chain", "setup failed"); free(image); return; }
+        memcpy(spare, dir, 64);
+        spare[0x08] ^= 0x20;
+        uint16_t sum, inverse;
+        sigil_gamecube_checksum(dir, 0x1FFC, &sum, &inverse);
+        dir[0x1FFC] = (uint8_t)(sum >> 8);
+        dir[0x1FFD] = (uint8_t)sum;
+        dir[0x1FFE] = (uint8_t)(inverse >> 8);
+        dir[0x1FFF] = (uint8_t)inverse;
+    }
+    sigil_card_listing *l = NULL;
+    if (sigil_gamecube_card_list(image, size, &l) != SIGIL_OK || l->corrupt_count != 2 || l->corrupt_entry_count != 2) {
+        fail("shared chain", "two entries sharing a chain listed");
+    }
+    sigil_card_listing_free(l);
+    free(image);
+}
+
 static void check_bat_choice(const char *what, const uint8_t *usa, size_t size,
                              const corpus_table *entries, uint8_t *image, bat_expectation expect) {
     sigil_card_listing *l = NULL;
@@ -690,6 +721,7 @@ int main(void) {
     check_no_room_in_directory(&manifest);
     check_delete(&manifest, &entries);
     check_copy_choice(&manifest, &entries);
+    check_shared_chain(&manifest);
     check_bind_serial(&manifest, &entries);
     int missing = g_checks ? corpus_count_missing(&manifest, "ngc") : 0;
     corpus_free(&manifest);

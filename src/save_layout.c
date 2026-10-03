@@ -10,7 +10,6 @@
 #define S_OPT(t, k, v, d)       { t, k, v, d, SIGIL_DEVICE_NONE, 0 }
 #define S_OPT_DEV(t, k, v, d, dev, region) { t, k, v, d, SIGIL_DEVICE_##dev, region }
 #define M_OPT2_DEV(t, r, k, v, d, k2, v2, d2, dev) { t, SIGIL_SAVE_ROLE_##r, k, v, d, SIGIL_DEVICE_##dev, k2, v2, d2 }
-#define S_OPT2_DEV(t, k, v, d, k2, v2, d2, dev)    { t, k, v, d, SIGIL_DEVICE_##dev, 0, k2, v2, d2 }
 #define COUNT(a)                (sizeof(a) / sizeof((a)[0]))
 
 static const sigil_layout_member LIBRETRO_DEFAULT_MEMBERS[] = {
@@ -56,8 +55,9 @@ static const sigil_layout_member BEETLE_SATURN_MEMBERS[] = {
     M_OPT("{stem}.smpc", SIDECAR, "beetle_saturn_shared_int", "disabled", true),
 };
 static const sigil_layout_shared BEETLE_SATURN_SHARED[] = {
-    S_OPT2_DEV("mednafen_saturn_libretro_shared.bkr", "beetle_saturn_shared_int", "enabled", false,
-               "beetle_saturn_save_method", "mednafen", false, INTERNAL),
+    { .template_ = "mednafen_saturn_libretro_shared.bkr", .opt_key = "beetle_saturn_shared_int", .opt_value = "enabled",
+      .opt_default = false, .device = SIGIL_DEVICE_INTERNAL, .opt2_key = "beetle_saturn_save_method",
+      .opt2_value = "mednafen", .opt2_default = false, .new_size = SATURN_INTERNAL_SIZE },
     S_OPT("mednafen_saturn_libretro_shared.smpc", "beetle_saturn_shared_int", "enabled", false),
     S_OPT_DEV("mednafen_saturn_libretro_shared.bcr", "beetle_saturn_shared_ext", "enabled", false, CART, 0),
 };

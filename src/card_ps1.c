@@ -54,7 +54,8 @@ static uint32_t walk_chain(const uint8_t *image, uint32_t first, uint32_t order[
 }
 
 /* Reads the card behind whatever wrapper the file has; `header`, when given,
- * receives the wrapper's header. */
+ * receives the wrapper's header. A .gme may end early, as tools write them,
+ * and reads as zeros past its end; a raw card or .vmp cut short is refused. */
 static int load_card(const sigil_io *io, uint8_t image[PS1_CARD_SIZE], int *format, uint8_t *header) {
     if (!io || !io->read || !image || !format) return SIGIL_ERR_INVALID_ARG;
 
@@ -88,6 +89,7 @@ static int load_card(const sigil_io *io, uint8_t image[PS1_CARD_SIZE], int *form
     rc = sigil_io_read_upto(io, offset, image, PS1_CARD_SIZE, &got);
     if (rc != SIGIL_OK) return rc;
     if (got < PS1_BLOCK_SIZE || memcmp(image, "MC", 2) != 0) return SIGIL_ERR_UNSUPPORTED_FORMAT;
+    if (got < PS1_CARD_SIZE && *format != SIGIL_CARD_FORMAT_PS1_GME) return SIGIL_ERR_UNSUPPORTED_FORMAT;
     return SIGIL_OK;
 }
 
@@ -197,6 +199,27 @@ int sigil_ps1_file_write(const sigil_ps1_file *f, uint8_t **out, size_t *len) {
     return SIGIL_OK;
 }
 
+/* How many save chains reach each block, so a block two chains share marks
+ * both broken. */
+static void count_claims(const uint8_t *image, uint8_t claims[PS1_DATA_BLOCKS + 1]) {
+    memset(claims, 0, PS1_DATA_BLOCKS + 1);
+    uint32_t order[PS1_DATA_BLOCKS];
+    for (uint32_t block = 1; block <= PS1_DATA_BLOCKS; block++) {
+        if (frame_state(image, block) != PS1_STATE_FIRST) continue;
+        uint32_t n = walk_chain(image, block, order);
+        for (uint32_t i = 0; i < n; i++) claims[order[i]]++;
+    }
+}
+
+static bool chain_shared(const uint8_t *image, uint32_t first, const uint8_t claims[PS1_DATA_BLOCKS + 1]) {
+    uint32_t order[PS1_DATA_BLOCKS];
+    uint32_t n = walk_chain(image, first, order);
+    for (uint32_t i = 0; i < n; i++) {
+        if (claims[order[i]] > 1) return true;
+    }
+    return false;
+}
+
 int sigil_ps1_card_list(const uint8_t image[PS1_CARD_SIZE], int format, sigil_card_listing **out) {
     if (!image || !out) return SIGIL_ERR_INVALID_ARG;
     *out = NULL;
@@ -205,6 +228,8 @@ int sigil_ps1_card_list(const uint8_t image[PS1_CARD_SIZE], int format, sigil_ca
     if (!listing) return SIGIL_ERR_OOM;
     sigil_card_entry *entries = listing->entries;
     listing->total_blocks = PS1_DATA_BLOCKS;
+    uint8_t claims[PS1_DATA_BLOCKS + 1];
+    count_claims(image, claims);
 
     for (uint32_t block = 1; block <= PS1_DATA_BLOCKS; block++) {
         uint32_t state = frame_state(image, block);
@@ -220,7 +245,7 @@ int sigil_ps1_card_list(const uint8_t image[PS1_CARD_SIZE], int format, sigil_ca
         char owner[SIGIL_CARD_OWNER_MAX];
         sigil_card_sony_owner(name, owner);
         uint32_t blocks = walk_chain(image, block, NULL);
-        if (blocks == 0) {
+        if (blocks == 0 || chain_shared(image, block, claims)) {
             sigil_card_listing_corrupt(listing, name, owner, block);
             continue;
         }

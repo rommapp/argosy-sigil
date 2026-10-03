@@ -524,6 +524,19 @@ static void check_broken_chain(const corpus_table *manifest) {
         sigil_card_listing_free(l);
         memcpy(image + BREAKS[i].off, original, 2);
     }
+
+    /* A second entry naming the same chain: deleting either would free the
+     * other's blocks, so neither is whole. */
+    uint8_t slot1[VMU_DIR_ENTRY_SIZE];
+    memcpy(slot1, image + 0x1FA00 + VMU_DIR_ENTRY_SIZE, sizeof(slot1));
+    memcpy(image + 0x1FA00 + VMU_DIR_ENTRY_SIZE, image + 0x1FA00, VMU_DIR_ENTRY_SIZE);
+    sigil_card_listing *shared = NULL;
+    if (sigil_dreamcast_card_list(image, &shared) != SIGIL_OK || shared->entry_count != 0 || shared->corrupt_count != 2) {
+        fail("gundam-0079-flycast", "two entries sharing a chain listed");
+    }
+    sigil_card_listing_free(shared);
+    memcpy(image + 0x1FA00 + VMU_DIR_ENTRY_SIZE, slot1, sizeof(slot1));
+
     image[ROOT_OFFSET] = 0x54;
     sigil_card_listing *l = NULL;
     if (sigil_dreamcast_card_list(image, &l) != SIGIL_ERR_UNSUPPORTED_FORMAT) {
@@ -582,6 +595,11 @@ static void check_layout_guards(const corpus_table *manifest) {
             if (sigil_dreamcast_inject(blank, dci, len) != SIGIL_OK || sigil_dreamcast_verify(blank, dci, len) != SIGIL_OK) {
                 fail("gundam-0079-flycast", "a .dci that names its old first block didn't verify once in");
             }
+            dci[0x01] ^= 0xFF;
+            if (sigil_dreamcast_verify(blank, dci, len) != SIGIL_ERR_NOT_FOUND) {
+                fail("gundam-0079-flycast", "a .dci with another copy-protect byte verified");
+            }
+            dci[0x01] ^= 0xFF;
             dci[0x02] = 0x00;
             dci[0x18]--;
             sigil_dreamcast_format(blank);
@@ -630,6 +648,25 @@ static void check_format_like(const corpus_table *manifest) {
         }
     }
     sigil_card_listing_free(l);
+    l = NULL;
+
+    /* Emptied, a full VMU keeps no entry in any slot and none of its saves'
+     * bytes in the blocks it frees. */
+    uint8_t *fresh = (uint8_t *)malloc(VMU_CARD_SIZE);
+    sigil_card_listing *fl = NULL;
+    if (fresh && like && image && load_sample(manifest, "vmu-a1-nine-games", like)) {
+        sigil_dreamcast_format(fresh);
+        sigil_dreamcast_format_like(image, like);
+        bool zero = true;
+        for (size_t i = 0; i < 200u * VMU_BLOCK_SIZE && zero; i++) zero = image[i] == 0;
+        if (sigil_dreamcast_card_list(image, &l) != SIGIL_OK || sigil_dreamcast_card_list(fresh, &fl) != SIGIL_OK ||
+            l->entry_count != 0 || l->corrupt_count != 0 || l->free_slots != fl->free_slots || !zero) {
+            fail("vmu-a1-nine-games", "an emptied VMU kept an entry or a save's bytes");
+        }
+    }
+    sigil_card_listing_free(fl);
+    sigil_card_listing_free(l);
+    free(fresh);
     free(image);
     free(like);
 }

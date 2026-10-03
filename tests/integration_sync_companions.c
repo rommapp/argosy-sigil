@@ -356,7 +356,7 @@ static void check_saturn(void) {
             if (sigil_card_list(io, &l) == SIGIL_OK) {
                 for (size_t i = 0; i < l->entry_count; i++) {
                     if (strncmp(l->entries[i].name, "RAYMAN", 6) == 0) {
-                        f->data[(size_t)l->entries[i].first_block * 64 + 40] ^= 0xFF;
+                        f->data[(size_t)l->entries[i].first_block * 64 + 0x10] ^= 0x01;
                     }
                 }
             }

@@ -46,7 +46,7 @@ static int gather_volumes(const sigil_sync_ctx *x, volume_set *s, sigil_sync_res
         int64_t size = io->size ? io->size(io->ctx) : -1;
         if (size != 0) rc = x->kind->load(io, f->target.device, &f->card, &f->format);
         sigil_io_close(io);
-        if (rc == SIGIL_ERR_UNSUPPORTED_FORMAT || rc == SIGIL_ERR_INVALID_ARG) {
+        if (rc == SIGIL_ERR_UNSUPPORTED_FORMAT) {
             snprintf(r->problem, sizeof(r->problem), "%s", f->target.path);
             rc = SIGIL_ERR_DAMAGED;
         }
@@ -90,18 +90,45 @@ static int volume_owner(const sigil_sync_ctx *x, const volume_file *f, const cha
     return in_name_table(x, name) ? SYNC_OWN_GAME : SYNC_OWN_NONE;
 }
 
-static int gather_volume_saves(const sigil_sync_ctx *x, const volume_set *s, sigil_sync_saves *out) {
+/* A corrupt save on `f` that may be the game's or a companion's: one the
+ * volume no longer names, or one whose name the owner rules give the game
+ * or a companion (on a per-game volume, every name). Reading on would take
+ * it as deleted. */
+static int corrupt_own_save(const sigil_sync_ctx *x, const volume_file *f, bool *found) {
+    sigil_card_listing *listing = NULL;
+    int rc = x->kind->list(f->card, f->format, &listing);
+    if (rc != SIGIL_OK) return rc == SIGIL_ERR_OOM ? rc : SIGIL_ERR_DAMAGED;
+    *found = listing->corrupt_count > listing->corrupt_entry_count;
+    char other[SYNC_KEY_MAX];
+    for (size_t i = 0; i < listing->corrupt_entry_count && !*found; i++) {
+        size_t c = SIZE_MAX;
+        int owner = volume_owner(x, f, listing->corrupt_entries[i].name, other, &c);
+        *found = owner == SYNC_OWN_GAME || owner == SYNC_OWN_COMPANION;
+    }
+    sigil_card_listing_free(listing);
+    return SIGIL_OK;
+}
+
+/* Every save on the game's volumes, with its owner. A volume holding a
+ * corrupt or unreadable save of the game or a companion is SIGIL_ERR_DAMAGED
+ * naming the volume. */
+static int gather_volume_saves(const sigil_sync_ctx *x, const volume_set *s, sigil_sync_saves *out,
+                               sigil_sync_result *r) {
     sigil_sync_saves_init(out, s->kind);
     int rc = SIGIL_OK;
     for (size_t v = 0; v < s->count && rc == SIGIL_OK; v++) {
         const volume_file *f = &s->files[v];
         if (!f->card) continue;
+        bool corrupt = false;
+        rc = corrupt_own_save(x, f, &corrupt);
+        if (rc == SIGIL_OK && corrupt) rc = SIGIL_ERR_DAMAGED;
         size_t before = out->count;
-        rc = sigil_sync_add_card_saves(x, f->card, f->format, f->target.device, v, SYNC_WHO_LOCAL, out);
+        if (rc == SIGIL_OK) rc = sigil_sync_add_card_saves(x, f->card, f->format, f->target.device, v, SYNC_WHO_LOCAL, out);
         for (size_t i = before; i < out->count; i++) {
             sigil_sync_save *o = &out->items[i];
             o->owner = volume_owner(x, f, o->name, o->other, &o->companion);
         }
+        if (rc == SIGIL_ERR_DAMAGED) snprintf(r->problem, sizeof(r->problem), "%s", f->target.path);
     }
     if (rc != SIGIL_OK) sigil_sync_saves_free(out);
     return rc;
@@ -156,7 +183,7 @@ int sigil_sync_collect_volumes(sigil_sync_ctx *x, sigil_sync_result *r) {
     int rc = gather_volumes(x, &vols, r);
     if (rc != SIGIL_OK) return rc;
     sigil_sync_saves saves;
-    rc = gather_volume_saves(x, &vols, &saves);
+    rc = gather_volume_saves(x, &vols, &saves, r);
     if (rc != SIGIL_OK) { volume_set_free(&vols); return rc; }
 
     sigil_sync_sources src;
@@ -179,8 +206,23 @@ int sigil_sync_collect_volumes(sigil_sync_ctx *x, sigil_sync_result *r) {
 
 /* Managed: a shared volume can be swapped only when every save on it that
  * isn't the game's has been passed on: another game's saves match what that
- * game last synced, and saves with no owner match the last holding unit. */
-static int check_swappable(const sigil_sync_ctx *x, const volume_set *s, const sigil_sync_saves *local) {
+ * game last synced, and saves with no owner match the last holding unit. A
+ * corrupt save can't be passed on, so a shared volume holding one is
+ * SIGIL_ERR_DAMAGED naming it. */
+static int check_swappable(const sigil_sync_ctx *x, const volume_set *s, const sigil_sync_saves *local,
+                           sigil_sync_result *r) {
+    for (size_t v = 0; v < s->count; v++) {
+        if (s->files[v].target.per_game || !s->files[v].card) continue;
+        sigil_card_listing *listing = NULL;
+        int rc = x->kind->list(s->files[v].card, s->files[v].format, &listing);
+        if (rc != SIGIL_OK) return rc;
+        bool corrupt = listing->corrupt_count > 0;
+        sigil_card_listing_free(listing);
+        if (corrupt) {
+            snprintf(r->problem, sizeof(r->problem), "%s", s->files[v].target.path);
+            return SIGIL_ERR_DAMAGED;
+        }
+    }
     for (size_t v = 0; v < s->count; v++) {
         if (s->files[v].target.per_game || sigil_sync_count_where(local, SYNC_OWN_NONE, v) == 0) continue;
         char none[33];
@@ -339,13 +381,13 @@ int sigil_sync_restore_volumes(sigil_sync_ctx *x, sigil_sync_saves *incoming, co
     int rc = gather_volumes(x, &vols, r);
     if (rc != SIGIL_OK) return rc;
     sigil_sync_saves local;
-    rc = gather_volume_saves(x, &vols, &local);
+    rc = gather_volume_saves(x, &vols, &local, r);
     if (rc != SIGIL_OK) { volume_set_free(&vols); return rc; }
 
     bool already_there = false;
     char seen[SIGIL_VOLUME_TARGETS_MAX][33];
     rc = sigil_sync_check_restore(x, &local, incoming, r, local_identity, &already_there);
-    if (rc == SIGIL_OK) rc = x->req->mode == SIGIL_SYNC_MANAGED ? check_swappable(x, &vols, &local)
+    if (rc == SIGIL_OK) rc = x->req->mode == SIGIL_SYNC_MANAGED ? check_swappable(x, &vols, &local, r)
                                                                  : check_unchanged(x, &vols, &local);
     if (rc == SIGIL_OK) rc = place_on_volumes(x, &vols, &local, incoming, sizes, already_there, r, seen);
     if (rc == SIGIL_OK) rc = note_restored(x, &vols, incoming, seen);
