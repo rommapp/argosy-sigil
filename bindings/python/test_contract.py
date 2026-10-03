@@ -276,12 +276,17 @@ def test_every_error_code_has_an_error_in_each_binding():
     py = PY_INIT.read_text()
     go = GO.read_text()
     kotlin = KOTLIN.read_text()
+    py_map = dict(re.findall(r"lib\.SIGIL_ERR_(\w+):\s*Sigil(\w+)Error", py))
+    go_map = dict(re.findall(r"case C\.SIGIL_ERR_(\w+):\s*return Err(\w+)", go))
     for code, value in codes:
         assert f"lib.SIGIL_ERR_{code}:" in py, f"_ERROR_CLASSES lacks SIGIL_ERR_{code}"
         assert f"case C.SIGIL_ERR_{code}:" in go, f"errFromCode lacks SIGIL_ERR_{code}"
-        # Kotlin names the codes a collect or restore refuses with, from CONFLICT on.
-        if int(value) <= -9:
-            assert f"const val {code} = {value}" in kotlin, f"SigilException lacks {code} = {value}"
+        # Each code maps to the error named for it, so a caller matching one
+        # error never catches another code.
+        want = code.replace("_", "").lower()
+        assert py_map.get(code, "").lower() == want, f"SIGIL_ERR_{code} maps to Sigil{py_map.get(code)}Error"
+        assert go_map.get(code, "").lower() == want, f"SIGIL_ERR_{code} maps to Err{go_map.get(code)}"
+        assert f"const val {code} = {value}" in kotlin, f"SigilException lacks {code} = {value}"
 
 
 def _jni_exception_thrown_on_failure() -> bool:

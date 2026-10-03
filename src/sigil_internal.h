@@ -274,6 +274,9 @@ void sigil_named_hash(sigil_named_md5 *items, size_t count, char out[33]);
 size_t sigil_save_shared_paths(const sigil_save_request *req, char (*out)[SIGIL_SAVE_PATH_MAX], int *devices,
                                size_t cap);
 
+/** The request's value for option `key`, or NULL when it gives none. */
+const char *sigil_save_option_value(const sigil_save_request *req, const char *key);
+
 /**
  * The region letter that ends a GameCube game code, from the result's raw
  * serial or else its hex title id; 0 when neither holds one.

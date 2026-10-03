@@ -431,6 +431,20 @@ static void check_broken_chains(const corpus_table *manifest) {
         }
         sigil_card_listing_free(l);
     }
+
+    /* Another save's chain running into this one's middle: each claims a
+     * block of the other, so neither is whole and both are corrupt. */
+    memcpy(broken, card, PS1_CARD_SIZE);
+    uint8_t *f = broken + (size_t)(blocks + 1) * PS1_FRAME_SIZE;
+    memcpy(f, broken + PS1_FRAME_SIZE, PS1_FRAME_SIZE);
+    f[0x0A + 2] ^= 0x01;
+    set_link(broken, blocks + 1, 1);
+    sigil_card_listing *l = NULL;
+    if (sigil_ps1_card_list(broken, SIGIL_CARD_FORMAT_PS1_RAW, &l) != SIGIL_OK || l->entry_count != 0 ||
+        l->corrupt_count != 2 || l->corrupt_entry_count != 2) {
+        fail("broken chains", "two saves sharing a block listed");
+    }
+    sigil_card_listing_free(l);
     free(broken);
     free(card);
 }
@@ -446,6 +460,20 @@ static void check_refusals(const corpus_table *manifest) {
     int format = 0;
     if (sigil_ps1_card_load(io, loaded, &format) != SIGIL_ERR_UNSUPPORTED_FORMAT) fail("refusals", "a raw card longer than 128 KiB loaded");
     sigil_io_close(io);
+
+    /* A raw card or .vmp cut short has lost saves; only a .gme may end early. */
+    io = mem_root_io(image, 16 * 1024);
+    if (sigil_ps1_card_load(io, loaded, &format) != SIGIL_ERR_UNSUPPORTED_FORMAT) fail("refusals", "a raw card cut short loaded");
+    sigil_io_close(io);
+    uint8_t *vmp = (uint8_t *)calloc(1, PS1_VMP_HEADER_SIZE + 16 * 1024);
+    if (vmp) {
+        memcpy(vmp, "\0PMV", 4);
+        memcpy(vmp + PS1_VMP_HEADER_SIZE, image, 16 * 1024);
+        io = mem_root_io(vmp, PS1_VMP_HEADER_SIZE + 16 * 1024);
+        if (sigil_ps1_card_load(io, loaded, &format) != SIGIL_ERR_UNSUPPORTED_FORMAT) fail("refusals", "a .vmp cut short loaded");
+        sigil_io_close(io);
+        free(vmp);
+    }
 
     sigil_card_listing *l = NULL;
     if (sigil_ps1_card_list(image, SIGIL_CARD_FORMAT_PS1_RAW, &l) == SIGIL_OK && l->entry_count > 0) {

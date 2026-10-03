@@ -627,6 +627,133 @@ done:
     free_shared_saves(&s);
 }
 
+/* `vol` with the save named `name` broken: its archive claims more data than
+ * its block list holds, so it lists as corrupt under its name. */
+static uint8_t *saturn_broken(const uint8_t *vol, size_t len, const char *name) {
+    sigil_card_listing *l = listing_of(vol, len);
+    uint8_t *out = l ? (uint8_t *)malloc(len) : NULL;
+    bool broken = false;
+    if (out) {
+        memcpy(out, vol, len);
+        for (size_t i = 0; i < l->entry_count; i++) {
+            if (strcmp(l->entries[i].name, name) != 0) continue;
+            sigil_write_be32(out + (size_t)l->entries[i].first_block * 64 + 0x1E, 0x00FFFFFFu);
+            broken = true;
+        }
+    }
+    sigil_card_listing_free(l);
+    if (!broken) { free(out); return NULL; }
+    return out;
+}
+
+/* A volume naming a corrupt save that may be the game's is DAMAGED naming
+ * the volume on collect and on restore in both modes, writing nothing:
+ * reading on would take that save as deleted. A shared volume where the
+ * corrupt save is another game's syncs unmanaged, keeping it, but refuses a
+ * managed swap, which would drop it. */
+static void check_corrupt_saves(const sigil_sync_result *lunar) {
+    shared_saves s;
+    size_t lunar_len = 0;
+    uint8_t *lunar_vol = segacd("lunar-ecc-brm", &lunar_len);
+    uint8_t *lunar_dir = lunar_vol ? (uint8_t *)malloc(lunar_len) : NULL;
+    if (!load_shared_saves(&s) || !lunar_dir || !lunar) { fail("corrupt saves", "setup failed"); goto out; }
+    memcpy(lunar_dir, lunar_vol, lunar_len);
+    lunar_vol[0x0048] ^= 0xC0;
+    lunar_dir[0x1F88] ^= 0xC0;
+
+    size_t zwei_len = 0, unit_len = 0, both_len = 0, toki_len = 0;
+    uint8_t *zwei = unit_of(s.zwei, s.zwei_len, &unit_len);
+    uint8_t *zwei_broken = zwei ? saturn_broken(zwei, unit_len, "PANDRA_ZWEI") : NULL;
+    zwei_len = unit_len;
+    const uint8_t *vb[2] = { s.zwei, s.dwarf };
+    size_t lens[2] = { s.zwei_len, s.dwarf_len };
+    uint8_t *both = saturn_volume(vb, lens, 2, &both_len);
+    uint8_t *both_broken = both ? saturn_broken(both, both_len, "PANDRA_ZWEI") : NULL;
+    const uint8_t *tb[2] = { s.zwei, s.toki };
+    size_t tlens[2] = { s.zwei_len, s.toki_len };
+    uint8_t *with_toki = saturn_volume(tb, tlens, 2, &toki_len);
+    uint8_t *toki_broken = with_toki ? saturn_broken(with_toki, toki_len, "TOKIMEKI_99") : NULL;
+    if (!zwei_broken || !both_broken || !toki_broken) { fail("corrupt saves", "setup failed"); goto saturn_out; }
+
+    struct {
+        const char *what, *path, *layout, *platform, *content, *opt_key, *opt_value;
+        const uint8_t *vol;
+        size_t len;
+        const uint8_t *unit;
+        size_t unit_len;
+        bool shared;
+    } CASES[] = {
+        { "sega cd per-game", LUNAR_BRM, "genesis_plus_gx", "segacd", LUNAR, "genesis_plus_gx_system_bram", "per game",
+          lunar_vol, lunar_len, lunar->data, lunar->len, false },
+        { "sega cd shared, a save it no longer names", "scd_U.brm", "genesis_plus_gx", "segacd", LUNAR, NULL, NULL,
+          lunar_dir, lunar_len, lunar->data, lunar->len, false },
+        { "saturn per-game", "Panzer Dragoon II Zwei (USA).srm", "mednafen_saturn", "saturn", ZWEI_CUE, NULL, NULL,
+          zwei_broken, zwei_len, zwei, unit_len, false },
+        { "saturn shared", SHARED_BKR, NULL, NULL, ZWEI_CUE, NULL, NULL, both_broken, both_len, zwei, unit_len, true },
+    };
+    for (size_t c = 0; c < sizeof(CASES) / sizeof(CASES[0]); c++) {
+        for (int mode = SIGIL_SYNC_MANAGED; mode <= SIGIL_SYNC_UNMANAGED; mode++) {
+            mem_root root = {0};
+            root_put(&root, CASES[c].path, CASES[c].vol, CASES[c].len);
+            game g;
+            if (CASES[c].shared) {
+                make_shared(&g, &root, ZWEI_CUE, ZWEI_IDS, 1, mode);
+            } else {
+                make_game(&g, &root, CASES[c].layout, CASES[c].platform, CASES[c].content, mode);
+                if (CASES[c].opt_key) add_option(&g, CASES[c].opt_key, CASES[c].opt_value);
+            }
+            g.req.overwrite_local = 1;
+            sigil_sync_result *seen = NULL, *r = NULL;
+            if (sigil_collect(&g.req, &seen) != SIGIL_ERR_DAMAGED || !seen || strcmp(seen->problem, CASES[c].path) != 0) {
+                fail("corrupt saves", CASES[c].what);
+            }
+            if (sigil_restore(&g.req, CASES[c].unit, CASES[c].unit_len, &r) != SIGIL_ERR_DAMAGED || !r ||
+                strcmp(r->problem, CASES[c].path) != 0 || root.writes != 0) {
+                fail("corrupt saves", CASES[c].what);
+            }
+            sigil_sync_result_free(r);
+            sigil_sync_result_free(seen);
+            root_free(&root);
+        }
+    }
+
+    for (int mode = SIGIL_SYNC_MANAGED; mode <= SIGIL_SYNC_UNMANAGED; mode++) {
+        mem_root root = {0};
+        root_put(&root, SHARED_BKR, toki_broken, toki_len);
+        game g;
+        make_shared(&g, &root, ZWEI_CUE, ZWEI_IDS, 1, mode);
+        sigil_sync_result *seen = NULL, *r = NULL;
+        if (sigil_collect(&g.req, &seen) != SIGIL_OK || !seen->data) {
+            fail("corrupt saves", "another game's corrupt save stopped a collect");
+        } else {
+            use_state(&g, seen);
+            g.req.overwrite_local = 1;
+            int rc = sigil_restore(&g.req, zwei, unit_len, &r);
+            mem_file *f = root_find(&root, SHARED_BKR);
+            sigil_card_listing *after = f ? listing_of(f->data, f->len) : NULL;
+            if (mode == SIGIL_SYNC_MANAGED &&
+                (rc != SIGIL_ERR_DAMAGED || !r || strcmp(r->problem, SHARED_BKR) != 0 || root.writes != 0)) {
+                fail("corrupt saves", "a managed swap would drop another game's corrupt save");
+            }
+            if (mode == SIGIL_SYNC_UNMANAGED && (rc != SIGIL_OK || !after || after->corrupt_entry_count != 1 ||
+                                                 strcmp(after->corrupt_entries[0].name, "TOKIMEKI_99") != 0)) {
+                fail("corrupt saves", "an unmanaged restore didn't keep another game's corrupt save");
+            }
+            sigil_card_listing_free(after);
+        }
+        sigil_sync_result_free(r);
+        sigil_sync_result_free(seen);
+        root_free(&root);
+    }
+
+saturn_out:
+    free(zwei); free(zwei_broken); free(both); free(both_broken); free(with_toki); free(toki_broken);
+out:
+    free(lunar_vol);
+    free(lunar_dir);
+    free_shared_saves(&s);
+}
+
 /* Who owns a save on a shared volume, each rule against the next: the
  * user's claim beats a learned owner; a learned owner beats the name table
  * and the managed swap record; on a per-game volume only a companion's
@@ -772,6 +899,175 @@ done:
     free_shared_saves(&s);
 }
 
+/* `like` with its data replaced by `size` zero bytes. */
+static uint8_t *sized_bup(const uint8_t *like, uint32_t size, size_t *len) {
+    *len = SATURN_BUP_HEADER_SIZE + size;
+    uint8_t *out = (uint8_t *)calloc(1, *len);
+    if (!out) return NULL;
+    memcpy(out, like, SATURN_BUP_HEADER_SIZE);
+    sigil_write_be32(out + 0x2C, size);
+    return out;
+}
+
+/* The blocks `bup` takes on a fresh volume of `size` bytes, as the listing
+ * counts them; 0 when it doesn't go in. */
+static uint32_t blocks_on_fresh(const uint8_t *bup, size_t len, size_t size, bool cart) {
+    sigil_saturn_volume v;
+    sigil_bram_storage raw;
+    memset(&raw, 0, sizeof(raw));
+    raw.filler = -1;
+    int rc = cart ? sigil_saturn_volume_format_cart(&v, size, &raw) : sigil_saturn_volume_format(&v, size, &raw);
+    if (rc != SIGIL_OK) return 0;
+    uint32_t blocks = 0;
+    sigil_card_listing *l = NULL;
+    if (sigil_saturn_inject(&v, bup, len) == SIGIL_OK && sigil_saturn_list(&v, &l) == SIGIL_OK && l->entry_count == 1) {
+        blocks = l->entries[0].blocks;
+    }
+    sigil_card_listing_free(l);
+    sigil_saturn_volume_free(&v);
+    return blocks;
+}
+
+static uint32_t free_on_fresh(size_t size, bool cart) {
+    sigil_saturn_volume v;
+    sigil_bram_storage raw;
+    memset(&raw, 0, sizeof(raw));
+    raw.filler = -1;
+    int rc = cart ? sigil_saturn_volume_format_cart(&v, size, &raw) : sigil_saturn_volume_format(&v, size, &raw);
+    if (rc != SIGIL_OK) return 0;
+    uint32_t n = 0;
+    sigil_card_listing *l = NULL;
+    if (sigil_saturn_list(&v, &l) == SIGIL_OK) n = l->free_blocks;
+    sigil_card_listing_free(l);
+    sigil_saturn_volume_free(&v);
+    return n;
+}
+
+/* Kronos's default 512 KiB cart refuses a cart save that needs more, with
+ * the shortfall in the cart's 512-byte blocks. */
+static void check_cart_too_small(void) {
+    size_t int_len = 0, bup_len = 0, cart_len = 0;
+    uint8_t *internal = sample(&g_saturn, "saturn", "rayman-bkr-bcr", "Rayman (USA) (R2)-internal.bkr", &int_len);
+    shared_saves s;
+    uint8_t *big = load_shared_saves(&s) ? sized_bup(s.zwei, 600u * 1024u, &bup_len) : NULL;
+    uint8_t *cart = NULL;
+    sigil_saturn_volume v;
+    sigil_bram_storage raw;
+    memset(&raw, 0, sizeof(raw));
+    raw.filler = -1;
+    if (big && sigil_saturn_volume_format_cart(&v, 1024u * 1024u, &raw) == SIGIL_OK) {
+        if (sigil_saturn_inject(&v, big, bup_len) != SIGIL_OK || sigil_saturn_volume_write(&v, &cart, &cart_len) != SIGIL_OK) cart = NULL;
+        sigil_saturn_volume_free(&v);
+    }
+    uint32_t need = big ? blocks_on_fresh(big, bup_len, 1024u * 1024u, true) : 0;
+    uint32_t room = free_on_fresh(512u * 1024u, true);
+    mem_root root = {0}, empty = {0};
+    sigil_sync_result *unit = NULL, *r = NULL;
+    if (!internal || !cart || !need || need <= room) { fail("cart too small", "setup failed"); goto done; }
+    root_put(&root, "kronos/saturn/" RAYMAN ".ram", internal, int_len);
+    root_put(&root, "kronos/saturn/" RAYMAN "-ext1M.ram", cart, cart_len);
+    game g, fresh;
+    make_game(&g, &root, "kronos", "saturn", RAYMAN ".cue", SIGIL_SYNC_MANAGED);
+    add_option(&g, "kronos_addon_cartridge", "1M_backup_ram");
+    if (sigil_collect(&g.req, &unit) != SIGIL_OK || !unit->data) { fail("cart too small", "setup collect failed"); goto done; }
+    make_game(&fresh, &empty, "kronos", "saturn", RAYMAN ".cue", SIGIL_SYNC_MANAGED);
+    if (sigil_restore(&fresh.req, unit->data, unit->len, &r) != SIGIL_ERR_NO_SPACE || !r || empty.writes != 0 ||
+        strcmp(r->problem, "PANDRA_ZWEI") != 0 || r->blocks_short != need - room) {
+        fail("cart too small", "a cart save too big for the cart wasn't refused with its shortfall in cart blocks");
+    }
+done:
+    sigil_sync_result_free(r);
+    sigil_sync_result_free(unit);
+    root_free(&root);
+    root_free(&empty);
+    free(cart);
+    free(big);
+    free(internal);
+    free_shared_saves(&s);
+}
+
+/* A volume file that is empty is no volume yet; one holding a cart where
+ * internal RAM goes is damaged. */
+static void check_volume_files(void) {
+    size_t cart_len = 0;
+    uint8_t *cart = rayman_cart_of(512u * 1024u, &cart_len);
+    shared_saves s;
+    size_t unit_len = 0;
+    uint8_t *unit = load_shared_saves(&s) ? unit_of(s.zwei, s.zwei_len, &unit_len) : NULL;
+    if (!cart || !unit) { fail("volume files", "setup failed"); goto done; }
+    for (int which = 0; which < 2; which++) {
+        mem_root root = {0};
+        root_put(&root, "Panzer Dragoon II Zwei (USA).srm", cart, which ? cart_len : 0);
+        game g;
+        make_game(&g, &root, "mednafen_saturn", "saturn", ZWEI_CUE, SIGIL_SYNC_MANAGED);
+        sigil_sync_result *seen = NULL, *r = NULL;
+        int collected = sigil_collect(&g.req, &seen);
+        int restored = sigil_restore(&g.req, unit, unit_len, &r);
+        if (which == 0 && (collected != SIGIL_OK || seen->data || restored != SIGIL_OK || root.writes != 1)) {
+            fail("volume files", "an empty volume file wasn't taken as no volume");
+        }
+        if (which == 1 && (collected != SIGIL_ERR_DAMAGED || strcmp(seen->problem, "Panzer Dragoon II Zwei (USA).srm") != 0 ||
+                           restored != SIGIL_ERR_DAMAGED || root.writes != 0)) {
+            fail("volume files", "a cart where internal RAM goes wasn't damaged");
+        }
+        sigil_sync_result_free(r);
+        sigil_sync_result_free(seen);
+        root_free(&root);
+    }
+done:
+    free(cart);
+    free(unit);
+    free_shared_saves(&s);
+}
+
+/* Managed, a kept companion's save that no longer fits beside the game's
+ * new save refuses the swap naming the companion's save and its shortfall. */
+static void check_kept_companion_overflow(void) {
+    shared_saves s;
+    if (!load_shared_saves(&s)) { free_shared_saves(&s); fail("kept companion overflow", "setup failed"); return; }
+    uint32_t dwarf = blocks_on_fresh(s.dwarf, s.dwarf_len, SATURN_INTERNAL_SIZE, false);
+    uint32_t room = free_on_fresh(SATURN_INTERNAL_SIZE, false);
+    uint8_t *big = NULL;
+    size_t big_len = 0;
+    for (uint32_t size = 1024; dwarf && size < SATURN_INTERNAL_SIZE && !big; size += 8) {
+        uint8_t *b = sized_bup(s.zwei, size, &big_len);
+        if (b && blocks_on_fresh(b, big_len, SATURN_INTERNAL_SIZE, false) == room - dwarf + 1) big = b;
+        else free(b);
+    }
+    size_t zu_len = 0, bu_len = 0, du_len = 0, v_len = 0;
+    uint8_t *v = unit_of(s.zwei, s.zwei_len, &v_len);
+    uint8_t *zwei_unit = unit_of(s.zwei, s.zwei_len, &zu_len), *dwarf_unit = unit_of(s.dwarf, s.dwarf_len, &du_len);
+    uint8_t *big_unit = big ? unit_of(big, big_len, &bu_len) : NULL;
+    mem_root root = {0};
+    sigil_sync_result *first = NULL, *r = NULL, *again = NULL;
+    if (!v || !zwei_unit || !dwarf_unit || !big_unit) { fail("kept companion overflow", "setup failed"); goto done; }
+    root_put(&root, SHARED_BKR, v, v_len);
+    game g;
+    make_shared(&g, &root, ZWEI_CUE, ZWEI_IDS, 1, SIGIL_SYNC_MANAGED);
+    sigil_sync_companion dwarves = { DWARF_IDS, 1, dwarf_unit, du_len };
+    g.req.companions = &dwarves;
+    g.req.companion_count = 1;
+    if (sigil_collect(&g.req, &first) != SIGIL_OK) { fail("kept companion overflow", "collect failed"); goto done; }
+    use_state(&g, first);
+    if (sigil_restore(&g.req, zwei_unit, zu_len, &r) != SIGIL_OK) { fail("kept companion overflow", "setup restore failed"); goto done; }
+    refresh(&g, &root);
+    use_state(&g, r);
+    dwarves.unit = NULL;
+    dwarves.unit_len = 0;
+    int writes = root.writes;
+    if (sigil_restore(&g.req, big_unit, bu_len, &again) != SIGIL_ERR_NO_SPACE || !again || root.writes != writes ||
+        strcmp(again->problem, "THREE_DIRTY") != 0 || again->blocks_short != 1) {
+        fail("kept companion overflow", "a kept companion's save that no longer fits wasn't named with its shortfall");
+    }
+done:
+    sigil_sync_result_free(again);
+    sigil_sync_result_free(r);
+    sigil_sync_result_free(first);
+    root_free(&root);
+    free(v); free(zwei_unit); free(dwarf_unit); free(big_unit); free(big);
+    free_shared_saves(&s);
+}
+
 /* A game with more saves than the standard 32 KiB volume holds, on Yaba
  * Sanshiro's 4 MiB volume, travels in a unit the source volume's size and
  * restores; a file that exists keeps its own form, not the layout's. */
@@ -806,11 +1102,15 @@ static void check_too_big_for_internal(void) {
     if (!unit || !need || !room || need <= room) {
         fail("too big for internal", "setup failed");
     } else {
-        static const char *const LAYOUTS[] = { "yabause", "kronos", "mednafen_saturn" };
-        for (size_t i = 0; i < 3; i++) {
+        static const char *const LAYOUTS[] = { "yabause", "kronos", "mednafen_saturn", "mednafen_saturn shared" };
+        for (size_t i = 0; i < 4; i++) {
             mem_root root = {0};
             game g;
-            make_game(&g, &root, LAYOUTS[i], "saturn", "Touge King the Spirits (Japan).cue", SIGIL_SYNC_MANAGED);
+            if (i == 3) {
+                make_shared(&g, &root, "Touge King the Spirits (Japan).cue", NULL, 0, SIGIL_SYNC_MANAGED);
+            } else {
+                make_game(&g, &root, LAYOUTS[i], "saturn", "Touge King the Spirits (Japan).cue", SIGIL_SYNC_MANAGED);
+            }
             sigil_sync_result *r = NULL;
             if (sigil_restore(&g.req, unit, unit_len, &r) != SIGIL_ERR_NO_SPACE || root.writes != 0 || !r ||
                 strcmp(r->problem, "TGKRPLY_RP1") != 0 || r->blocks_short != need - room) {
@@ -1587,6 +1887,9 @@ int main(void) {
     check_saturn_companion_shared();
     check_big_units_and_forms();
     check_too_big_for_internal();
+    check_cart_too_small();
+    check_volume_files();
+    check_kept_companion_overflow();
     check_yabasanshiro();
     check_yabause();
     check_name_table();
@@ -1600,6 +1903,7 @@ int main(void) {
     check_segacd_unmanaged(lunar);
     check_segacd_unmanaged_replace();
     check_unreadable_volume(lunar);
+    check_corrupt_saves(lunar);
     if (lunar) {
         check_faulty_write("segacd faulty write", "genesis_plus_gx", "segacd", LUNAR, "genesis_plus_gx_system_bram",
                            "per game", lunar->data, lunar->len, first_set_byte);

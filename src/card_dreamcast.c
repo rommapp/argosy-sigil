@@ -169,11 +169,38 @@ int sigil_dreamcast_card_load(const sigil_io *io, uint8_t image[VMU_CARD_SIZE]) 
     return read_layout(image, &l) ? SIGIL_OK : SIGIL_ERR_UNSUPPORTED_FORMAT;
 }
 
+/* How many files' chains reach each block, so a block two files share marks
+ * both broken. */
+static void count_claims(const uint8_t *image, const vmu_layout *l, uint8_t claims[VMU_BLOCKS]) {
+    memset(claims, 0, VMU_BLOCKS);
+    uint32_t order[VMU_BLOCKS];
+    for (uint32_t s = 0; s < slot_count(l); s++) {
+        const uint8_t *entry = image + slot_offset(l, s);
+        if (!is_file(entry)) continue;
+        uint32_t n = entry_chain(image, l, entry, order);
+        for (uint32_t i = 0; i < n; i++) {
+            if (claims[order[i]] < UINT8_MAX) claims[order[i]]++;
+        }
+    }
+}
+
+static bool chain_shared(const uint8_t *image, const vmu_layout *l, const uint8_t *entry,
+                         const uint8_t claims[VMU_BLOCKS]) {
+    uint32_t order[VMU_BLOCKS];
+    uint32_t n = entry_chain(image, l, entry, order);
+    for (uint32_t i = 0; i < n; i++) {
+        if (claims[order[i]] > 1) return true;
+    }
+    return false;
+}
+
 int sigil_dreamcast_card_list(const uint8_t image[VMU_CARD_SIZE], sigil_card_listing **out) {
     if (!image || !out) return SIGIL_ERR_INVALID_ARG;
     *out = NULL;
     vmu_layout l;
     if (!read_layout(image, &l)) return SIGIL_ERR_UNSUPPORTED_FORMAT;
+    uint8_t claims[VMU_BLOCKS];
+    count_claims(image, &l, claims);
 
     sigil_card_listing *listing = sigil_card_listing_new(SIGIL_CARD_FORMAT_DREAMCAST_VMU, slot_count(&l));
     if (!listing) return SIGIL_ERR_OOM;
@@ -192,7 +219,7 @@ int sigil_dreamcast_card_list(const uint8_t image[VMU_CARD_SIZE], sigil_card_lis
         memcpy(name, entry + ENTRY_NAME, VMU_NAME_LEN);
         name[VMU_NAME_LEN] = '\0';
         uint32_t blocks = entry_chain(image, &l, entry, NULL);
-        if (blocks == 0) {
+        if (blocks == 0 || chain_shared(image, &l, entry, claims)) {
             sigil_card_listing_corrupt(listing, name, NULL, sigil_read_le16(entry + ENTRY_FIRST_BLOCK));
             continue;
         }

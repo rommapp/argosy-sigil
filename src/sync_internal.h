@@ -142,6 +142,12 @@ bool sigil_sync_listed(const sigil_sync_request *req, const char *path);
 int sigil_sync_read_file(const sigil_sync_request *req, const char *path, size_t cap, uint8_t **out, size_t *len);
 /** `path` holds exactly `len` bytes of `data`. */
 bool sigil_sync_file_holds(const sigil_sync_request *req, const char *path, const uint8_t *data, size_t len);
+/** Writes `path` through the request and reads it back; SIGIL_ERR_IO when
+ *  either fails or `path` would leave the save root. */
+int sigil_sync_put(const sigil_sync_request *req, const char *path, const uint8_t *data, size_t len);
+/** Removes `path` through the request; SIGIL_ERR_IO when that fails or
+ *  `path` would leave the save root. */
+int sigil_sync_drop(const sigil_sync_request *req, const char *path);
 
 enum { SYNC_OWN_GAME, SYNC_OWN_OTHER, SYNC_OWN_NONE, SYNC_OWN_COMPANION };
 

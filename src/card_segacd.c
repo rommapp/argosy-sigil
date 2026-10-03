@@ -433,8 +433,12 @@ static bool blocks_decode(const sigil_segacd_volume *vol, uint32_t start, uint32
     return true;
 }
 
+/* An entry whose blocks decode where its protect flag needs them to, and
+ * which ends before the data end, short of the block the BIOS holds for the
+ * next directory entry when the file count is even. */
 static bool entry_valid(const sigil_segacd_volume *vol, const volume_counts *c, const dir_entry *e) {
-    if (e->start < 1 || e->blocks < 1 || e->start + e->blocks > data_end(vol, c->files)) return false;
+    uint32_t held = (c->files & 1u) ? 0 : 1;
+    if (e->start < 1 || e->blocks < 1 || e->start + e->blocks + held > data_end(vol, c->files)) return false;
     return !e->protect || blocks_decode(vol, e->start, e->blocks);
 }
 
@@ -584,8 +588,12 @@ static uint32_t unit_blocks(const uint8_t *unit, size_t len) {
     return blocks;
 }
 
-/* A new save takes its blocks and, when the file count is odd, a new
- * directory block: each directory block holds two entries. */
+/* A new save takes its blocks and, when the file count is odd, one more:
+ * its entry fits the free half of the last directory block, but at the
+ * even count it leaves, the BIOS holds the block before the directory for
+ * the next entry (bios_free). The hold comes from the BIOS's free count;
+ * no sample yet shows the BIOS writing into that block, so sigil keeps it
+ * free, which refuses a save that would fit one block early. */
 static uint32_t inject_cost(uint32_t blocks, uint32_t files) {
     return blocks + (files & 1u);
 }

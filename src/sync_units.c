@@ -66,6 +66,30 @@ bool sigil_sync_file_holds(const sigil_sync_request *req, const char *path, cons
     return same;
 }
 
+/* A path under the save root: relative, with no ".." segment. */
+static bool path_inside(const char *path) {
+    if (!path[0] || path[0] == '/' || path[0] == '\\' || path[1] == ':') return false;
+    for (const char *s = path; *s;) {
+        size_t n = strcspn(s, "/\\");
+        if (n == 2 && s[0] == '.' && s[1] == '.') return false;
+        s += n;
+        if (*s) s++;
+    }
+    return true;
+}
+
+int sigil_sync_put(const sigil_sync_request *req, const char *path, const uint8_t *data, size_t len) {
+    if (!path_inside(path) || req->write(req->write_ctx, path, data, len) != 0 ||
+        !sigil_sync_file_holds(req, path, data, len)) {
+        return SIGIL_ERR_IO;
+    }
+    return SIGIL_OK;
+}
+
+int sigil_sync_drop(const sigil_sync_request *req, const char *path) {
+    return path_inside(path) && req->remove(req->write_ctx, path) == 0 ? SIGIL_OK : SIGIL_ERR_IO;
+}
+
 /* The key the state keeps a game's sync under: the lowest of its ids, so
  * every disc of a set shares one entry, or `fallback` when it has none. */
 static void key_for(const sigil_sync_request *req, const sigil_sync_kind *kind, const char *first,
@@ -244,13 +268,13 @@ static bool own_save_corrupt(const sigil_sync_ctx *x, const sigil_card_listing *
 /* On a card platform the ids say whose a save is; on a volume platform every
  * save is taken, as the game's or the companion's (the caller works out a
  * local volume's owners). A unit (index SIZE_MAX) holding a corrupt save is
- * refused; a local card whose save of the game or a companion is corrupt or
- * doesn't extract is SIGIL_ERR_DAMAGED. */
+ * refused; a local card that won't list, or whose save of the game or a
+ * companion is corrupt or doesn't extract, is SIGIL_ERR_DAMAGED. */
 int sigil_sync_add_card_saves(const sigil_sync_ctx *x, const void *card, int format, int device, size_t index,
                               size_t who, sigil_sync_saves *out) {
     sigil_card_listing *listing = NULL;
     int rc = x->kind->list(card, format, &listing);
-    if (rc != SIGIL_OK) return rc;
+    if (rc != SIGIL_OK) return who == SYNC_WHO_LOCAL && rc != SIGIL_ERR_OOM ? SIGIL_ERR_DAMAGED : rc;
     if (listing->corrupt_count && index == SIZE_MAX) rc = SIGIL_ERR_UNSUPPORTED_FORMAT;
     if (who == SYNC_WHO_LOCAL && own_save_corrupt(x, listing)) rc = SIGIL_ERR_DAMAGED;
     for (size_t i = 0; i < listing->entry_count && rc == SIGIL_OK; i++) {
@@ -430,27 +454,44 @@ int sigil_sync_build_unit(const sigil_sync_saves *saves, int owner, const sigil_
 /* ---- reading units ------------------------------------------------------------- */
 
 /* A unit of save files: each goes onto a scratch card, which lists the
- * game's saves as any card does. */
+ * game's saves as any card does. A full scratch card hands its saves over
+ * and a fresh one takes the rest, so a unit isn't held to one card's
+ * directory: a GCI folder can hold more saves of a game than Dolphin loads,
+ * and the restore's folder check names the one it wouldn't. Two saves of
+ * one identity make the unit malformed. */
 static int file_unit_saves(const sigil_sync_ctx *x, const uint8_t *unit, size_t len, size_t who,
                            sigil_sync_saves *out) {
     sigil_zip_member *members = NULL;
     size_t count = 0;
     bool zip = len >= 4 && sigil_read_le32(unit) == 0x04034b50u;
     int rc = zip ? sigil_zip_read_mem(unit, len, SYNC_MAX_UNIT_MEMBER, &members, &count) : SIGIL_OK;
+    size_t files = zip ? count : 1;
+    char (*keys)[SIGIL_CARD_NAME_MAX] = rc == SIGIL_OK ? calloc(files + 1, SIGIL_CARD_NAME_MAX) : NULL;
     void *card = NULL;
     int format = 0;
-    if (rc == SIGIL_OK) rc = x->kind->blank(&card, &format, SIGIL_DEVICE_NONE, 0, SIGIL_FORM_RAW, NULL);
-    size_t files = zip ? count : 1;
+    if (rc == SIGIL_OK) rc = keys ? x->kind->blank(&card, &format, SIGIL_DEVICE_NONE, 0, SIGIL_FORM_RAW, NULL)
+                                  : SIGIL_ERR_OOM;
     for (size_t i = 0; i < files && rc == SIGIL_OK; i++) {
         void *save = NULL;
         rc = x->kind->file_to_save(zip ? members[i].data : unit, zip ? members[i].len : len, &save);
-        if (rc == SIGIL_OK) {
-            rc = x->kind->inject(card, save);
-            x->kind->free_save(save);
+        if (rc != SIGIL_OK) break;
+        x->kind->save_key(save, keys[i]);
+        for (size_t k = 0; k < i && rc == SIGIL_OK; k++) {
+            if (strcmp(keys[k], keys[i]) == 0) rc = SIGIL_ERR_UNSUPPORTED_FORMAT;
         }
+        if (rc == SIGIL_OK) rc = x->kind->inject(card, save);
+        if (rc == SIGIL_ERR_NO_SPACE) {
+            rc = sigil_sync_add_card_saves(x, card, format, SIGIL_DEVICE_NONE, SIZE_MAX, who, out);
+            x->kind->free_card(card);
+            card = NULL;
+            if (rc == SIGIL_OK) rc = x->kind->blank(&card, &format, SIGIL_DEVICE_NONE, 0, SIGIL_FORM_RAW, NULL);
+            if (rc == SIGIL_OK) rc = x->kind->inject(card, save);
+        }
+        x->kind->free_save(save);
     }
     if (rc == SIGIL_OK) rc = sigil_sync_add_card_saves(x, card, format, SIGIL_DEVICE_NONE, SIZE_MAX, who, out);
     if (card) x->kind->free_card(card);
+    free(keys);
     sigil_zip_members_free(members, count);
     return rc == SIGIL_ERR_EXISTS ? SIGIL_ERR_UNSUPPORTED_FORMAT : rc;
 }
@@ -533,7 +574,7 @@ int sigil_sync_write_and_verify(const sigil_sync_ctx *x, const char *path, int d
     uint8_t *image = NULL;
     size_t len = 0;
     int rc = x->kind->image(card, &image, &len);
-    if (rc == SIGIL_OK && req->write(req->write_ctx, path, image, len) != 0) rc = SIGIL_ERR_IO;
+    if (rc == SIGIL_OK) rc = sigil_sync_put(req, path, image, len);
     free(image);
     if (rc != SIGIL_OK) return rc;
 

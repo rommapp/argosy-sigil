@@ -6,9 +6,11 @@
 #ifndef SIGIL_JNI_SAVE_NAME_H
 #define SIGIL_JNI_SAVE_NAME_H
 
+#include "sigil.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <string.h>
 
 static void sigil_save_name_escape(const char *raw, char *out, size_t cap) {
     size_t n = 0;
@@ -18,6 +20,25 @@ static void sigil_save_name_escape(const char *raw, char *out, size_t cap) {
         else n += (size_t)snprintf(out + n, cap - n, "%%%02X", c);
     }
     out[n < cap ? n : cap - 1] = '\0';
+}
+
+/* Escapes each '\n'-separated line of `raw` as a name and keeps the line
+ * breaks, so a list of names stays one per line. */
+static void sigil_save_lines_escape(const char *raw, char *out, size_t cap) {
+    size_t n = 0;
+    out[0] = '\0';
+    while (n + 1 < cap) {
+        const char *end = strchr(raw, '\n');
+        size_t len = end ? (size_t)(end - raw) : strlen(raw);
+        char line[SIGIL_SAVE_PATH_MAX];
+        snprintf(line, sizeof(line), "%.*s", (int)len, raw);
+        sigil_save_name_escape(line, out + n, cap - n);
+        n += strlen(out + n);
+        if (!end || n + 2 > cap) break;
+        out[n++] = '\n';
+        out[n] = '\0';
+        raw = end + 1;
+    }
 }
 
 static int hex_digit(char c) {

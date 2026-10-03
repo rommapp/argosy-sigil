@@ -344,7 +344,16 @@ typedef struct {
     uint16_t *list;
     uint32_t  blocks;
     uint32_t  corrupt;
+    sigil_card_listing *named;   /* when set, each corrupt save goes in its corrupt_entries */
 } saturn_map;
+
+static void archive_name(const sigil_saturn_volume *vol, uint32_t archive, char out[SATURN_NAME_LEN + 1]) {
+    const uint8_t *name = block_at(vol, archive) + ARCHIVE_NAME;
+    size_t n = 0;
+    while (n < SATURN_NAME_LEN && name[n] != 0) n++;
+    memcpy(out, name, n);
+    out[n] = '\0';
+}
 
 static int map_open(const sigil_saturn_volume *vol, saturn_map *m) {
     memset(m, 0, sizeof(*m));
@@ -404,6 +413,11 @@ static void map_scan(const sigil_saturn_volume *vol, saturn_map *m, saturn_visit
         uint32_t listed = 0, size = 0;
         if (!parse_entry(vol, m, block, &listed, &size)) {
             m->corrupt++;
+            if (m->named) {
+                char name[SATURN_NAME_LEN + 1];
+                archive_name(vol, block, name);
+                sigil_card_listing_corrupt(m->named, name, NULL, block);
+            }
             continue;
         }
         if (visit && !visit(ctx, vol, block, listed, size)) return;
@@ -459,11 +473,7 @@ static bool list_visit(void *ctx, const sigil_saturn_volume *vol, uint32_t archi
     (void)size;
     sigil_card_listing *listing = ((list_ctx *)ctx)->listing;
     sigil_card_entry *e = &listing->entries[listing->entry_count++];
-    const uint8_t *name = block_at(vol, archive) + ARCHIVE_NAME;
-    size_t n = 0;
-    while (n < SATURN_NAME_LEN && name[n] != 0) n++;
-    memcpy(e->name, name, n);
-    e->name[n] = '\0';
+    archive_name(vol, archive, e->name);
     e->blocks = listed + 1;
     e->first_block = archive;
     return true;
@@ -484,13 +494,13 @@ int sigil_saturn_list(const sigil_saturn_volume *vol, sigil_card_listing **out) 
     if (!listing) { map_close(&m); return SIGIL_ERR_OOM; }
 
     list_ctx ctx = { listing };
+    m.named = listing;
     map_scan(vol, &m, list_visit, &ctx);
     listing->total_blocks = blocks - SATURN_RESERVED_BLOCKS;
     for (uint32_t block = SATURN_RESERVED_BLOCKS; block < blocks; block++) {
         if (m.owner[block] == 0) listing->free_blocks++;
     }
     listing->free_slots = listing->free_blocks;
-    listing->corrupt_count = m.corrupt;
     map_close(&m);
     *out = listing;
     return SIGIL_OK;

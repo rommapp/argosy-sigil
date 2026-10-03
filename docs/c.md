@@ -228,13 +228,23 @@ writes a new superblock; collect reads such a card's folders as they are.
 A card or volume file sigil can't read as what its path holds (no card
 magic, cut short, an internal volume where a cart goes) is damaged too, and so is a save folder of the game or a companion that sigil can't
 pack (a subdirectory, a file name longer than a card entry holds), which
-PCSX2 still shows. `repair` doesn't change either: sigil never writes over
-saves it can't read. An empty file counts as no card. On
+PCSX2 still shows. So is a card or volume holding a corrupt save that may be
+the game's or a companion's (one carrying their id, one the owner rules give
+them, or one whose name the card lost), since collect would read that save
+as deleted. A managed restore also refuses a shared volume holding any
+corrupt save, which the swap would drop; unmanaged keeps it in place.
+`repair` changes none of these: sigil never writes over saves it can't
+read. An empty file counts as no card. On
 GameCube it is the game's saves as `.gci` files named as Dolphin names
 them (`<maker>-<gamecode>-<file>.gci`, escaped): the one file, or a zip
 of them named `<stem>.zip`. It is the same whether they came off a raw
 card or a GCI folder, and restore puts them into either; F-Zero GX's save
 is bound to the target card's serial on a raw card, as Dolphin binds it.
+Into a GCI folder, restore refuses with `SIGIL_ERR_NO_SPACE` a save Dolphin
+wouldn't load: Dolphin loads the running game's files first, then other
+games' (a companion's too) in name order while each leaves a tenth of the
+folder's blocks free, up to 112 saves, on a folder the size `MemoryCardSize`
+sets. Files are found by a `.gci` extension in any case.
 On Saturn and Sega CD it is the game's internal
 volume (`backup.ram`) when it has internal saves alone, else a zip named
 `<stem>.zip` holding `backup.ram` and `cart.ram` as present. On Dreamcast
@@ -259,7 +269,10 @@ typedef struct {
     const uint8_t *state;             /* The blob the last call returned for this platform and emulator. */
     size_t state_len;
     int overwrite_local;              /* restore: the user chose to replace saves that changed locally. */
-    sigil_save_write_fn write;        /* restore: writes one file of the save root, returns 0 on success. */
+    sigil_save_write_fn write;        /* restore: writes one file of the save root, returns 0 on success.
+                                         write and remove only ever get relative paths with no ".."
+                                         segment; sigil fails the restore with SIGIL_ERR_IO before
+                                         passing any other. */
     void *write_ctx;
     const char *const *claimed;       /* Saturn, Sega CD, Dreamcast: names from `unowned` the user gave
                                          this game. */
@@ -311,8 +324,9 @@ typedef struct {
     sigil_sync_companion_result *companions;   /* collect: one per request companion, in request order. */
     size_t companion_count;
     char problem[512];                /* The save or file at fault; see the refusals below. */
-    uint32_t blocks_short;            /* SIGIL_ERR_NO_SPACE: the blocks the save lacked; 0 when a directory
-                                         slot ran out instead. */
+    uint32_t blocks_short;            /* SIGIL_ERR_NO_SPACE: the blocks the save lacked; 0 when there were
+                                         enough free blocks but no directory slot, or other saves hold
+                                         the blocks a Dreamcast game file must start at. */
 } sigil_sync_result;
 
 typedef struct {
@@ -339,11 +353,12 @@ Restore refuses, writing nothing, with:
 | `SIGIL_ERR_UNCOLLECTED` | a shared volume holds saves no collect has passed on yet | |
 | `SIGIL_ERR_NO_SPACE` | the saves don't fit; `blocks_short` says by how much | the save |
 | `SIGIL_ERR_REGION` | a GameCube companion's save is from another Dolphin region than the game | the save |
-| `SIGIL_ERR_DAMAGED` | a file the saves go in is damaged and `repair` is 0, or it isn't a card sigil can read | the file |
+| `SIGIL_ERR_DAMAGED` | a file the saves go in is damaged and `repair` is 0, it isn't a card sigil can read, or it holds a corrupt save of the game or a companion (above) | the file |
 | `SIGIL_ERR_AMBIGUOUS` | more than one file could be the emulator's card and the options don't say which: Dolphin raw cards of two sizes with no `MemoryCardSize`. Collect refuses the same way | the files, one per line |
 | `SIGIL_ERR_NO_TARGET` | the unit holds a volume the emulator's settings keep no file for: a `cart.ram` for a core with no cart, a VMU port flycast doesn't keep per game | the unit member |
+| `SIGIL_ERR_EXISTS` | Dolphin's GCI folder holds other games' files under the name Dolphin gives a new save and each of its ten `0`-inserted forms, so Dolphin would write over one | the save |
 
-Collect refuses with `SIGIL_ERR_DAMAGED` in the same way. With each of
+Collect refuses with `SIGIL_ERR_DAMAGED` and `SIGIL_ERR_AMBIGUOUS` in the same way. With each of
 these the call still sets `*out`; free it as usual. sigil reports and the
 client decides: re-run with `overwrite_local` or `repair` once the user
 agreed, or leave the saves as they are.

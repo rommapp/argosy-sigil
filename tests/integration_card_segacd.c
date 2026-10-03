@@ -426,6 +426,21 @@ done:
 
 /* The first `blocks` blocks of `unit` as a save named `name`. Each block is
  * its own ECC block, so a prefix is a valid save of that many blocks. */
+/* An unprotected unit of `blocks` zero blocks under `name`, with `unit`'s
+ * header. */
+static uint8_t *zero_unit(const uint8_t *unit, uint32_t blocks, const char *name, size_t *len) {
+    *len = sigil_segacd_unit_size(blocks);
+    uint8_t *out = (uint8_t *)calloc(1, *len);
+    if (!out) return NULL;
+    memcpy(out, unit, SEGACD_UNIT_HEADER_SIZE);
+    memset(out + 0x04, '_', 11);
+    memcpy(out + 0x04, name, strlen(name));
+    out[0x0F] = 0;
+    out[0x10] = (uint8_t)(blocks >> 8);
+    out[0x11] = (uint8_t)blocks;
+    return out;
+}
+
 static uint8_t *unit_slice(const uint8_t *unit, uint32_t blocks, const char *name, size_t *len) {
     *len = sigil_segacd_unit_size(blocks);
     uint8_t *out = (uint8_t *)malloc(*len);
@@ -438,10 +453,11 @@ static uint8_t *unit_slice(const uint8_t *unit, uint32_t blocks, const char *nam
     return out;
 }
 
-/* A save fits when its blocks and the directory block it may need are free,
- * to the block: three 40-block saves leave 4 free with an odd file count, so
- * a 3-block save (needing a directory block) fits exactly and a 4-block one
- * is refused untouched. Every save still verifies after the exact fit. */
+/* A save fits when its blocks and the block the BIOS then holds are free, to
+ * the block: three 40-block saves leave 4 free with an odd file count, so a
+ * 3-block save (and the hold its even count brings) fits exactly and a
+ * 4-block one is refused untouched. Every save still verifies after the
+ * exact fit. */
 static void check_exact_fit(void) {
     size_t blank_len = 0;
     uint8_t *blank = sample_bytes("blank-internal", "Empty-mister-save.sav", &blank_len);
@@ -516,6 +532,58 @@ static void check_directory_rules(void) {
     if (!load_sample(LUNAR, &lunar) || !extract_named(&lunar, "GA_LUNAR_01", &ga, &ga_len)) {
         fail("directory rules", "setup failed");
         goto done;
+    }
+
+    /* With an even file count the BIOS holds the block before the directory
+     * for the next entry: a save running into it is corrupt, since sigil
+     * couldn't put the volume back as it is after deleting another save. */
+    size_t held_len = 0;
+    uint8_t *held = sample_bytes("blank-internal", "Empty-mister-save.sav", &held_len);
+    if (held && load_bytes(held, held_len, &vol)) {
+        size_t one_len = 0, last_len = 0;
+        uint8_t *one = unit_slice(ga, 1, "AAAA", &one_len), *last = NULL;
+        sigil_card_listing *l = NULL;
+        bool ok = one && sigil_segacd_inject(&vol, one, one_len) == SIGIL_OK && sigil_segacd_list(&vol, &l) == SIGIL_OK;
+        uint32_t room = ok && l->free_blocks ? l->free_blocks - 1 : 0;
+        sigil_card_listing_free(l);
+        l = NULL;
+        last = room ? zero_unit(ga, room, "BBBB", &last_len) : NULL;
+        uint8_t *block = last && sigil_segacd_inject(&vol, last, last_len) == SIGIL_OK ? slot_payload(&vol, 1, payload) : NULL;
+        if (!block) {
+            fail("directory rules", "setup failed");
+        } else {
+            uint16_t blocks = (uint16_t)(payload[ENTRY_START_AT + 2] << 8 | payload[ENTRY_START_AT + 3]);
+            payload[ENTRY_START_AT + 2] = (uint8_t)((blocks + 1) >> 8);
+            payload[ENTRY_START_AT + 3] = (uint8_t)(blocks + 1);
+            sigil_segacd_encode_block(payload, block);
+            if (sigil_segacd_list(&vol, &l) != SIGIL_OK || l->entry_count != 1 || !find_entry(l, "AAAA_______") ||
+                l->corrupt_entry_count != 1 || strncmp(l->corrupt_entries[0].name, "BBBB", 4) != 0) {
+                fail("directory rules", "a save running into the block the BIOS holds listed");
+            }
+            sigil_card_listing_free(l);
+        }
+        free(one);
+        free(last);
+        sigil_segacd_volume_free(&vol);
+    }
+    free(held);
+
+    /* Block 0 holds no save data: an entry starting there is corrupt. */
+    if (load_sample(DARK_WIZARD, &vol)) {
+        uint8_t *block = slot_payload(&vol, 0, payload);
+        sigil_card_listing *l = NULL;
+        if (!block) {
+            fail("directory rules", "setup failed");
+        } else {
+            payload[16 + ENTRY_START_AT] = 0;
+            payload[16 + ENTRY_START_AT + 1] = 0;
+            sigil_segacd_encode_block(payload, block);
+            if (sigil_segacd_list(&vol, &l) != SIGIL_OK || l->corrupt_entry_count != 1) {
+                fail("directory rules", "an entry starting at block 0 listed");
+            }
+        }
+        sigil_card_listing_free(l);
+        sigil_segacd_volume_free(&vol);
     }
 
     if (load_sample(DARK_WIZARD, &vol)) {
@@ -658,15 +726,23 @@ static void check_refusals(void) {
  * which the second copy would cover). One flipped bit is corrected; bits 7
  * and 6 of one byte are two symbols of one 8-bit code word, which isn't. */
 static void check_ecc_damage(void) {
-    static const struct { size_t at; uint8_t mask; bool listed; const char *what; } DAMAGE[] = {
-        { 0x1F88, 0x80, true,  "a flipped directory bit was not corrected" },
-        { 0x0048, 0x80, true,  "a flipped data bit was not corrected" },
-        { 0x1F88, 0xC0, false, "a directory block with two errors listed" },
-        { 0x0048, 0xC0, false, "a data block with two errors listed" },
+    static const struct { size_t at; uint8_t mask; bool listed; bool named; const char *what; } DAMAGE[] = {
+        { 0x1F88, 0x80, true,  false, "a flipped directory bit was not corrected" },
+        { 0x0048, 0x80, true,  false, "a flipped data bit was not corrected" },
+        { 0x1F88, 0xC0, false, false, "a directory block with two errors listed" },
+        { 0x0048, 0xC0, false, true,  "a data block with two errors listed" },
     };
     size_t len = 0;
     uint8_t *bytes = sample_bytes(LUNAR, &len);
     if (!bytes) return;
+    char name[SIGIL_CARD_NAME_MAX] = "";
+    sigil_segacd_volume whole = {0};
+    sigil_card_listing *wl = NULL;
+    if (load_bytes(bytes, len, &whole) && sigil_segacd_list(&whole, &wl) == SIGIL_OK && wl->entry_count == 1) {
+        snprintf(name, sizeof(name), "%s", wl->entries[0].name);
+    }
+    sigil_card_listing_free(wl);
+    sigil_segacd_volume_free(&whole);
     for (size_t i = 0; i < sizeof(DAMAGE) / sizeof(DAMAGE[0]); i++) {
         uint8_t *copy = (uint8_t *)malloc(len);
         if (!copy) break;
@@ -682,6 +758,9 @@ static void check_ecc_damage(void) {
             if (l->corrupt_count != 0 || strcmp(md5, "4a51900acc84326c5b32ded2cc51378f") != 0) fail("lunar-ecc-brm", DAMAGE[i].what);
         } else if (l->entry_count != 0 || l->corrupt_count != 1) {
             fail("lunar-ecc-brm", DAMAGE[i].what);
+        } else if (DAMAGE[i].named != (l->corrupt_entry_count == 1) ||
+                   (DAMAGE[i].named && strcmp(l->corrupt_entries[0].name, name) != 0)) {
+            fail("lunar-ecc-brm", "a corrupt save the directory still names isn't named, or one it doesn't is");
         }
         sigil_card_listing_free(l);
         sigil_segacd_volume_free(&vol);

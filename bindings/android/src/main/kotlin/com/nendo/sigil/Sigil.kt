@@ -66,17 +66,26 @@ data class SigilResult(
 /**
  * A failed sigil call; [code] is the C error code and the message is `sigil_strerror` for it.
  * After collect or restore, [problem] names what is at fault when the error has one: the save
- * that didn't fit ([NO_SPACE], with [blocksShort] the blocks it lacked, 0 when a directory slot
- * was missing instead), the companion's save from another region ([REGION]), the damaged file
- * ([DAMAGED]), the unit member the emulator's settings keep no file for ([NO_TARGET]), or the
- * files that could each be the emulator's card, one per line ([AMBIGUOUS]). It is escaped as
- * [SigilCardEntry.name] is.
+ * that didn't fit ([NO_SPACE], with [blocksShort] the blocks it lacked, 0 when the free blocks
+ * were there but a directory slot or a Dreamcast game file's starting blocks weren't), the
+ * companion's save from another region ([REGION]), the damaged file ([DAMAGED]), the unit member
+ * the emulator's settings keep no file for ([NO_TARGET]), the files that could each be the
+ * emulator's card, one per line ([AMBIGUOUS]), or the save Dolphin's GCI folder has no free name
+ * for ([EXISTS]). Each line is escaped as [SigilCardEntry.name] is.
  */
 class SigilException(val code: Int, message: String, val problem: String = "", val blocksShort: Int = 0) :
     Exception(message) {
     companion object {
+        const val INVALID_ARG = -1
+        const val IO = -2
+        const val UNKNOWN_PLATFORM = -3
+        /** The file isn't in a format sigil reads, or a unit holds a corrupt save. */
+        const val UNSUPPORTED_FORMAT = -4
         /** Nothing identified the file, or a unit holds none of the game's saves. */
         const val NOT_FOUND = -5
+        const val NEEDS_KEY = -6
+        const val CRYPTO = -7
+        const val OOM = -8
         /** The saves on disk changed since the last sync; restore wrote nothing. */
         const val CONFLICT = -9
         const val EXISTS = -10
@@ -387,9 +396,8 @@ object Sigil {
     /**
      * [game]'s saves under [saveRoot] gathered into the unit that travels to RomM. Store the
      * result's state once the unit, its holding unit and each changed companion unit reached
-     * RomM. Raises [SigilException] with [SigilException.DAMAGED] when a file holding the saves
-     * is damaged and [repair] is false, or isn't a card sigil can read at all. docs/kotlin.md
-     * defines every input.
+     * RomM. Raises [SigilException] with [SigilException.DAMAGED] and
+     * [SigilException.AMBIGUOUS] as [restore] does. docs/kotlin.md defines every input.
      */
     fun collect(
         game: SigilResult,
@@ -418,8 +426,10 @@ object Sigil {
      * [SigilException.NO_TARGET] when the unit holds a volume the emulator's settings keep no
      * file for; [SigilException.AMBIGUOUS] when more than one file could be the emulator's card;
      * and [SigilException.DAMAGED] when a file the saves go in is damaged and [repair]
-     * is false, or isn't a card sigil can read at all.
-     * The last five name the save, member or files in [SigilException.problem].
+     * is false, isn't a card sigil can read at all, or holds a corrupt save of the game or a
+     * companion (repair changes neither of the last two); [SigilException.EXISTS] when Dolphin's
+     * GCI folder has no free name for a new save.
+     * The last six name the save, member or files in [SigilException.problem].
      */
     fun restore(
         unit: ByteArray,

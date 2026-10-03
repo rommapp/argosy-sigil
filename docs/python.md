@@ -196,7 +196,9 @@ sigil.collect(
     repair: bool = False,                   # Rebuild what SigilDamagedError named, where sigil can.
 ) -> SigilSyncResult
     # Raises SigilDamagedError when a file holding the saves is damaged and repair is False,
-    #   or isn't a card sigil can read at all (repair doesn't change that).
+    #   isn't a card sigil can read at all, or holds a corrupt save of the game or a companion
+    #   (repair changes neither of the last two), and SigilAmbiguousError when more than one
+    #   file could be the emulator's card.
 
 sigil.restore(unit: bytes, ..., overwrite_local: bool = False) -> SigilSyncResult
     # Each of these writes nothing: SigilConflictError (the saves under save_root changed since
@@ -204,8 +206,9 @@ sigil.restore(unit: bytes, ..., overwrite_local: bool = False) -> SigilSyncResul
     #   on yet), SigilNoSpaceError (the saves don't fit; `blocks_short` says by how much),
     #   SigilRegionError (a companion's save from another region), SigilNoTargetError (the
     #   unit holds a volume the emulator's settings keep no file for), SigilAmbiguousError (more
-    #   than one file could be the emulator's card) and SigilDamagedError. The last five name
-    #   the save, member or files in `problem`. c.md, "Sync", has the table.
+    #   than one file could be the emulator's card), SigilDamagedError and SigilExistsError
+    #   (Dolphin's GCI folder has no free name for a new save). The last six name the save,
+    #   member or files in `problem`. c.md, "Sync", has the table.
 
 SigilCompanion(
     game_ids: tuple[str, ...],  # The companion's ids, as for game_ids.

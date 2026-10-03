@@ -380,6 +380,8 @@ static void check_escaped_names(void) {
         { "d\x01\"*:<>\\|\x7f", 11, "69-GUGE-d__01____22____2a____3a____3c____3e____5c____7c____7f__.gci" },
         /* A USA save's name is CP1252: é is U+00E9, 0x80 the euro sign; 0x81 has no character. */
         { "NFSU\xE9\x80\x81", 8, "69-GUGE-NFSU\xC3\xA9\xE2\x82\xAC__81__.gci" },
+        /* 0x8A is Š (U+0160) and 0x83 ƒ (U+0192): two UTF-8 bytes past U+00FF. */
+        { "S\x8A\x83", 3, "69-GUGE-S\xC5\xA0\xC6\x92.gci" },
     };
     size_t len = 0;
     uint8_t *gci = sample("nfsu2-gci", NULL, &len);
@@ -719,6 +721,261 @@ static void check_folder_capacity(const sigil_sync_result *nfsu2, const sigil_sy
  * 2043-block card, 0 to 4 for 59 to 1019 blocks). With an old .raw beside a
  * newer .59.raw, the option picks; without it sigil can't tell which Dolphin
  * reads, so collect and restore refuse naming both. */
+/* A .gci of `blocks` zero blocks for game code `code`, file `name`, on the
+ * NFSU2 sample's header. */
+static uint8_t *gci_of(const uint8_t *like, const char *code, const char *name, uint32_t blocks, size_t *len) {
+    *len = GC_DENTRY_SIZE + (size_t)blocks * GC_BLOCK_SIZE;
+    uint8_t *out = (uint8_t *)calloc(1, *len);
+    if (!out) return NULL;
+    memcpy(out, like, GC_DENTRY_SIZE);
+    memcpy(out, code, 4);
+    memset(out + GCI_NAME, 0, 32);
+    memcpy(out + GCI_NAME, name, strlen(name));
+    out[0x38] = (uint8_t)(blocks >> 8);
+    out[0x39] = (uint8_t)blocks;
+    return out;
+}
+
+static void put_gci(mem_root *root, const uint8_t *like, const char *path, const char *code, const char *name,
+                    uint32_t blocks) {
+    size_t len = 0;
+    uint8_t *gci = gci_of(like, code, name, blocks, &len);
+    if (gci) root_put(root, path, gci, len);
+    free(gci);
+}
+
+/* Restores `unit` as NFSU2 into `root` with `companion` (code, unit) when
+ * given; returns the code, with the result in `*out`. */
+static int restore_nfsu2(mem_root *root, const uint8_t *unit, size_t len, const char *companion_code,
+                         const uint8_t *companion, size_t companion_len, const char *card_size, sigil_sync_result **out) {
+    game g;
+    make_game(&g, root, "dolphin_standalone", NFSU2, "GUGE", NFSU2_ISO);
+    if (card_size) {
+        g.options[0].key = "MemoryCardSize";
+        g.options[0].value = card_size;
+        g.req.save.options = g.options;
+        g.req.save.option_count = 1;
+    }
+    const char *ids[] = { companion_code };
+    sigil_sync_companion c = { ids, 1, companion, companion_len };
+    if (companion_code) {
+        g.req.companions = &c;
+        g.req.companion_count = 1;
+    }
+    return sigil_restore(&g.req, unit, len, out);
+}
+
+/* Dolphin's GCI folder rules, each against what Dolphin does when it loads
+ * the folder (GCMemcardDirectory): its size follows MemoryCardSize; it finds
+ * .gci in any case; it writes over another game's file past ten inserted
+ * 0s; only the disc's own code loads first; a second file of one identity
+ * takes no blocks; other games keep a tenth of the data blocks free, to the
+ * block; and loading stops past 112 saves. */
+static void check_dolphin_folder_rules(const sigil_sync_result *nfsu2) {
+    size_t len = 0;
+    uint8_t *like = sample("nfsu2-gci", NULL, &len);
+    if (!like || !nfsu2) { free(like); fail("dolphin folder", "setup failed"); return; }
+    uint32_t own = (uint32_t)(like[0x38] << 8 | like[0x39]);
+    sigil_sync_result *r = NULL;
+
+    size_t big_len = 0;
+    uint8_t *big = gci_of(like, "GUGE", "NFSU2", 100, &big_len);
+    mem_root root = {0};
+    if (!big || restore_nfsu2(&root, big, big_len, NULL, NULL, 0, "0", &r) != SIGIL_ERR_NO_SPACE || !r ||
+        r->blocks_short != 100 - 59 || root.writes != 0) {
+        fail("dolphin folder", "a save bigger than a 59-block folder card went in");
+    }
+    sigil_sync_result_free(r);
+    r = NULL;
+    root_free(&root);
+    free(big);
+
+    char upper[SIGIL_SAVE_PATH_MAX];
+    snprintf(upper, sizeof(upper), SA_FOLDER "69-GUGE-NFSU2.GCI");
+    memset(&root, 0, sizeof(root));
+    root_put(&root, upper, like, len);
+    game g;
+    make_game(&g, &root, "dolphin_standalone", NFSU2, "GUGE", NFSU2_ISO);
+    if (sigil_collect(&g.req, &r) != SIGIL_OK || !r->data) fail("dolphin folder", "a .GCI file wasn't read");
+    sigil_sync_result_free(r);
+    r = NULL;
+    root_free(&root);
+
+    memset(&root, 0, sizeof(root));
+    char path[SIGIL_SAVE_PATH_MAX];
+    int stem = (int)strlen(nfsu2->artifact) - 4;
+    for (int zeros = 0; zeros <= 10; zeros++) {
+        snprintf(path, sizeof(path), SA_FOLDER "%.*s%.*s.gci", stem, nfsu2->artifact, zeros, "0000000000");
+        put_gci(&root, like, path, "GOTA", "other", 1);
+    }
+    if (restore_nfsu2(&root, nfsu2->data, nfsu2->len, NULL, NULL, 0, NULL, &r) != SIGIL_ERR_EXISTS || !r ||
+        strncmp(r->problem, NFSU2, 8) != 0 || root.writes != 0) {
+        fail("dolphin folder", "the save went over another game's file once every name was taken");
+    }
+    sigil_sync_result_free(r);
+    r = NULL;
+    root_free(&root);
+
+    /* Other games' files: free blocks are 2043 less these and NFSU2's own. */
+    size_t fit_len = 0, over_len = 0;
+    uint32_t reserve = 2043 / 10, room = 2043 - own - 1200;
+    uint8_t *fit = gci_of(like, "GOTE", "comp", room - reserve, &fit_len);
+    uint8_t *over = gci_of(like, "GOTE", "comp", room - reserve + 1, &over_len);
+    for (int which = 0; which < 2 && fit && over; which++) {
+        memset(&root, 0, sizeof(root));
+        put_gci(&root, like, SA_FOLDER "01-GOTB-big.gci", "GOTB", "big", 600);
+        put_gci(&root, like, SA_FOLDER "01-GOTC-big.gci", "GOTC", "big", 600);
+        put_gci(&root, like, SA_FOLDER "01-GOTB-big0.gci", "GOTB", "big", 600);
+        int rc = restore_nfsu2(&root, nfsu2->data, nfsu2->len, "474F5445", which ? over : fit, which ? over_len : fit_len,
+                               NULL, &r);
+        if (which == 0 && rc != SIGIL_OK) {
+            fail("dolphin folder", "a companion leaving exactly the reserve free, past a duplicate identity, was refused");
+        }
+        if (which == 1 && (rc != SIGIL_ERR_NO_SPACE || !r || r->blocks_short != 1)) {
+            fail("dolphin folder", "a companion one block into the reserve went in");
+        }
+        sigil_sync_result_free(r);
+        r = NULL;
+        root_free(&root);
+    }
+    free(fit);
+    free(over);
+
+    /* The disc's code loads first; another id of the game is another game. */
+    memset(&root, 0, sizeof(root));
+    put_gci(&root, like, SA_FOLDER "00-AAAA-big.gci", "AAAA", "big", 1800);
+    big = gci_of(like, "GUGE", "NFSU2", 300, &big_len);
+    if (!big || restore_nfsu2(&root, big, big_len, NULL, NULL, 0, NULL, &r) != SIGIL_OK) {
+        fail("dolphin folder", "the running game's save didn't load ahead of another game's");
+    }
+    sigil_sync_result_free(r);
+    r = NULL;
+    root_free(&root);
+    free(big);
+
+    memset(&root, 0, sizeof(root));
+    put_gci(&root, like, NFSU2_FILE, "GUGE", "NFSU2", own);
+    put_gci(&root, like, SA_FOLDER "ZZ-GOTE-big.gci", "GOTE", "big", 620);
+    make_game(&g, &root, "dolphin_standalone", NFSU2, "GUGE", NFSU2_ISO);
+    const char *both[] = { NFSU2, "474F5445" };
+    g.req.game_ids = both;
+    g.req.game_id_count = 2;
+    sigil_sync_result *two = NULL;
+    if (sigil_collect(&g.req, &two) != SIGIL_OK || !two->data) {
+        fail("dolphin folder", "setup collect failed");
+    } else {
+        mem_root dest = {0};
+        put_gci(&dest, like, SA_FOLDER "01-GOTB-big.gci", "GOTB", "big", 610);
+        put_gci(&dest, like, SA_FOLDER "01-GOTC-big.gci", "GOTC", "big", 610);
+        make_game(&g, &dest, "dolphin_standalone", NFSU2, "GUGE", NFSU2_ISO);
+        g.req.game_ids = both;
+        g.req.game_id_count = 2;
+        if (sigil_restore(&g.req, two->data, two->len, &r) != SIGIL_ERR_NO_SPACE || !r || strstr(r->problem, "big") == NULL) {
+            fail("dolphin folder", "another id's save that Dolphin skips went in as the running game's");
+        }
+        sigil_sync_result_free(r);
+        r = NULL;
+        root_free(&dest);
+    }
+    sigil_sync_result_free(two);
+    root_free(&root);
+
+    /* A game file the restore removes takes no blocks. */
+    memset(&root, 0, sizeof(root));
+    put_gci(&root, like, SA_FOLDER "69-GUGE-AAA.gci", "GUGE", "AAA", 1500);
+    big = gci_of(like, "GUGE", "NFSU2", 700, &big_len);
+    make_game(&g, &root, "dolphin_standalone", NFSU2, "GUGE", NFSU2_ISO);
+    g.req.overwrite_local = 1;
+    if (!big || sigil_restore(&g.req, big, big_len, &r) != SIGIL_OK || root.removes != 1) {
+        fail("dolphin folder", "a game file the restore removes still counted against the folder");
+    }
+    sigil_sync_result_free(r);
+    r = NULL;
+    root_free(&root);
+    free(big);
+
+    /* A card directory holds 127 saves, and Dolphin loads no more of the
+     * running game's: a folder of 128 collects whole, and its unit restores
+     * nowhere, refused naming the 128th in name order with no blocks short,
+     * as a missing directory slot reads. */
+    memset(&root, 0, sizeof(root));
+    for (int i = 0; i < 128; i++) {
+        char name[8];
+        snprintf(name, sizeof(name), "g%03d", i);
+        snprintf(path, sizeof(path), SA_FOLDER "69-GUGE-%s.gci", name);
+        put_gci(&root, like, path, "GUGE", name, 1);
+    }
+    make_game(&g, &root, "dolphin_standalone", NFSU2, "GUGE", NFSU2_ISO);
+    sigil_sync_result *many = NULL;
+    if (sigil_collect(&g.req, &many) != SIGIL_OK || !many->data || zip_count(many->data, many->len) != 128) {
+        fail("dolphin folder", "128 saves of one game didn't collect into one unit");
+    } else {
+        for (int raw = 0; raw < 2; raw++) {
+            mem_root dest = {0};
+            make_game(&g, &dest, "dolphin_standalone", NFSU2, "GUGE", NFSU2_ISO);
+            if (raw) raw_mode(&g);
+            if (sigil_restore(&g.req, many->data, many->len, &r) != SIGIL_ERR_NO_SPACE || !r ||
+                strcmp(r->problem, NFSU2 "-3639-g127") != 0 || r->blocks_short != 0 || dest.writes != 0) {
+                fail("dolphin folder", raw ? "a 128th save went onto a raw card's full directory"
+                                           : "a 128th save of the running game went into the folder");
+            }
+            sigil_sync_result_free(r);
+            r = NULL;
+            root_free(&dest);
+        }
+    }
+    sigil_sync_result_free(many);
+    root_free(&root);
+
+    /* A unit holding two saves of one identity is malformed, next to each
+     * other or 128 saves apart, where the copy lands past the first scratch
+     * card's 127. */
+    static sigil_zip_member members[129];
+    for (size_t gap = 1; gap <= 128; gap += 127) {
+        bool built = true;
+        for (size_t i = 0; i <= gap; i++) {
+            char name[8];
+            snprintf(name, sizeof(name), "g%03zu", i == gap ? (size_t)0 : i);
+            snprintf(members[i].name, sizeof(members[i].name), "m%03zu.gci", i);
+            members[i].data = gci_of(like, "GUGE", name, 1, &members[i].len);
+            built = built && members[i].data;
+        }
+        uint8_t *zip = NULL;
+        size_t zip_len = 0;
+        memset(&root, 0, sizeof(root));
+        if (!built || sigil_zip_store(members, gap + 1, &zip, &zip_len) != SIGIL_OK ||
+            restore_nfsu2(&root, zip, zip_len, NULL, NULL, 0, NULL, &r) != SIGIL_ERR_UNSUPPORTED_FORMAT ||
+            root.writes != 0) {
+            fail("dolphin folder", gap == 1 ? "a unit holding one save twice restored"
+                                            : "a unit holding one save twice, 128 saves apart, restored");
+        }
+        sigil_sync_result_free(r);
+        r = NULL;
+        free(zip);
+        root_free(&root);
+        for (size_t i = 0; i <= gap; i++) free(members[i].data);
+    }
+
+    /* Past 112 loaded saves Dolphin stops loading other games' files. */
+    memset(&root, 0, sizeof(root));
+    for (int i = 0; i < 112; i++) {
+        snprintf(path, sizeof(path), SA_FOLDER "00-O%03d-s.gci", i);
+        char code[5];
+        snprintf(code, sizeof(code), "O%03d", i);
+        put_gci(&root, like, path, code, "s", 1);
+    }
+    size_t one_len = 0;
+    uint8_t *one = gci_of(like, "GOTE", "comp", 1, &one_len);
+    if (!one || restore_nfsu2(&root, nfsu2->data, nfsu2->len, "474F5445", one, one_len, NULL, &r) != SIGIL_ERR_NO_SPACE) {
+        fail("dolphin folder", "a companion past the 112th save went in");
+    }
+    sigil_sync_result_free(r);
+    r = NULL;
+    free(one);
+    root_free(&root);
+    free(like);
+}
+
 static void check_card_size_option(const sigil_sync_result *raw_unit, const sigil_sync_result *fzero) {
     size_t len = 0;
     uint8_t *card = sample("card-raw-usa", NULL, &len);
@@ -1047,6 +1304,7 @@ int main(void) {
     check_directory_full(nfsu2);
     check_card_size_option(raw_unit, folder_unit);
     check_folder_capacity(nfsu2, folder_unit);
+    check_dolphin_folder_rules(nfsu2);
     check_foreign_companions(folder_unit);
     check_folder_filters(folder_unit);
     check_identity_masks();

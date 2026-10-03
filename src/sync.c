@@ -13,7 +13,8 @@ static sigil_sync_result *new_result(void) {
  * through it (a conflict, the save or file at fault); frees it otherwise. */
 static int hand_back(sigil_sync_result *r, int rc, sigil_sync_result **out) {
     bool reports = rc == SIGIL_OK || rc == SIGIL_ERR_CONFLICT || rc == SIGIL_ERR_NO_SPACE || rc == SIGIL_ERR_REGION ||
-                   rc == SIGIL_ERR_DAMAGED || rc == SIGIL_ERR_NO_TARGET || rc == SIGIL_ERR_AMBIGUOUS;
+                   rc == SIGIL_ERR_DAMAGED || rc == SIGIL_ERR_NO_TARGET || rc == SIGIL_ERR_AMBIGUOUS ||
+                   rc == SIGIL_ERR_EXISTS;
     if (reports && r) *out = r;
     else sigil_sync_result_free(r);
     return rc;

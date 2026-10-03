@@ -52,8 +52,11 @@ extern "C" {
 #define SIGIL_ERR_EXISTS              -10  /* a save with that name is already there */
 #define SIGIL_ERR_NO_SPACE            -11  /* the card or volume has too few free blocks or slots */
 #define SIGIL_ERR_UNCOLLECTED         -12  /* a shared volume holds saves no collect has passed on yet */
-#define SIGIL_ERR_DAMAGED             -13  /* a file the saves are in is damaged; the request's `repair` rebuilds it
-                                                 when sigil can, and a card sigil can't read stays refused */
+#define SIGIL_ERR_DAMAGED             -13  /* a file the saves are in is damaged. The request's `repair` rebuilds
+                                                 a damaged structure sigil can rebuild (a .vmp signature, a PCSX2
+                                                 index); a file that isn't a card sigil can read, or one holding a
+                                                 corrupt save that may be the game's or a companion's, stays
+                                                 refused, since reading on would take that save as deleted */
 #define SIGIL_ERR_REGION              -14  /* a save belongs to another region than the game, which can't read it */
 #define SIGIL_ERR_NO_TARGET           -15  /* the unit holds a volume the emulator's settings keep no file for;
                                                  `problem` names it */
@@ -393,7 +396,9 @@ typedef struct {
     const uint8_t        *state;            /* the blob the last call returned, or NULL */
     size_t                state_len;
     int                   overwrite_local;  /* restore: the user chose to replace saves that changed locally */
-    sigil_save_write_fn   write;            /* restore: writes a file of the save root */
+    sigil_save_write_fn   write;            /* restore: writes a file of the save root. Paths given to write and
+                                               remove are relative, with no ".." segment; any other fails the
+                                               restore with SIGIL_ERR_IO before the callback runs */
     void                 *write_ctx;
     const char *const    *claimed;          /* Saturn, Sega CD, Dreamcast: names of saves with no known owner that
                                                the user said belong to this game, as collect reported them in `unowned` */
@@ -437,11 +442,14 @@ typedef struct {
                                                   SIGIL_ERR_NO_TARGET, the unit member with no file; with
                                                   SIGIL_ERR_AMBIGUOUS, the candidate files, one per line */
     uint32_t  blocks_short;                    /* SIGIL_ERR_NO_SPACE: blocks the save lacked, in the card's block
-                                                  size; 0 when a directory slot was missing instead */
+                                                  size; 0 when there were enough free blocks but no
+                                                  directory slot, or other saves hold the blocks a
+                                                  Dreamcast game file must start at */
 } sigil_sync_result;
 
-/* Gathers the game's saves into one unit. Returns SIGIL_ERR_DAMAGED when a structure holding
- * them is damaged and req->repair is 0; *out then names the file in `problem`. */
+/* Gathers the game's saves into one unit. Returns SIGIL_ERR_DAMAGED as restore does, and
+ * SIGIL_ERR_AMBIGUOUS when more than one file could be the emulator's card; *out then names
+ * the file or files in `problem`. */
 SIGIL_API int  sigil_collect(const sigil_sync_request *req, sigil_sync_result **out);
 /* Puts the unit `unit` back into the save root through req->write, then reads it back to verify.
  * Each of these refusals writes nothing:
@@ -452,13 +460,18 @@ SIGIL_API int  sigil_collect(const sigil_sync_request *req, sigil_sync_result **
  *   SIGIL_ERR_NO_SPACE     the saves don't fit; `problem` names the save, `blocks_short` its shortfall.
  *   SIGIL_ERR_REGION       a GameCube companion's save belongs to another region than the game;
  *                          `problem` names it.
- *   SIGIL_ERR_DAMAGED      a file the saves go in is damaged and req->repair is 0, or it isn't a
- *                          card sigil can read at all; `problem` names the file.
+ *   SIGIL_ERR_DAMAGED      a file the saves go in is damaged and req->repair is 0; it isn't a
+ *                          card sigil can read at all; it holds a corrupt save that may be the
+ *                          game's or a companion's; or, managed, it is a shared volume holding any
+ *                          corrupt save, which a swap would drop. Only the first lifts with
+ *                          repair. `problem` names the file.
  *   SIGIL_ERR_NO_TARGET    the unit holds a volume the emulator's settings keep no file for (a cart,
  *                          a VMU port); `problem` names the unit member.
  *   SIGIL_ERR_AMBIGUOUS    more than one file could be the emulator's card (Dolphin raw cards of two
  *                          sizes) and the options don't say which; `problem` names them, one per line.
  *                          Collect refuses the same way.
+ *   SIGIL_ERR_EXISTS       Dolphin's GCI folder holds other games' files under every name Dolphin
+ *                          would give a new save, so it would write over one; `problem` names the save.
  * With these, *out is set as well; free it as usual. */
 SIGIL_API int  sigil_restore(const sigil_sync_request *req, const uint8_t *unit, size_t unit_len,
                              sigil_sync_result **out);

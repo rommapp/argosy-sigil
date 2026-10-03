@@ -38,6 +38,14 @@ int main(void) {
         expect("every byte round-trips", sigil_save_name_unescape(escaped, back, sizeof(back)) && strcmp(back, every) == 0);
     }
 
+    sigil_save_lines_escape("MemoryCardA.USA.raw\nMemoryCardA.USA.59%.raw", escaped, sizeof(escaped));
+    expect("lines escape one by one and keep their breaks",
+           strcmp(escaped, "MemoryCardA.USA.raw\nMemoryCardA.USA.59%25.raw") == 0);
+    sigil_save_lines_escape("A\xB1", escaped, sizeof(escaped));
+    expect("one line escapes as a name", strcmp(escaped, "A%B1") == 0);
+    sigil_save_lines_escape("", escaped, sizeof(escaped));
+    expect("no problem stays empty", escaped[0] == '\0');
+
     expect("a malformed escape is refused", !sigil_save_name_unescape("BAD%G1", back, sizeof(back)));
     expect("a truncated escape is refused", !sigil_save_name_unescape("BAD%4", back, sizeof(back)));
 
