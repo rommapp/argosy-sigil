@@ -231,16 +231,28 @@ int sigil_sync_load_bytes(const sigil_sync_kind *kind, const uint8_t *data, size
     return kind->load(&io, device, card, format);
 }
 
+/* A local card naming a corrupt save of the game or a companion: reading on
+ * would take that save as deleted. */
+static bool own_save_corrupt(const sigil_sync_ctx *x, const sigil_card_listing *listing) {
+    for (size_t i = 0; i < listing->corrupt_entry_count && x->kind->has_ids; i++) {
+        const char *owner = listing->corrupt_entries[i].owner_id;
+        if (sigil_sync_owned_by_game(x->req, owner) || sigil_sync_companion_of(x->req, owner) != SIZE_MAX) return true;
+    }
+    return false;
+}
+
 /* On a card platform the ids say whose a save is; on a volume platform every
  * save is taken, as the game's or the companion's (the caller works out a
  * local volume's owners). A unit (index SIZE_MAX) holding a corrupt save is
- * refused. */
+ * refused; a local card whose save of the game or a companion is corrupt or
+ * doesn't extract is SIGIL_ERR_DAMAGED. */
 int sigil_sync_add_card_saves(const sigil_sync_ctx *x, const void *card, int format, int device, size_t index,
                               size_t who, sigil_sync_saves *out) {
     sigil_card_listing *listing = NULL;
     int rc = x->kind->list(card, format, &listing);
     if (rc != SIGIL_OK) return rc;
     if (listing->corrupt_count && index == SIZE_MAX) rc = SIGIL_ERR_UNSUPPORTED_FORMAT;
+    if (who == SYNC_WHO_LOCAL && own_save_corrupt(x, listing)) rc = SIGIL_ERR_DAMAGED;
     for (size_t i = 0; i < listing->entry_count && rc == SIGIL_OK; i++) {
         const sigil_card_entry *e = &listing->entries[i];
         size_t companion = SIZE_MAX;
@@ -256,7 +268,10 @@ int sigil_sync_add_card_saves(const sigil_sync_ctx *x, const void *card, int for
         }
         sigil_sync_save *o = sigil_sync_saves_push(out);
         if (!o) { rc = SIGIL_ERR_OOM; break; }
-        if (x->kind->extract(card, e, &o->save) != SIGIL_OK) continue;
+        if (x->kind->extract(card, e, &o->save) != SIGIL_OK) {
+            if (who == SYNC_WHO_LOCAL) rc = SIGIL_ERR_DAMAGED;
+            continue;
+        }
         if (x->kind->save_key) x->kind->save_key(o->save, o->name);
         else snprintf(o->name, sizeof(o->name), "%s", e->name);
         if (sigil_sync_saves_has(out, o->name, device)) {
@@ -478,7 +493,7 @@ static int unit_saves(const sigil_sync_ctx *x, const uint8_t *unit, size_t len, 
 }
 
 int sigil_sync_request_saves(const sigil_sync_ctx *x, const uint8_t *unit, size_t len, sigil_sync_saves *out,
-                             size_t sizes[SIGIL_DEVICE_COUNT]) {
+                             size_t sizes[SIGIL_DEVICE_COUNT], sigil_sync_result *r) {
     sigil_sync_saves_init(out, x->kind);
     memset(sizes, 0, SIGIL_DEVICE_COUNT * sizeof(size_t));
     int rc = unit_saves(x, unit, len, SYNC_WHO_GAME, out, sizes);
@@ -488,7 +503,9 @@ int sigil_sync_request_saves(const sigil_sync_ctx *x, const uint8_t *unit, size_
     }
     for (size_t i = 0; i < out->count && rc == SIGIL_OK && x->kind->foreign; i++) {
         const sigil_sync_save *o = &out->items[i];
-        if (o->owner == SYNC_OWN_COMPANION && x->kind->foreign(x->req, o->save)) rc = SIGIL_ERR_INVALID_ARG;
+        if (o->owner != SYNC_OWN_COMPANION || !x->kind->foreign(x->req, o->save)) continue;
+        snprintf(r->problem, sizeof(r->problem), "%s", o->name);
+        rc = SIGIL_ERR_REGION;
     }
     if (rc != SIGIL_OK) sigil_sync_saves_free(out);
     return rc;
@@ -496,25 +513,18 @@ int sigil_sync_request_saves(const sigil_sync_ctx *x, const uint8_t *unit, size_
 
 /* ---- placing ------------------------------------------------------------------- */
 
-/* The blocks it lacked are the blocks it takes on an empty card like this
- * one, less the card's free blocks; 0 when the card has the blocks and lacks
- * a directory slot. */
-void sigil_sync_note_overflow(const sigil_sync_ctx *x, const void *card, int format, int device,
-                              const sigil_sync_save *o, sigil_sync_result *r) {
-    snprintf(r->overflow, sizeof(r->overflow), "%s", o->name);
-    r->overflow_blocks = 0;
-    sigil_card_listing *have = NULL, *need = NULL;
-    void *empty = NULL;
-    int empty_format = 0;
-    if (x->kind->list(card, format, &have) == SIGIL_OK &&
-        x->kind->blank(&empty, &empty_format, device, x->kind->size(card), SIGIL_FORM_RAW, card) == SIGIL_OK &&
-        x->kind->inject(empty, o->save) == SIGIL_OK && x->kind->list(empty, empty_format, &need) == SIGIL_OK &&
-        need->entry_count == 1 && need->entries[0].blocks > have->free_blocks) {
-        r->overflow_blocks = need->entries[0].blocks - have->free_blocks;
+/* The blocks it lacked are the blocks it takes on this card, less the card's
+ * free blocks; 0 when the card has the blocks and lacks a directory slot. */
+void sigil_sync_note_overflow(const sigil_sync_ctx *x, const void *card, int format, const sigil_sync_save *o,
+                              sigil_sync_result *r) {
+    snprintf(r->problem, sizeof(r->problem), "%s", o->name);
+    r->blocks_short = 0;
+    sigil_card_listing *have = NULL;
+    uint32_t cost = x->kind->cost(card, o->save);
+    if (x->kind->list(card, format, &have) == SIGIL_OK && cost > have->free_blocks) {
+        r->blocks_short = cost - have->free_blocks;
     }
     sigil_card_listing_free(have);
-    sigil_card_listing_free(need);
-    if (empty) x->kind->free_card(empty);
 }
 
 int sigil_sync_write_and_verify(const sigil_sync_ctx *x, const char *path, int device, const void *card,
@@ -533,6 +543,7 @@ int sigil_sync_write_and_verify(const sigil_sync_ctx *x, const char *path, int d
     int format = 0;
     rc = x->kind->load(io, device, &back, &format);
     sigil_io_close(io);
+    if (rc == SIGIL_OK && x->kind->check && x->kind->check(back) != SIGIL_OK) rc = SIGIL_ERR_IO;
     for (size_t i = 0; i < placed->count && rc == SIGIL_OK; i++) {
         if (placed->items[i].card != index) continue;
         if (x->kind->verify(back, placed->items[i].save) != SIGIL_OK) rc = SIGIL_ERR_IO;

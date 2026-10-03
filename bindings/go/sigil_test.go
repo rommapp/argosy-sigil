@@ -272,6 +272,52 @@ func TestGameCubeFolderRestoreRemovesSavesTheUnitLacks(t *testing.T) {
 	}
 }
 
+// copyAceFolder copies the Ace Combat 04 save folder sample into dst.
+func copyAceFolder(t *testing.T, dst string) {
+	t.Helper()
+	samples := filepath.Join("..", "..", "tests", "fixtures", "saves", "ps2", "files", "ace-combat-04-aethersx2", "BASLUS-20152AC04")
+	files, err := os.ReadDir(samples)
+	if err != nil || len(files) == 0 {
+		t.Skip("PS2 save samples missing")
+	}
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		data, err := os.ReadFile(filepath.Join(samples, f.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dst, f.Name()), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestPCSX2FolderRestoreRemovesADroppedFolderAndItsDirectory(t *testing.T) {
+	source := t.TempDir()
+	copyAceFolder(t, filepath.Join(source, "memcards", "Mcd001.ps2", "BASLUS-20152AC04"))
+	ace := PersistedResult("ps2", "SLUS-20152", "SLUS-20152", 0)
+	unit, err := Collect(ace, "pcsx2_standalone", "Ace Combat 04 (USA).iso", source, nil)
+	if err != nil || unit.Data == nil {
+		t.Fatalf("collect = %+v, %v", unit, err)
+	}
+	target := t.TempDir()
+	card := filepath.Join(target, "memcards", "Mcd001.ps2")
+	dropped := filepath.Join(card, "BASLUS-20152XX")
+	copyAceFolder(t, dropped)
+	if err := os.WriteFile(filepath.Join(card, "_pcsx2_superblock"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Restore(unit.Data, ace, "pcsx2_standalone", "Ace Combat 04 (USA).iso", target,
+		&SyncOptions{OverwriteLocal: true, Repair: true}); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if _, err := os.Stat(dropped); !os.IsNotExist(err) {
+		t.Fatalf("the dropped folder's directory is still there: %v", err)
+	}
+}
+
 func TestPCSX2FolderCardSyncsThroughTheDefaultListing(t *testing.T) {
 	samples := filepath.Join("..", "..", "tests", "fixtures", "saves", "ps2", "files", "ace-combat-04-aethersx2", "BASLUS-20152AC04")
 	files, err := os.ReadDir(samples)
@@ -307,11 +353,18 @@ func TestPCSX2FolderCardSyncsThroughTheDefaultListing(t *testing.T) {
 		t.Fatal(err)
 	}
 	restored, err := Restore(unit.Data, ace, "pcsx2_standalone", "Ace Combat 04 (USA).iso", target, nil)
-	if err != nil || restored.IdentityHash != unit.IdentityHash {
+	if err != nil {
 		t.Fatalf("restore = %+v, %v", restored, err)
 	}
 	if info, err := os.Stat(filepath.Join(card, "_pcsx2_superblock")); err != nil || info.Size() != 0x2000 {
 		t.Fatalf("superblock = %v, %v; want 0x2000 bytes", info, err)
+	}
+	if _, err := os.Stat(filepath.Join(card, "BASLUS-20152AC04", "_pcsx2_index")); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+	back, err := Collect(ace, "pcsx2_standalone", "Ace Combat 04 (USA).iso", target, &SyncOptions{State: restored.State})
+	if err != nil || back.IdentityHash != unit.IdentityHash || back.Changed {
+		t.Fatalf("collect back = %+v, %v; want the unit's saves, unchanged", back, err)
 	}
 
 	meta := filepath.Join(card, "BASLUS-20152AC04", "_pcsx2_meta")
@@ -371,8 +424,8 @@ func TestCompanionSavesGoOnTheCardAndComeBackAsTheirUnit(t *testing.T) {
 
 	write(full, "Sequel.srm", ps1Card([]cardSave{{"BASLUS-99999OTHER", 15}}))
 	_, err = Restore(second.Data, sequel, "pcsx_rearmed", "Sequel.cue", full, &SyncOptions{OverwriteLocal: true})
-	var overflow *OverflowError
-	if !errors.Is(err, ErrNoSpace) || !errors.As(err, &overflow) || overflow.Name != "BASLUS-01334LEGENDS2" || overflow.Blocks != 1 {
+	var overflow *ProblemError
+	if !errors.Is(err, ErrNoSpace) || !errors.As(err, &overflow) || overflow.Problem != "BASLUS-01334LEGENDS2" || overflow.BlocksShort != 1 {
 		t.Fatalf("err = %v, want an overflow naming the sequel's save", err)
 	}
 }

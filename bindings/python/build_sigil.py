@@ -42,6 +42,10 @@ ffibuilder.cdef(
 #define SIGIL_ERR_EXISTS ...
 #define SIGIL_ERR_NO_SPACE ...
 #define SIGIL_ERR_UNCOLLECTED ...
+#define SIGIL_ERR_DAMAGED ...
+#define SIGIL_ERR_REGION ...
+#define SIGIL_ERR_NO_TARGET ...
+#define SIGIL_ERR_AMBIGUOUS ...
 
 #define SIGIL_FLAG_FILENAME_FALLBACK ...
 #define SIGIL_FLAG_3DS_ALLOW_HOMEBREW ...
@@ -235,6 +239,8 @@ typedef struct {
     uint32_t          corrupt_count;
     sigil_card_entry *entries;
     size_t            entry_count;
+    sigil_card_entry *corrupt_entries;
+    size_t            corrupt_entry_count;
 } sigil_card_listing;
 
 int  sigil_card_list(const sigil_io *io, sigil_card_listing **out);
@@ -283,6 +289,7 @@ typedef struct {
     sigil_save_remove_fn  remove;
     const sigil_sync_companion *companions;
     size_t                companion_count;
+    int                   repair;
 } sigil_sync_request;
 
 typedef struct {
@@ -304,8 +311,8 @@ typedef struct {
     int       restore_again;
     sigil_sync_companion_result *companions;
     size_t    companion_count;
-    char      overflow[64];
-    uint32_t  overflow_blocks;
+    char      problem[...];
+    uint32_t  blocks_short;
 } sigil_sync_result;
 
 int  sigil_collect(const sigil_sync_request *req, sigil_sync_result **out);

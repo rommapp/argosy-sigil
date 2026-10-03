@@ -17,6 +17,13 @@ typedef int (*sigil_card_reader)(const sigil_io *io, sigil_card_listing **out);
 sigil_card_listing *sigil_card_listing_new(int format, size_t capacity);
 
 /**
+ * Counts a save left out as corrupt. When the card still names it, `name`
+ * and `owner_id` (either may be NULL) go in corrupt_entries with `first_block`.
+ */
+void sigil_card_listing_corrupt(sigil_card_listing *listing, const char *name, const char *owner_id,
+                                uint32_t first_block);
+
+/**
  * The product code a PS1 or PS2 save name carries, as disc identification
  * reports it: "BASLUSP01041..." and "BASLUS-01041..." both give
  * "SLUS-01041". Empty when the name has no region prefix and code.

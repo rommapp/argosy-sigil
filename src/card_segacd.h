@@ -115,6 +115,10 @@ int sigil_segacd_extract(const sigil_segacd_volume *vol, uint32_t first_block,
  */
 int sigil_segacd_inject(sigil_segacd_volume *vol, const uint8_t *unit, size_t len);
 
+/** Blocks sigil_segacd_inject takes for `unit` on `vol`, a new directory block included; 0 when
+ * `unit` isn't one save or the volume's counts don't read. */
+uint32_t sigil_segacd_cost(const sigil_segacd_volume *vol, const uint8_t *unit, size_t len);
+
 /**
  * Removes the save starting at `first_block` the way the BIOS does: later
  * saves and their entries move down to close the gap, the freed data blocks

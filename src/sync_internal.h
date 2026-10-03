@@ -51,7 +51,9 @@ typedef struct {
     /* Reads a card or volume holding `device` (SIGIL_DEVICE_NONE on card platforms). */
     int    (*load)(const sigil_io *io, int device, void **card, int *format);
     /* An empty card or volume for `device`: the size and stored form of `like`
-     * when given, else `size` collapsed bytes stored in `form`. */
+     * when given (a VMU also keeps its layout), else `size` collapsed bytes
+     * stored in `form`. A kind with one card size gives that card whatever
+     * `size` says. */
     int    (*blank)(void **card, int *format, int device, size_t size, int form, const void *like);
     void   (*free_card)(void *card);
     size_t (*size)(const void *card);
@@ -60,16 +62,24 @@ typedef struct {
     int    (*extract)(const void *card, const sigil_card_entry *entry, void **save);
     void   (*free_save)(void *save);
     int    (*inject)(void *card, const void *save);
+    /* The blocks inject takes for `save` on `card`, in the unit its listing
+     * counts free_blocks in, a directory block it adds included. */
+    uint32_t (*cost)(const void *card, const void *save);
     int    (*remove)(void *card, const sigil_card_entry *entry);
     int    (*verify)(const void *card, const void *save);
     int    (*image)(const void *card, uint8_t **out, size_t *len);
     int    (*identity)(const void *save, char out[33]);
-    bool   (*writable)(int format);
+    /* Optional. SIGIL_ERR_DAMAGED when the card as read is damaged in a way
+     * writing it again repairs (a .vmp whose signature doesn't match). */
+    int    (*check)(const void *card);
     /* Optional. The name a save is known by in units and the state, when the
      * card's name alone doesn't identify it (GameCube: game, maker, file). */
     void   (*save_key)(const void *save, char out[SIGIL_CARD_NAME_MAX]);
-    /* Optional. The form a new card for this game is formatted in. */
-    int    (*new_form)(const sigil_sync_request *req);
+    /* Optional. The form a new card at `path` for this game is formatted in. */
+    int    (*new_form)(const sigil_sync_request *req, const char *path);
+    /* Optional. A unit is a raw card: when the game's card file is in another
+     * form (a .vmp), the unit is named <stem> with this extension instead. */
+    const char *raw_ext;
     /* The unit is the game's saves as files instead of a card: each travels
      * under file_name and reads back through file_to_save. */
     bool        save_files;
@@ -104,7 +114,6 @@ void sigil_sync_blob_free(void *save);
 int sigil_sync_copy_image(const uint8_t *card, size_t size, uint8_t **out, size_t *len);
 size_t sigil_sync_no_size(const void *card);
 size_t sigil_sync_no_unit_size(int device, const void *source);
-bool sigil_sync_any_format(int format);
 
 /* ---- request and saves (sync_units.c) ---------------------------------------- */
 
@@ -198,13 +207,16 @@ typedef struct {
 int sigil_sync_build_unit(const sigil_sync_saves *saves, int owner, const sigil_sync_sources *src, bool holding,
                           const char *stem, uint8_t **out, size_t *len, int *shape,
                           char artifact[SIGIL_SAVE_ENTRY_MAX], char content[33]);
-/** The game's unit, then each companion's unit given, into `out`; `sizes` gets each device's volume size. */
+/**
+ * The game's unit, then each companion's unit given, into `out`; `sizes` gets each device's volume size.
+ * SIGIL_ERR_REGION, naming the save in r->problem, for a companion's save the game can't read.
+ */
 int sigil_sync_request_saves(const sigil_sync_ctx *x, const uint8_t *unit, size_t len, sigil_sync_saves *out,
-                             size_t sizes[SIGIL_DEVICE_COUNT]);
+                             size_t sizes[SIGIL_DEVICE_COUNT], sigil_sync_result *r);
 
-/** Names the save that didn't fit on `card` and the blocks it lacked in the result. */
-void sigil_sync_note_overflow(const sigil_sync_ctx *x, const void *card, int format, int device,
-                              const sigil_sync_save *o, sigil_sync_result *r);
+/** Names the save that didn't fit on `card` in r->problem and the blocks it lacked in r->blocks_short. */
+void sigil_sync_note_overflow(const sigil_sync_ctx *x, const void *card, int format, const sigil_sync_save *o,
+                              sigil_sync_result *r);
 /** Writes `card` to `path`, reads it back and verifies every save in `placed` on card `index`. */
 int sigil_sync_write_and_verify(const sigil_sync_ctx *x, const char *path, int device, const void *card,
                                 const sigil_sync_saves *placed, size_t index);
@@ -230,22 +242,33 @@ typedef struct {
     sigil_sync_card_file   files[SYNC_MAX_CARD_FILES];
     size_t                 count;
     char                   primary_path[SIGIL_SAVE_PATH_MAX];   /* where the game's own card goes */
+    char                   problem[SIGIL_SAVE_PATH_MAX];        /* the damaged file, with SIGIL_ERR_DAMAGED */
 } sigil_sync_cards;
 
 void sigil_sync_cards_free(sigil_sync_cards *s);
 /** The game's card files and the shared ones beside them; `artifact` gets the unit's name. */
 int sigil_sync_gather_cards(const sigil_sync_ctx *x, sigil_sync_cards *s, char artifact[SIGIL_SAVE_ENTRY_MAX]);
-/** The game's and its companions' saves across the cards, the first card holding a name winning. */
-int sigil_sync_gather_card_saves(const sigil_sync_ctx *x, const sigil_sync_cards *s, sigil_sync_saves *out);
+/** The game's and its companions' saves across the cards, the first card holding a name winning.
+ * SIGIL_ERR_DAMAGED, naming the card in s->problem, when one of those saves is corrupt there. */
+int sigil_sync_gather_card_saves(const sigil_sync_ctx *x, sigil_sync_cards *s, sigil_sync_saves *out);
 int sigil_sync_place_on_cards(const sigil_sync_ctx *x, sigil_sync_cards *cards, sigil_sync_saves *incoming,
                               sigil_sync_result *r);
 
 /** The listing holds files under `dir`/: it is a PCSX2 folder card. */
 bool sigil_sync_is_folder_card(const sigil_sync_request *req, const char *dir);
-/** Loads folder card `dir` into the next slot of `s` as a card holding the save folders the game sees. */
+/**
+ * Loads folder card `dir` into the next slot of `s` as a card holding the save folders the game sees.
+ * SIGIL_ERR_DAMAGED, naming the index in s->problem, for a folder whose _pcsx2_index doesn't parse
+ * unless the request says to repair; with repair, that folder is packed without its index.
+ */
 int sigil_sync_load_folder_card(const sigil_sync_ctx *x, const char *dir, sigil_sync_cards *s);
-/** Files a restore to folder card `f` would remove. */
-int sigil_sync_folder_card_removals(const sigil_sync_ctx *x, const sigil_sync_card_file *f, size_t *removes);
+/**
+ * Checks a restore to folder card `f` can run: `removes` gets the files it would remove, and
+ * SIGIL_ERR_DAMAGED, naming the superblock in r->problem, when the card holds saves behind an
+ * unusable superblock and the request doesn't say to repair.
+ */
+int sigil_sync_check_folder_card(const sigil_sync_ctx *x, const sigil_sync_card_file *f, size_t *removes,
+                                 sigil_sync_result *r);
 /** Writes folder card `f`: its superblock when needed, the folders the restore rewrites, and removals. */
 int sigil_sync_write_folder_card(const sigil_sync_ctx *x, const sigil_sync_card_file *f);
 
@@ -263,8 +286,10 @@ int sigil_sync_save_folder_of(const sigil_sync_ctx *x, char folder[SIGIL_SAVE_PA
 /** The game's and companions' saves in `folder`; a second file with an identity already seen goes in `stale`. */
 int sigil_sync_folder_saves(const sigil_sync_ctx *x, const char *folder, sigil_sync_saves *out,
                             sigil_sync_paths *stale);
+/** Writes the incoming saves into `folder` and removes the game's files they replace. SIGIL_ERR_NO_SPACE,
+ * writing nothing, when Dolphin wouldn't load one of them; r->problem and r->blocks_short say which. */
 int sigil_sync_place_in_folder(const sigil_sync_ctx *x, const char *folder, const sigil_sync_saves *local,
-                               const sigil_sync_paths *stale, const sigil_sync_saves *incoming);
+                               const sigil_sync_paths *stale, const sigil_sync_saves *incoming, sigil_sync_result *r);
 
 /* ---- collect and restore (sync.c) --------------------------------------------- */
 

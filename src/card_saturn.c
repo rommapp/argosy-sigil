@@ -608,6 +608,12 @@ static void write_entry(sigil_saturn_volume *vol, const uint32_t *chosen, uint32
     }
 }
 
+uint32_t sigil_saturn_cost(const sigil_saturn_volume *vol, const uint8_t *bup, size_t len) {
+    if (!vol || !vol->block_size || !bup_valid(bup, len)) return 0;
+    uint64_t need = blocks_needed(vol->block_size, sigil_read_be32(bup + BUP_SIZE));
+    return need > UINT32_MAX ? UINT32_MAX : (uint32_t)need;
+}
+
 int sigil_saturn_inject(sigil_saturn_volume *vol, const uint8_t *bup, size_t len) {
     if (!vol || !vol->data) return SIGIL_ERR_INVALID_ARG;
     if (!bup_valid(bup, len)) return SIGIL_ERR_UNSUPPORTED_FORMAT;

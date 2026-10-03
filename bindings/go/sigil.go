@@ -249,6 +249,10 @@ var (
 	ErrExists            = errors.New("sigil: a save with that name already exists")
 	ErrNoSpace           = errors.New("sigil: not enough free space")
 	ErrUncollected       = errors.New("sigil: the volume holds saves not collected yet")
+	ErrDamaged           = errors.New("sigil: a save structure is damaged")
+	ErrRegion            = errors.New("sigil: the save is from another region")
+	ErrNoTarget          = errors.New("sigil: the emulator's settings keep no file for a volume in the unit")
+	ErrAmbiguous         = errors.New("sigil: more than one file could be the emulator's card")
 )
 
 func errFromCode(rc C.int) error {
@@ -279,6 +283,14 @@ func errFromCode(rc C.int) error {
 		return ErrNoSpace
 	case C.SIGIL_ERR_UNCOLLECTED:
 		return ErrUncollected
+	case C.SIGIL_ERR_DAMAGED:
+		return ErrDamaged
+	case C.SIGIL_ERR_REGION:
+		return ErrRegion
+	case C.SIGIL_ERR_NO_TARGET:
+		return ErrNoTarget
+	case C.SIGIL_ERR_AMBIGUOUS:
+		return ErrAmbiguous
 	default:
 		return fmt.Errorf("sigil: error %d", int(rc))
 	}
@@ -769,13 +781,29 @@ type CardEntry struct {
 }
 
 // CardListing is the saves on a memory card and the space left on it.
+// CorruptEntries are the saves left out as corrupt that the card still names,
+// with Blocks 0.
 type CardListing struct {
-	Format       CardFormat
-	TotalBlocks  uint32
-	FreeBlocks   uint32
-	FreeSlots    uint32
-	CorruptCount uint32
-	Entries      []CardEntry
+	Format         CardFormat
+	TotalBlocks    uint32
+	FreeBlocks     uint32
+	FreeSlots      uint32
+	CorruptCount   uint32
+	Entries        []CardEntry
+	CorruptEntries []CardEntry
+}
+
+func cardEntries(entries *C.sigil_card_entry, count C.size_t) []CardEntry {
+	var out []CardEntry
+	for _, e := range unsafe.Slice(entries, int(count)) {
+		out = append(out, CardEntry{
+			Name:       C.GoString(&e.name[0]),
+			OwnerID:    C.GoString(&e.owner_id[0]),
+			Blocks:     uint32(e.blocks),
+			FirstBlock: uint32(e.first_block),
+		})
+	}
+	return out
 }
 
 // ListCard returns the saves on the memory card at path. The card format is
@@ -795,22 +823,15 @@ func ListCard(path string) (*CardListing, error) {
 	}
 	defer C.sigil_card_listing_free(clisting)
 
-	listing := &CardListing{
-		Format:       CardFormat(clisting.format),
-		TotalBlocks:  uint32(clisting.total_blocks),
-		FreeBlocks:   uint32(clisting.free_blocks),
-		FreeSlots:    uint32(clisting.free_slots),
-		CorruptCount: uint32(clisting.corrupt_count),
-	}
-	for _, e := range unsafe.Slice(clisting.entries, int(clisting.entry_count)) {
-		listing.Entries = append(listing.Entries, CardEntry{
-			Name:       C.GoString(&e.name[0]),
-			OwnerID:    C.GoString(&e.owner_id[0]),
-			Blocks:     uint32(e.blocks),
-			FirstBlock: uint32(e.first_block),
-		})
-	}
-	return listing, nil
+	return &CardListing{
+		Format:         CardFormat(clisting.format),
+		TotalBlocks:    uint32(clisting.total_blocks),
+		FreeBlocks:     uint32(clisting.free_blocks),
+		FreeSlots:      uint32(clisting.free_slots),
+		CorruptCount:   uint32(clisting.corrupt_count),
+		Entries:        cardEntries(clisting.entries, clisting.entry_count),
+		CorruptEntries: cardEntries(clisting.corrupt_entries, clisting.corrupt_entry_count),
+	}, nil
 }
 
 // SyncOptions are the optional inputs to Collect and Restore. Listing
@@ -826,6 +847,7 @@ type SyncOptions struct {
 	OverwriteLocal bool
 	Claimed        []string    // Saturn, Sega CD: names from Unowned the user said belong to this game.
 	Companions     []Companion // Games whose saves this game reads, in the order they go on.
+	Repair         bool        // Rebuild what ErrDamaged named, where sigil can.
 }
 
 // Companion is a game whose saves this game reads, as a sequel reads its
@@ -845,19 +867,27 @@ type CompanionResult struct {
 	Changed      bool
 }
 
-// OverflowError is the ErrNoSpace Restore returns when the saves don't fit:
-// Name is the save that didn't, Blocks the blocks it lacked (0 when a
-// directory slot was missing instead).
-type OverflowError struct {
-	Name   string
-	Blocks uint32
+// ProblemError is an error of Collect or Restore that names what is at fault:
+// the save that didn't fit (ErrNoSpace, with BlocksShort the blocks it lacked,
+// 0 when a directory slot was missing instead), the companion's save from
+// another region (ErrRegion), the damaged file (ErrDamaged), the unit member
+// the emulator's settings keep no file for (ErrNoTarget), or the files that
+// could each be the emulator's card, one per line (ErrAmbiguous). It matches
+// its error with errors.Is.
+type ProblemError struct {
+	Err         error
+	Problem     string
+	BlocksShort uint32
 }
 
-func (e *OverflowError) Error() string {
-	return fmt.Sprintf("sigil: not enough free space for %s (%d blocks short)", e.Name, e.Blocks)
+func (e *ProblemError) Error() string {
+	if e.BlocksShort > 0 {
+		return fmt.Sprintf("%v: %s (%d blocks short)", e.Err, e.Problem, e.BlocksShort)
+	}
+	return fmt.Sprintf("%v: %s", e.Err, e.Problem)
 }
 
-func (e *OverflowError) Unwrap() error { return ErrNoSpace }
+func (e *ProblemError) Unwrap() error { return e.Err }
 
 // SyncResult is what Collect or Restore produced. Store State and pass it to
 // the next call for this game.
@@ -923,6 +953,9 @@ func runSync(unit []byte, game *Result, core, contentPath, saveRoot string, opts
 	if opts.OverwriteLocal {
 		creq.overwrite_local = 1
 	}
+	if opts.Repair {
+		creq.repair = 1
+	}
 	if len(opts.State) > 0 {
 		state := a.alloc(C.size_t(len(opts.State)))
 		copy(unsafe.Slice((*byte)(state), len(opts.State)), opts.State)
@@ -943,10 +976,10 @@ func runSync(unit []byte, game *Result, core, contentPath, saveRoot string, opts
 	if cres != nil {
 		defer C.sigil_sync_result_free(cres)
 	}
-	if rc == C.SIGIL_ERR_NO_SPACE && cres != nil {
-		return nil, &OverflowError{Name: C.GoString(&cres.overflow[0]), Blocks: uint32(cres.overflow_blocks)}
-	}
 	if err := errFromCode(rc); err != nil {
+		if cres != nil && cres.problem[0] != 0 {
+			return nil, &ProblemError{Err: err, Problem: C.GoString(&cres.problem[0]), BlocksShort: uint32(cres.blocks_short)}
+		}
 		return nil, err
 	}
 	out := &SyncResult{
@@ -991,9 +1024,12 @@ func Collect(game *Result, core, contentPath, saveRoot string, opts *SyncOptions
 	return runSync(nil, game, core, contentPath, saveRoot, opts)
 }
 
-// Restore puts unit back under saveRoot and reads it back. It returns
-// ErrConflict, writing nothing, when the saves there changed since the last
-// sync and opts.OverwriteLocal is false.
+// Restore puts unit back under saveRoot and reads it back. Each of these
+// writes nothing: ErrConflict when the saves there changed since the last sync
+// and opts.OverwriteLocal is false; ErrUncollected when a shared volume holds
+// saves no collect has passed on yet; and, as a *ProblemError naming what is at
+// fault, ErrNoSpace, ErrRegion, ErrNoTarget, ErrAmbiguous, and ErrDamaged
+// unless opts.Repair rebuilt it (a card sigil can't read stays ErrDamaged).
 func Restore(unit []byte, game *Result, core, contentPath, saveRoot string, opts *SyncOptions) (*SyncResult, error) {
 	if unit == nil {
 		return nil, ErrInvalidArg

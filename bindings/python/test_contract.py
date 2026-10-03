@@ -109,8 +109,9 @@ _SYNC_FIELDS = {
     "conflict": ("conflict", "conflict", "Conflict"),
     "companions": ("companions", "companions", "Companions"),
     "companion game ids": ("gameIds", "game_ids", "GameIDs"),
-    "overflow": ("overflow", "overflow", "OverflowError"),
-    "overflow blocks": ("overflowBlocks", "overflow_blocks", "Blocks: uint32(cres.overflow_blocks)"),
+    "problem": ("problem", "problem", "Problem:"),
+    "blocks short": ("blocksShort", "blocks_short", "BlocksShort"),
+    "repair": ("repair", "repair", "Repair"),
 }
 
 GO = ROOT / "bindings" / "go" / "sigil.go"
@@ -270,13 +271,17 @@ def test_card_format_names_match_across_bindings():
 def test_every_error_code_has_an_error_in_each_binding():
     """A code with no mapping reaches Python as the bare base class and Go as
     a formatted number, so a caller can't match on it."""
-    codes = re.findall(r"#define SIGIL_ERR_(\w+)\s+-\d+", HEADER.read_text())
+    codes = re.findall(r"#define SIGIL_ERR_(\w+)\s+(-\d+)", HEADER.read_text())
     assert codes, "no SIGIL_ERR_* codes in sigil.h"
     py = PY_INIT.read_text()
     go = GO.read_text()
-    for code in codes:
+    kotlin = KOTLIN.read_text()
+    for code, value in codes:
         assert f"lib.SIGIL_ERR_{code}:" in py, f"_ERROR_CLASSES lacks SIGIL_ERR_{code}"
         assert f"case C.SIGIL_ERR_{code}:" in go, f"errFromCode lacks SIGIL_ERR_{code}"
+        # Kotlin names the codes a collect or restore refuses with, from CONFLICT on.
+        if int(value) <= -9:
+            assert f"const val {code} = {value}" in kotlin, f"SigilException lacks {code} = {value}"
 
 
 def _jni_exception_thrown_on_failure() -> bool:

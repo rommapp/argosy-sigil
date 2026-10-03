@@ -227,7 +227,10 @@ static void check_times_are_not_a_change(const sigil_sync_result *first) {
     if (ok) {
         save.entry[0x19] ^= 0x01;
         save.self[0x19] ^= 0x01;
-        for (size_t i = 0; i < save.file_count; i++) save.files[i].entry[0x0A] ^= 0x01;
+        for (size_t i = 0; i < save.file_count; i++) {
+            save.files[i].entry[0x0A] ^= 0x01;
+            save.files[i].entry[0x1A] ^= 0x01;
+        }
         ok = sigil_ps2_inject(&c, &save) == SIGIL_OK;
         sigil_ps2_save_free(&save);
     }
@@ -250,13 +253,13 @@ static void check_times_are_not_a_change(const sigil_sync_result *first) {
     free(card);
 }
 
-/* The unit with one byte of the save's largest file flipped. */
-static uint8_t *newer_unit(const sigil_sync_result *first, size_t *len) {
+/* The unit with one byte of save `name`'s largest file flipped. */
+static uint8_t *newer_unit_of(const uint8_t *data, size_t data_len, const char *name, size_t *len) {
     sigil_ps2_card unit;
-    if (!load_card(first->data, first->len, &unit)) return NULL;
+    if (!load_card(data, data_len, &unit)) return NULL;
     sigil_ps2_save save;
     uint8_t *out = NULL;
-    if (extract_named(&unit, ACE_COMBAT, &save)) {
+    if (extract_named(&unit, name, &save)) {
         size_t biggest = 0;
         for (size_t i = 1; i < save.file_count; i++) {
             if (sigil_read_le32(save.files[i].entry + 4) > sigil_read_le32(save.files[biggest].entry + 4)) biggest = i;
@@ -271,6 +274,10 @@ static uint8_t *newer_unit(const sigil_sync_result *first, size_t *len) {
     }
     sigil_ps2_card_free(&unit);
     return out;
+}
+
+static uint8_t *newer_unit(const sigil_sync_result *first, size_t *len) {
+    return newer_unit_of(first->data, first->len, ACE_COMBAT, len);
 }
 
 /* Restoring a newer save of one game rewrites only that save: the other
@@ -335,6 +342,59 @@ static void check_restore_keeps_other_games(const sigil_sync_result *first) {
     }
     sigil_sync_result_free(r);
     sigil_ps2_card_free(&before);
+    root_free(&root);
+    free(card);
+    free(newer);
+}
+
+/* A card file sigil can't read is damaged, never formatted over: collect and
+ * restore refuse naming it, with or without repair, since sigil can't rebuild
+ * saves it can't read. An empty file holds nothing and takes the restore. */
+static void check_unreadable_card(const sigil_sync_result *first) {
+    size_t len = 0, newer_len = 0;
+    uint8_t *card = shared_card(ORDER_A, 3, &len);
+    uint8_t *newer = first ? newer_unit(first, &newer_len) : NULL;
+    if (!card || !newer) { fail("unreadable card", "setup failed"); free(card); free(newer); return; }
+    for (int variant = 0; variant < 2; variant++) {
+        uint8_t *bad = (uint8_t *)malloc(len);
+        memcpy(bad, card, len);
+        size_t bad_len = len;
+        if (variant == 0) bad[0] ^= 0xFF;
+        else bad_len = len - 528;
+        for (int repair = 0; repair < 2; repair++) {
+            mem_root root = {0};
+            root_put(&root, "Mcd001.ps2", bad, bad_len);
+            game g;
+            make_game(&g, &root, "Ace Combat 04 (USA).iso", "SLUS-20152", false);
+            g.req.state = first->state;
+            g.req.state_len = first->state_len;
+            g.req.overwrite_local = 1;
+            g.req.repair = repair;
+            sigil_sync_result *seen = NULL, *r = NULL;
+            if (sigil_collect(&g.req, &seen) != SIGIL_ERR_DAMAGED || !seen || strcmp(seen->problem, "Mcd001.ps2") != 0) {
+                fail("unreadable card", variant ? "collect read a short card as one without saves" : "collect read a card with a bad magic as one without saves");
+            }
+            if (sigil_restore(&g.req, newer, newer_len, &r) != SIGIL_ERR_DAMAGED || root.writes != 0 ||
+                memcmp(root_find(&root, "Mcd001.ps2")->data, bad, bad_len) != 0) {
+                fail("unreadable card", repair ? "restore with repair formatted over a card it can't read"
+                                               : "restore formatted over a card it can't read");
+            }
+            sigil_sync_result_free(r);
+            sigil_sync_result_free(seen);
+            root_free(&root);
+        }
+        free(bad);
+    }
+
+    mem_root root = {0};
+    root_put(&root, "Mcd001.ps2", card, 0);
+    game g;
+    make_game(&g, &root, "Ace Combat 04 (USA).iso", "SLUS-20152", false);
+    sigil_sync_result *r = NULL;
+    if (sigil_restore(&g.req, newer, newer_len, &r) != SIGIL_OK || root.writes != 1) {
+        fail("unreadable card", "an empty card file didn't take the restore");
+    }
+    sigil_sync_result_free(r);
     root_free(&root);
     free(card);
     free(newer);
@@ -490,9 +550,11 @@ static void check_folder_collect(const sigil_sync_result *first) {
     root_free(&root);
 }
 
-/* Restore unpacks the unit into the game's folder, writes a full superblock
- * over an empty one, leaves other games' folders alone, and collects back to
- * the same saves. A flow-style ARMSX2 index makes the same trip. */
+/* Restore unpacks the unit into the game's folder, leaves other games'
+ * folders alone, and collects back to the same saves. A card that holds
+ * saves behind an empty superblock is damaged: restore names it and writes
+ * nothing until the request says to repair, then writes a full superblock.
+ * A flow-style ARMSX2 index makes the same trip. */
 static void check_folder_restore(const sigil_sync_result *first) {
     mem_root root = {0};
     if (!first || !put_sample_folder(&root, CARD1, "7-wonders-armsx2")) {
@@ -508,6 +570,13 @@ static void check_folder_restore(const sigil_sync_result *first) {
     sigil_sync_result *r = NULL, *back = NULL;
     sigil_ps2_save expected;
     bool have_expected = folder_save("ace-combat-04-aethersx2", &expected);
+    if (sigil_restore(&g.req, first->data, first->len, &r) != SIGIL_ERR_DAMAGED || root.writes != 0 || !r ||
+        strcmp(r->problem, CARD1 "/_pcsx2_superblock") != 0) {
+        fail("folder restore", "an empty superblock on a card with saves wasn't reported as damaged");
+    }
+    sigil_sync_result_free(r);
+    r = NULL;
+    g.req.repair = 1;
     if (sigil_restore(&g.req, first->data, first->len, &r) != SIGIL_OK) {
         fail("folder restore", "restore failed");
     } else {
@@ -562,6 +631,473 @@ static void check_folder_restore(const sigil_sync_result *first) {
     root_free(&root);
 }
 
+/* memcardFilters: a game whose saves carry another serial finds them through
+ * game_ids, on a file card and on a folder card. */
+static void check_memcard_filters(const sigil_sync_result *first) {
+    if (!first) return;
+    size_t len = 0;
+    uint8_t *card = shared_card(ORDER_A, 3, &len);
+    mem_root file = {0}, folder = {0};
+    if (card) root_put(&file, "Mcd001.ps2", card, len);
+    put_superblock(&folder, CARD1);
+    put_sample_folder(&folder, CARD1, "ace-combat-04-aethersx2");
+    for (int i = 0; i < 2; i++) {
+        game g;
+        if (i == 0) make_game(&g, &file, "Other Disc (USA).iso", "SLUS-99999", false);
+        else make_standalone(&g, &folder, "Other Disc (USA).iso", "SLUS-99999");
+        g.req.game_ids = ACE_IDS;
+        g.req.game_id_count = 1;
+        sigil_sync_result *r = NULL;
+        if (sigil_collect(&g.req, &r) != SIGIL_OK || strcmp(r->identity_hash, first->identity_hash) != 0) {
+            fail("memcard filters", i == 0 ? "the file card's save under another serial wasn't found"
+                                          : "the folder card's save under another serial wasn't found");
+        }
+        sigil_sync_result_free(r);
+    }
+    root_free(&file);
+    root_free(&folder);
+    free(card);
+}
+
+/* Local saves already equal to the unit aren't a conflict even with no
+ * state, and nothing is written. */
+static void check_equal_restore(const sigil_sync_result *first) {
+    size_t len = 0;
+    uint8_t *card = first ? shared_card(ORDER_A, 3, &len) : NULL;
+    if (!card) return;
+    mem_root root = {0};
+    root_put(&root, "Mcd001.ps2", card, len);
+    game g;
+    make_game(&g, &root, "Ace Combat 04 (USA).iso", "SLUS-20152", false);
+    sigil_sync_result *r = NULL;
+    if (sigil_restore(&g.req, first->data, first->len, &r) != SIGIL_OK || root.writes != 0) {
+        fail("equal restore", "restoring the saves already there conflicted or wrote");
+    }
+    sigil_sync_result_free(r);
+    root_free(&root);
+    free(card);
+}
+
+/* A folder-card restore writes only the files whose bytes differ, writes a
+ * new card's superblock before any save file, and on Mcd002 alone uses it
+ * without making an Mcd001. */
+static void check_folder_writes(const sigil_sync_result *first) {
+    size_t newer_len = 0;
+    uint8_t *newer = first ? newer_unit(first, &newer_len) : NULL;
+    if (!newer) { fail("folder writes", "setup failed"); return; }
+    for (int slot = 1; slot <= 2; slot++) {
+        const char *card = slot == 1 ? CARD1 : CARD2;
+        mem_root root = {0};
+        char sb[SIGIL_SAVE_PATH_MAX];
+        snprintf(sb, sizeof(sb), "%s/_pcsx2_superblock", card);
+        root_put(&root, sb, (const uint8_t *)"", 0);
+        game g;
+        make_standalone(&g, &root, "Ace Combat 04 (USA).iso", "SLUS-20152");
+        sigil_sync_result *r = NULL, *again = NULL;
+        if (sigil_restore(&g.req, first->data, first->len, &r) != SIGIL_OK) {
+            fail("folder writes", "restore into a new card failed");
+        } else {
+            if (strcmp(root.first_write, sb) != 0) fail("folder writes", "a save file was written before the superblock");
+            if (root_find(&root, slot == 1 ? CARD2 "/_pcsx2_superblock" : CARD1)) fail("folder writes", "the other slot was made");
+            refresh_listing(&g, &root);
+            g.req.state = r->state;
+            g.req.state_len = r->state_len;
+            int writes = root.writes;
+            if (sigil_restore(&g.req, newer, newer_len, &again) != SIGIL_OK || root.writes - writes != 1) {
+                fail("folder writes", "a newer save with one changed file didn't write exactly that file");
+            }
+        }
+        sigil_sync_result_free(again);
+        sigil_sync_result_free(r);
+        root_free(&root);
+    }
+    free(newer);
+}
+
+/* Slot 1 a file card that would take the newer save, slot 2 a folder card
+ * holding a save of the game the unit lacks: without a remove callback the
+ * restore refuses before writing either card. */
+static void check_refusal_spans_slots(void) {
+    size_t mc01_len = 0;
+    uint8_t *mc01 = sample("mymc-mc01", &mc01_len);
+    sigil_ps2_card card;
+    sigil_ps2_save ace, xx;
+    if (!mc01 || !load_card(mc01, mc01_len, &card)) { free(mc01); fail("refusal spans slots", "setup failed"); return; }
+    bool ok = folder_save("ace-combat-04-aethersx2", &ace) && folder_save("ace-combat-04-aethersx2", &xx);
+    if (ok) {
+        memset(xx.entry + 0x40, 0, 32);
+        memcpy(xx.entry + 0x40, "BASLUS-20152XX", 14);
+        ok = sigil_ps2_inject(&card, &xx) == SIGIL_OK;
+    }
+    size_t file_len = 0;
+    uint8_t *file = ok ? card_bytes(&card, &file_len) : NULL;
+    sigil_ps2_card unit_card;
+    uint8_t *unit = NULL;
+    size_t unit_len = 0;
+    if (file && sigil_ps2_card_format(&unit_card, (const uint8_t[PS2_TOD_SIZE]){ 0, 0, 0, 0, 1, 1, 0xD0, 0x07 }) == SIGIL_OK) {
+        xx.files[0].data[10] ^= 0xFF;
+        if (sigil_ps2_inject(&unit_card, &xx) == SIGIL_OK) unit = card_bytes(&unit_card, &unit_len);
+        sigil_ps2_card_free(&unit_card);
+    }
+    if (!unit) {
+        fail("refusal spans slots", "setup failed");
+    } else {
+        mem_root root = {0};
+        root_put(&root, CARD1, file, file_len);
+        put_superblock(&root, CARD2);
+        put_save_folder(&root, CARD2, &ace);
+        game g;
+        make_standalone(&g, &root, "Ace Combat 04 (USA).iso", "SLUS-20152");
+        g.req.remove = NULL;
+        g.req.overwrite_local = 1;
+        sigil_sync_result *r = NULL;
+        if (sigil_restore(&g.req, unit, unit_len, &r) != SIGIL_ERR_INVALID_ARG || root.writes != 0) {
+            fail("refusal spans slots", "slot 1 was written before slot 2 refused");
+        }
+        sigil_sync_result_free(r);
+        root_free(&root);
+    }
+    if (ok) { sigil_ps2_save_free(&ace); sigil_ps2_save_free(&xx); }
+    sigil_ps2_card_free(&card);
+    free(unit);
+    free(file);
+    free(mc01);
+}
+
+/* A companion's save folder on a folder card: collect returns it as the
+ * companion's unit; a restore without the companion's unit leaves its files
+ * alone, one with a newer unit rewrites them. */
+static void check_folder_companion(const sigil_sync_result *first) {
+    size_t newer_len = 0;
+    uint8_t *newer = first ? newer_unit(first, &newer_len) : NULL;
+    mem_root root = {0};
+    put_superblock(&root, CARD1);
+    bool ok = newer && put_sample_folder(&root, CARD1, "7-wonders-armsx2") &&
+              put_sample_folder(&root, CARD1, "ace-combat-04-aethersx2");
+    static const char *const ACE[] = { "SLUS-20152" };
+    sigil_sync_companion companion = { ACE, 1, NULL, 0 };
+    game g;
+    make_standalone(&g, &root, "7 Wonders of the Ancient World (USA).iso", "SLUS-21693");
+    g.req.companions = &companion;
+    g.req.companion_count = 1;
+    sigil_sync_result *wonders = NULL, *r = NULL, *again = NULL;
+    if (!ok || sigil_collect(&g.req, &wonders) != SIGIL_OK || !wonders->data) {
+        fail("folder companion", "setup failed");
+    } else if (wonders->companion_count != 1 || strcmp(wonders->companions[0].identity_hash, first->identity_hash) != 0) {
+        fail("folder companion", "collect didn't return the companion's folder as its unit");
+    } else {
+        g.req.state = wonders->state;
+        g.req.state_len = wonders->state_len;
+        mem_root before = {0};
+        put_sample_folder(&before, CARD1, "ace-combat-04-aethersx2");
+        size_t newer_wonders_len = 0;
+        uint8_t *newer_wonders = newer_unit_of(wonders->data, wonders->len, "BASLUS-21693", &newer_wonders_len);
+        int rc = newer_wonders ? sigil_restore(&g.req, newer_wonders, newer_wonders_len, &r) : SIGIL_ERR_OOM;
+        free(newer_wonders);
+        if (rc != SIGIL_OK) {
+            fail("folder companion", "restore without the companion's unit failed");
+        } else {
+            for (size_t i = 0; i < before.count; i++) {
+                mem_file *f = root_find(&root, before.files[i].path);
+                if (!f || f->len != before.files[i].len || memcmp(f->data, before.files[i].data, f->len) != 0) {
+                    fail("folder companion", "the companion's files changed without its unit");
+                    break;
+                }
+            }
+        }
+        root_free(&before);
+        refresh_listing(&g, &root);
+        g.req.state = r ? r->state : NULL;
+        g.req.state_len = r ? r->state_len : 0;
+        companion.unit = newer;
+        companion.unit_len = newer_len;
+        sigil_ps2_card newer_card;
+        sigil_ps2_save wanted;
+        if (sigil_restore(&g.req, wonders->data, wonders->len, &again) != SIGIL_OK) {
+            fail("folder companion", "restore with the companion's newer unit failed");
+        } else if (load_card(newer, newer_len, &newer_card)) {
+            if (extract_named(&newer_card, ACE_COMBAT, &wanted)) {
+                if (!folder_holds(&root, CARD1, &wanted)) fail("folder companion", "the companion's folder didn't take its newer unit");
+                sigil_ps2_save_free(&wanted);
+            }
+            sigil_ps2_card_free(&newer_card);
+        }
+    }
+    sigil_sync_result_free(again);
+    sigil_sync_result_free(r);
+    sigil_sync_result_free(wonders);
+    root_free(&root);
+    free(newer);
+}
+
+/* A save whose file mode PCSX2 couldn't rebuild from the index goes onto a
+ * folder card with its _pcsx2_meta, and collects back with the same mode. */
+static void check_folder_keeps_modes(void) {
+    sigil_ps2_save save;
+    if (!folder_save("ace-combat-04-aethersx2", &save) || save.file_count == 0) { fail("folder modes", "setup failed"); return; }
+    save.files[0].entry[1] ^= 0x20;
+    sigil_ps2_card unit_card;
+    uint8_t *unit = NULL;
+    size_t unit_len = 0;
+    if (sigil_ps2_card_format(&unit_card, (const uint8_t[PS2_TOD_SIZE]){ 0, 0, 0, 0, 1, 1, 0xD0, 0x07 }) == SIGIL_OK) {
+        if (sigil_ps2_inject(&unit_card, &save) == SIGIL_OK) unit = card_bytes(&unit_card, &unit_len);
+        sigil_ps2_card_free(&unit_card);
+    }
+    mem_root root = {0};
+    put_superblock(&root, CARD1);
+    game g;
+    make_standalone(&g, &root, "Ace Combat 04 (USA).iso", "SLUS-20152");
+    sigil_sync_result *r = NULL, *back = NULL;
+    if (!unit || sigil_restore(&g.req, unit, unit_len, &r) != SIGIL_OK) {
+        fail("folder modes", "restore failed");
+    } else {
+        refresh_listing(&g, &root);
+        sigil_ps2_card card;
+        sigil_ps2_save got;
+        if (sigil_collect(&g.req, &back) != SIGIL_OK || !back->data || !load_card(back->data, back->len, &card)) {
+            fail("folder modes", "collect failed");
+        } else {
+            char name[33];
+            snprintf(name, sizeof(name), "%.32s", (const char *)save.entry + 0x40);
+            if (!extract_named(&card, name, &got)) {
+                fail("folder modes", "the save didn't come back");
+            } else {
+                if (got.file_count != save.file_count || memcmp(got.files[0].entry, save.files[0].entry, 4) != 0) {
+                    fail("folder modes", "a file's mode was lost on the folder card");
+                }
+                sigil_ps2_save_free(&got);
+            }
+            sigil_ps2_card_free(&card);
+        }
+    }
+    sigil_sync_result_free(back);
+    sigil_sync_result_free(r);
+    root_free(&root);
+    free(unit);
+    sigil_ps2_save_free(&save);
+}
+
+static bool put_big_foreign_folder(mem_root *root, const char *name, size_t size);
+
+/* PCSX2 shows the game the system folders too, so they count against the
+ * card's space. */
+static void check_system_folder_counts(const sigil_sync_result *first) {
+    static const char *const SYSTEM[] = { "BEDATA-SYSTEM", "BWNETCNF" };
+    for (size_t i = 0; i < 2; i++) {
+        mem_root root = {0};
+        put_superblock(&root, CARD1);
+        if (!first || !put_big_foreign_folder(&root, SYSTEM[i], 8250000)) {
+            fail("system folder space", "setup failed");
+            root_free(&root);
+            return;
+        }
+        game g;
+        make_standalone(&g, &root, "Ace Combat 04 (USA).iso", "SLUS-20152");
+        sigil_sync_result *r = NULL;
+        if (sigil_restore(&g.req, first->data, first->len, &r) != SIGIL_ERR_NO_SPACE || root.writes != 0) {
+            fail("system folder space", SYSTEM[i]);
+        }
+        sigil_sync_result_free(r);
+        root_free(&root);
+    }
+}
+
+/* Where the unit card holds the first bytes of its save's largest file; a
+ * restore into an empty root writes the same image. */
+static size_t largest_file_offset(const sigil_sync_result *unit) {
+    sigil_ps2_card card;
+    sigil_ps2_save save;
+    size_t at = 0;
+    if (!load_card(unit->data, unit->len, &card)) return 0;
+    if (extract_named(&card, ACE_COMBAT, &save)) {
+        size_t biggest = 0;
+        for (size_t i = 1; i < save.file_count; i++) {
+            if (sigil_read_le32(save.files[i].entry + 4) > sigil_read_le32(save.files[biggest].entry + 4)) biggest = i;
+        }
+        for (size_t i = 0; i + 64 <= unit->len && !at; i++) {
+            if (memcmp(unit->data + i, save.files[biggest].data, 64) == 0) at = i + 10;
+        }
+        sigil_ps2_save_free(&save);
+    }
+    sigil_ps2_card_free(&card);
+    return at;
+}
+
+/* A write that fails or reads back different is an I/O error, on a file
+ * card and on a folder card. */
+static void check_faulty_writes(const sigil_sync_result *first) {
+    if (!first) return;
+    size_t data_at = largest_file_offset(first);
+    if (!data_at) { fail("faulty writes", "setup failed"); return; }
+    for (int folder = 0; folder < 2; folder++) {
+        for (int corrupt = 0; corrupt < 2; corrupt++) {
+            mem_root root = {0};
+            if (folder) root_put(&root, CARD1 "/_pcsx2_superblock", (const uint8_t *)"", 0);
+            int target = folder ? 2 : 1;
+            if (corrupt) {
+                root.corrupt_write = target;
+                root.corrupt_at = folder ? 0 : data_at;
+            } else {
+                root.fail_write = target;
+            }
+            game g;
+            if (folder) make_standalone(&g, &root, "Ace Combat 04 (USA).iso", "SLUS-20152");
+            else make_game(&g, &root, "Ace Combat 04 (USA).iso", "SLUS-20152", false);
+            sigil_sync_result *r = NULL;
+            if (sigil_restore(&g.req, first->data, first->len, &r) != SIGIL_ERR_IO) {
+                fail("faulty writes", folder ? (corrupt ? "a folder file read back corrupted" : "a folder write failed")
+                                             : (corrupt ? "a file card read back corrupted" : "a file card write failed"));
+            }
+            sigil_sync_result_free(r);
+            root_free(&root);
+        }
+    }
+}
+
+/* A folder card with no saves and no usable superblock is new: restore
+ * formats it without being asked. A save folder whose _pcsx2_index doesn't
+ * parse is damaged: collect and restore name the index and change nothing;
+ * with repair, collect packs the folder without it, and restore counts it as
+ * the game's local save (so the conflict rule guards it) and writes a fresh
+ * index. */
+/* A save folder of the game that sigil can't pack (a subdirectory, a file
+ * name longer than a card entry holds) still shows in PCSX2, so it is
+ * damaged rather than missing: collect and restore refuse naming it, with or
+ * without repair, and restore removes none of its files. */
+static void check_unpackable_folder(const sigil_sync_result *first) {
+    if (!first) return;
+    static const char *const EXTRA[] = {
+        CARD1 "/" ACE_COMBAT "/sub/x",
+        CARD1 "/" ACE_COMBAT "/a-file-name-longer-than-a-card-entry-holds",
+    };
+    for (size_t i = 0; i < 2; i++) {
+        for (int repair = 0; repair < 2; repair++) {
+            mem_root root = {0};
+            put_superblock(&root, CARD1);
+            put_sample_folder(&root, CARD1, "ace-combat-04-aethersx2");
+            root_put(&root, EXTRA[i], (const uint8_t *)"x", 1);
+            game g;
+            make_standalone(&g, &root, "Ace Combat 04 (USA).iso", "SLUS-20152");
+            g.req.remove = root_remove;
+            g.req.repair = repair;
+            g.req.overwrite_local = 1;
+            sigil_sync_result *seen = NULL, *r = NULL;
+            if (sigil_collect(&g.req, &seen) != SIGIL_ERR_DAMAGED || !seen || strcmp(seen->problem, CARD1 "/" ACE_COMBAT) != 0) {
+                fail("unpackable folder", "collect read a save folder it can't pack as missing");
+            }
+            if (sigil_restore(&g.req, first->data, first->len, &r) != SIGIL_ERR_DAMAGED || root.writes != 0 ||
+                root.removes != 0) {
+                fail("unpackable folder", "restore touched a save folder it can't pack");
+            }
+            sigil_sync_result_free(r);
+            sigil_sync_result_free(seen);
+            root_free(&root);
+        }
+    }
+}
+
+/* PCSX2 reads all 0x2000 bytes of _pcsx2_superblock: a shorter one marked
+ * formatted still hides the card's saves, so it is damaged; a new superblock
+ * that reads back wrong fails the restore. */
+static void check_superblock_rules(const sigil_sync_result *first) {
+    if (!first) return;
+    uint8_t sb[PS2_FOLDER_SUPERBLOCK_SIZE];
+    sigil_ps2_folder_superblock(sb);
+    mem_root root = {0};
+    root_put(&root, CARD1 "/_pcsx2_superblock", sb, 0x100);
+    put_sample_folder(&root, CARD1, "ace-combat-04-aethersx2");
+    game g;
+    make_standalone(&g, &root, "Ace Combat 04 (USA).iso", "SLUS-20152");
+    g.req.overwrite_local = 1;
+    sigil_sync_result *r = NULL;
+    size_t newer_len = 0;
+    uint8_t *newer = newer_unit(first, &newer_len);
+    if (!newer || sigil_restore(&g.req, newer, newer_len, &r) != SIGIL_ERR_DAMAGED || root.writes != 0) {
+        fail("superblock rules", "a short superblock marked formatted read as usable");
+    }
+    free(newer);
+    sigil_sync_result_free(r);
+    r = NULL;
+    root_free(&root);
+
+    root_put(&root, CARD1 "/_pcsx2_superblock", sb, 0);
+    root.corrupt_write = 1;
+    root.corrupt_at = 0x16;
+    make_standalone(&g, &root, "Ace Combat 04 (USA).iso", "SLUS-20152");
+    if (sigil_restore(&g.req, first->data, first->len, &r) != SIGIL_ERR_IO || strcmp(root.first_write, CARD1 "/_pcsx2_superblock") != 0) {
+        fail("superblock rules", "a new superblock that read back wrong passed the restore");
+    }
+    sigil_sync_result_free(r);
+    root_free(&root);
+}
+
+static void check_folder_damage(const sigil_sync_result *first) {
+    if (!first) return;
+    mem_root fresh = {0};
+    root_put(&fresh, CARD1 "/_pcsx2_superblock", (const uint8_t *)"", 0);
+    game n;
+    make_standalone(&n, &fresh, "Ace Combat 04 (USA).iso", "SLUS-20152");
+    sigil_sync_result *r = NULL;
+    mem_file *sb = NULL;
+    if (sigil_restore(&n.req, first->data, first->len, &r) != SIGIL_OK ||
+        !(sb = root_find(&fresh, CARD1 "/_pcsx2_superblock")) || !sigil_ps2_folder_superblock_usable(sb->data, sb->len)) {
+        fail("folder damage", "a new folder card wasn't formatted on restore");
+    }
+    sigil_sync_result_free(r);
+    root_free(&fresh);
+
+    static const char *const INDEX = CARD1 "/" ACE_COMBAT "/_pcsx2_index";
+    mem_root root = {0};
+    put_superblock(&root, CARD1);
+    put_sample_folder(&root, CARD1, "ace-combat-04-aethersx2");
+    root_put(&root, INDEX, (const uint8_t *)"{{{ not yaml", 12);
+    game g;
+    make_standalone(&g, &root, "Ace Combat 04 (USA).iso", "SLUS-20152");
+    r = NULL;
+    if (sigil_collect(&g.req, &r) != SIGIL_ERR_DAMAGED || !r || strcmp(r->problem, INDEX) != 0) {
+        fail("folder damage", "collect didn't name the unparseable index");
+    }
+    sigil_sync_result_free(r);
+    r = NULL;
+    if (sigil_restore(&g.req, first->data, first->len, &r) != SIGIL_ERR_DAMAGED || root.writes != 0 || !r ||
+        strcmp(r->problem, INDEX) != 0) {
+        fail("folder damage", "restore over an unparseable index wrote or didn't name it");
+    }
+    sigil_sync_result_free(r);
+    r = NULL;
+
+    g.req.repair = 1;
+    if (sigil_collect(&g.req, &r) != SIGIL_OK || !r->data) {
+        fail("folder damage", "collect with repair didn't pack the folder");
+    } else {
+        sigil_ps2_card unit;
+        sigil_ps2_save save;
+        if (!load_card(r->data, r->len, &unit) || !extract_named(&unit, ACE_COMBAT, &save)) {
+            fail("folder damage", "the repaired unit doesn't hold the save");
+        } else {
+            sigil_ps2_save_free(&save);
+            sigil_ps2_card_free(&unit);
+        }
+    }
+    sigil_sync_result_free(r);
+    r = NULL;
+    if (sigil_restore(&g.req, first->data, first->len, &r) != SIGIL_ERR_CONFLICT || root.writes != 0) {
+        fail("folder damage", "with repair, the damaged folder wasn't guarded as the game's local save");
+    }
+    sigil_sync_result_free(r);
+    r = NULL;
+    g.req.overwrite_local = 1;
+    sigil_ps2_save expected;
+    if (sigil_restore(&g.req, first->data, first->len, &r) != SIGIL_OK || !folder_save("ace-combat-04-aethersx2", &expected)) {
+        fail("folder damage", "restore with repair and overwrite failed");
+    } else {
+        if (!folder_holds(&root, CARD1, &expected)) fail("folder damage", "the folder wasn't rewritten with a fresh index");
+        sigil_ps2_save_free(&expected);
+    }
+    sigil_sync_result_free(r);
+    root_free(&root);
+}
+
 /* A restore removes the files of the game's folders the unit lacks, keeps a
  * usable superblock and the system folder as they are, and without a remove
  * callback refuses before writing. */
@@ -605,7 +1141,9 @@ static void check_folder_removes(const sigil_sync_result *first) {
             fail("folder removes", "restore failed");
         } else {
             if (root_find(&root, CARD1 "/" ACE_COMBAT "/stale.bin")) fail("folder removes", "a file the unit lacks is still there");
-            if (files_under(&root, CARD1 "/BASLUS-20152XX/") != 0) fail("folder removes", "a save folder the unit lacks is still there");            mem_file *kept = root_find(&root, CARD1 "/_pcsx2_superblock");
+            if (files_under(&root, CARD1 "/BASLUS-20152XX/") != 0) fail("folder removes", "a save folder the unit lacks is still there");
+            if (root.dirs_removed != 1) fail("folder removes", "a dropped save folder's directory stayed, which PCSX2 would show");
+            mem_file *kept = root_find(&root, CARD1 "/_pcsx2_superblock");
             if (!kept || kept->len != sizeof(sb) || memcmp(kept->data, sb, sizeof(sb)) != 0) fail("folder removes", "a usable superblock was rewritten");
             if (!folder_holds(&root, CARD1, &system) || files_under(&root, CARD1 "/" DATA_SYSTEM "/") != system_files) {
                 fail("folder removes", "the system folder changed");
@@ -727,9 +1265,21 @@ int main(void) {
     check_times_are_not_a_change(first);
     check_restore_keeps_other_games(first);
     check_restore_into_empty_root(first);
+    check_unreadable_card(first);
     check_restore_foreign_unit();
     check_folder_collect(first);
     check_folder_restore(first);
+    check_folder_damage(first);
+    check_unpackable_folder(first);
+    check_superblock_rules(first);
+    check_memcard_filters(first);
+    check_equal_restore(first);
+    check_folder_writes(first);
+    check_refusal_spans_slots();
+    check_folder_companion(first);
+    check_system_folder_counts(first);
+    check_faulty_writes(first);
+    check_folder_keeps_modes();
     check_folder_removes(first);
     check_folder_beside_file_card(first);
     check_folder_other_games_dont_fill_the_card(first);

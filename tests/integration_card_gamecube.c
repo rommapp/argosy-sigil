@@ -394,6 +394,12 @@ static void check_same_identity_refused(const corpus_table *manifest) {
             b[0x07] ^= 0x01;
             if (sigil_gamecube_inject(image, CARD_2MIB, b, b_len) != SIGIL_ERR_EXISTS) fail("fzero-gx-dolphin-gci-set", "a second save of the same identity went on");
             if (memcmp(copy, image, CARD_2MIB) != 0) fail("fzero-gx-dolphin-gci-set", "a refused inject changed the card");
+            /* Dolphin compares file names up to the NUL: bytes after it don't make another save. */
+            b[0x07] ^= 0x01;
+            b[0x08 + 20] = 'X';
+            if (sigil_gamecube_inject(image, CARD_2MIB, b, b_len) != SIGIL_ERR_EXISTS) {
+                fail("fzero-gx-dolphin-gci-set", "bytes after a file name's NUL made a second save");
+            }
         }
     }
     free(copy);
@@ -528,6 +534,10 @@ static void check_bat_choice(const char *what, const uint8_t *usa, size_t size,
     } else {
         check_expected_entries(what, "card-raw-usa", "memcard-image.raw", entries, l, image, size, "RogueLeader");
         if (l->corrupt_count != 1 || l->free_blocks != 194) fail(what, "listing is not BAT block 3's");
+        if (l->corrupt_entry_count != 1 || strcmp(l->corrupt_entries[0].name, "RogueLeader") != 0 ||
+            strlen(l->corrupt_entries[0].owner_id) != 8) {
+            fail(what, "RogueLeader isn't named among the corrupt entries");
+        }
     }
     sigil_card_listing_free(l);
     memcpy(image, usa, size);

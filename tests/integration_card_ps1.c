@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "save_corpus.h"
+#include "mem_root.h"
 #include "card_ps1.h"
 #include <stdbool.h>
 
@@ -192,10 +193,16 @@ static void check_card(const char *id, const char *path, const corpus_table *ent
         check_facts(id, listing);
         check_rebuild(id, path, entries, image, listing);
         sigil_card_listing *public_listing = NULL;
-        if (sigil_card_list(io, &public_listing) != SIGIL_OK ||
-            public_listing->entry_count != listing->entry_count) {
-            fail(id, "sigil_card_list disagrees with the internal listing");
+        bool same = sigil_card_list(io, &public_listing) == SIGIL_OK &&
+                    public_listing->entry_count == listing->entry_count &&
+                    public_listing->free_blocks == listing->free_blocks &&
+                    public_listing->corrupt_count == listing->corrupt_count;
+        for (size_t i = 0; same && i < listing->entry_count; i++) {
+            const sigil_card_entry *a = &public_listing->entries[i], *b = &listing->entries[i];
+            same = strcmp(a->name, b->name) == 0 && strcmp(a->owner_id, b->owner_id) == 0 && a->blocks == b->blocks &&
+                   a->first_block == b->first_block;
         }
+        if (!same) fail(id, "sigil_card_list disagrees with the internal listing");
         sigil_card_listing_free(public_listing);
     }
     sigil_card_listing_free(listing);
@@ -350,6 +357,344 @@ static void check_full_card_refuses(const corpus_table *manifest) {
     free(mcs);
 }
 
+/* Points block `block`'s directory frame at `link` and reseals it. */
+static void set_link(uint8_t *image, uint32_t block, uint16_t link) {
+    uint8_t *f = image + (size_t)block * PS1_FRAME_SIZE;
+    f[8] = (uint8_t)link;
+    f[9] = (uint8_t)(link >> 8);
+    uint8_t x = 0;
+    for (size_t i = 0; i < PS1_FRAME_SIZE - 1; i++) x ^= f[i];
+    f[PS1_FRAME_SIZE - 1] = x;
+}
+
+/* A fresh card holding the first save of two blocks or more found on the
+ * Digimon World 2 card, in blocks 1 and on; `blocks` gets its length. */
+static bool card_with_chain(const corpus_table *manifest, uint8_t *out, uint32_t *blocks) {
+    uint8_t *image = (uint8_t *)malloc(PS1_CARD_SIZE);
+    sigil_card_listing *l = NULL;
+    bool ok = image && load_sample(manifest, "digimon-world-2-mcr", image) &&
+              sigil_ps1_card_list(image, SIGIL_CARD_FORMAT_PS1_RAW, &l) == SIGIL_OK;
+    const sigil_card_entry *e = NULL;
+    for (size_t i = 0; ok && i < l->entry_count && !e; i++) {
+        if (l->entries[i].blocks >= 2) e = &l->entries[i];
+    }
+    ok = ok && e;
+    uint8_t *mcs = ok ? (uint8_t *)malloc(sigil_ps1_mcs_size(e->blocks)) : NULL;
+    ok = ok && mcs && sigil_ps1_extract(image, e->first_block, e->blocks, mcs) == SIGIL_OK;
+    if (ok) {
+        sigil_ps1_format(out);
+        *blocks = e->blocks;
+        ok = sigil_ps1_inject(out, mcs, sigil_ps1_mcs_size(e->blocks)) == SIGIL_OK;
+    }
+    free(mcs);
+    sigil_card_listing_free(l);
+    free(image);
+    return ok;
+}
+
+/* A chain whose link lands on a free block, on another save's first block,
+ * or past the card is broken: the listing counts it corrupt and reads
+ * nothing past the card. */
+static void check_broken_chains(const corpus_table *manifest) {
+    uint8_t *card = (uint8_t *)malloc(PS1_CARD_SIZE);
+    uint8_t *broken = (uint8_t *)malloc(PS1_CARD_SIZE);
+    uint32_t blocks = 0;
+    if (!card || !broken || !card_with_chain(manifest, card, &blocks) || blocks + 1 > PS1_DATA_BLOCKS) {
+        fail("broken chains", "setup failed");
+        free(card);
+        free(broken);
+        return;
+    }
+    struct { const char *what; uint16_t link; bool foreign_first; } CASES[] = {
+        { "a link to a free block", (uint16_t)blocks, false },
+        { "a link to another save's first block", (uint16_t)blocks, true },
+        { "a link past the card", 0x4942, false },
+    };
+    for (size_t i = 0; i < sizeof(CASES) / sizeof(CASES[0]); i++) {
+        memcpy(broken, card, PS1_CARD_SIZE);
+        if (CASES[i].foreign_first) {
+            uint8_t *f = broken + (size_t)(blocks + 1) * PS1_FRAME_SIZE;
+            memcpy(f, broken + PS1_FRAME_SIZE, PS1_FRAME_SIZE);
+            f[0x0A + 2] ^= 0x01;
+            set_link(broken, blocks + 1, 0xFFFF);
+        }
+        set_link(broken, 1, CASES[i].link);
+        sigil_card_listing *l = NULL;
+        char name[PS1_NAME_LEN + 1] = { 0 };
+        memcpy(name, card + PS1_FRAME_SIZE + 0x0A, PS1_NAME_LEN);
+        if (sigil_ps1_card_list(broken, SIGIL_CARD_FORMAT_PS1_RAW, &l) != SIGIL_OK || l->corrupt_count < 1 ||
+            find_entry(l, name)) {
+            fail("broken chains", CASES[i].what);
+        } else if (l->corrupt_entry_count < 1 || strcmp(l->corrupt_entries[0].name, name) != 0 ||
+                   l->corrupt_entries[0].first_block != 1 || !l->corrupt_entries[0].owner_id[0]) {
+            fail("broken chains", "the broken save isn't named among the corrupt entries");
+        }
+        sigil_card_listing_free(l);
+    }
+    free(broken);
+    free(card);
+}
+
+/* sigil reads a raw card only at its own size, and injects only a .mcs whose
+ * frame marks a save's first block. */
+static void check_refusals(const corpus_table *manifest) {
+    uint8_t *image = (uint8_t *)malloc(PS1_CARD_SIZE + 1);
+    if (!image || !load_sample(manifest, "xenogears-full-mcd", image)) { free(image); fail("refusals", "setup failed"); return; }
+    image[PS1_CARD_SIZE] = 0;
+    uint8_t *loaded = (uint8_t *)malloc(PS1_CARD_SIZE);
+    sigil_io *io = mem_root_io(image, PS1_CARD_SIZE + 1);
+    int format = 0;
+    if (sigil_ps1_card_load(io, loaded, &format) != SIGIL_ERR_UNSUPPORTED_FORMAT) fail("refusals", "a raw card longer than 128 KiB loaded");
+    sigil_io_close(io);
+
+    sigil_card_listing *l = NULL;
+    if (sigil_ps1_card_list(image, SIGIL_CARD_FORMAT_PS1_RAW, &l) == SIGIL_OK && l->entry_count > 0) {
+        size_t len = sigil_ps1_mcs_size(l->entries[0].blocks);
+        uint8_t *mcs = (uint8_t *)malloc(len);
+        uint8_t *fresh = (uint8_t *)malloc(PS1_CARD_SIZE);
+        if (mcs && fresh && sigil_ps1_extract(image, l->entries[0].first_block, l->entries[0].blocks, mcs) == SIGIL_OK) {
+            mcs[0] = 0xA1;
+            sigil_ps1_format(fresh);
+            if (sigil_ps1_inject(fresh, mcs, len) != SIGIL_ERR_UNSUPPORTED_FORMAT) fail("refusals", "a .mcs that isn't a save's first block went in");
+        }
+        free(fresh);
+        free(mcs);
+    } else {
+        fail("refusals", "setup failed");
+    }
+    sigil_card_listing_free(l);
+    free(loaded);
+    free(image);
+}
+
+#define VMP_FILE_SIZE  (PS1_VMP_HEADER_SIZE + PS1_CARD_SIZE)
+#define VMP_SIGNATURE  0x20u
+#define GME_FILE_SIZE  (PS1_GME_HEADER_SIZE + PS1_CARD_SIZE)
+#define GME_STATES     0x16u
+#define GME_LINKS      0x26u
+#define GME_COMMENTS   0x40u
+#define GME_COMMENT    0x100u
+
+static sigil_ps1_file *file_from(const uint8_t *data, size_t len, int *rc) {
+    sigil_ps1_file *f = (sigil_ps1_file *)malloc(sizeof(*f));
+    sigil_io *io = mem_root_io(data, len);
+    *rc = f ? sigil_ps1_file_load(io, f) : SIGIL_ERR_OOM;
+    sigil_io_close(io);
+    if (*rc != SIGIL_OK) { free(f); return NULL; }
+    return f;
+}
+
+/* `f` written out and read back: the card must come back as it was. */
+static uint8_t *written(const char *id, const sigil_ps1_file *f, size_t *len) {
+    uint8_t *out = NULL;
+    int rc = 0;
+    if (sigil_ps1_file_write(f, &out, len) != SIGIL_OK) { fail(id, "write failed"); return NULL; }
+    sigil_ps1_file *back = file_from(out, *len, &rc);
+    if (!back || back->format != f->format || memcmp(back->image, f->image, PS1_CARD_SIZE) != 0) {
+        fail(id, "the written file doesn't read back as the same card");
+    }
+    free(back);
+    return out;
+}
+
+/* Swaps the card's first save for the Bugs Bunny save, as a restore would. */
+static bool swap_first_save(const corpus_table *manifest, sigil_ps1_file *f, char removed[SIGIL_CARD_NAME_MAX],
+                            char kept[SIGIL_CARD_NAME_MAX]) {
+    size_t len = 0;
+    uint8_t *mcs = load_sample_bytes(manifest, "bugs-bunny-mcs", &len);
+    sigil_card_listing *l = NULL;
+    bool ok = mcs && sigil_ps1_card_list(f->image, f->format, &l) == SIGIL_OK && l->entry_count >= 2;
+    if (ok) {
+        snprintf(removed, SIGIL_CARD_NAME_MAX, "%s", l->entries[0].name);
+        snprintf(kept, SIGIL_CARD_NAME_MAX, "%s", l->entries[1].name);
+        ok = sigil_ps1_delete(f->image, l->entries[0].first_block) == SIGIL_OK &&
+             sigil_ps1_inject(f->image, mcs, len) == SIGIL_OK;
+    }
+    sigil_card_listing_free(l);
+    free(mcs);
+    return ok;
+}
+
+static uint32_t slot_of(const uint8_t *image, const char *name) {
+    sigil_card_listing *l = NULL;
+    uint32_t slot = UINT32_MAX;
+    if (sigil_ps1_card_list(image, SIGIL_CARD_FORMAT_PS1_RAW, &l) != SIGIL_OK) return slot;
+    const sigil_card_entry *e = find_entry(l, name);
+    if (e) slot = e->first_block - 1;
+    sigil_card_listing_free(l);
+    return slot;
+}
+
+/* A PSP or Vita .vmp: an unchanged card writes back byte for byte, signature
+ * and all; a changed one keeps the header and its seed, stays 0x20080 bytes
+ * and carries a signature that checks. */
+static void check_vmp(const corpus_table *manifest) {
+    static const char *const IDS[] = { "vagrant-story-vmp", "suikoden2-vmp" };
+    for (size_t i = 0; i < 2; i++) {
+        size_t len = 0, out_len = 0;
+        uint8_t *bytes = load_sample_bytes(manifest, IDS[i], &len);
+        if (!bytes) continue;
+        int rc = 0;
+        sigil_ps1_file *f = file_from(bytes, len, &rc);
+        uint8_t *out = NULL;
+        if (!f || f->format != SIGIL_CARD_FORMAT_PS1_VMP || sigil_ps1_file_check(f) != SIGIL_OK) {
+            fail(IDS[i], "a .vmp as the console signed it doesn't check");
+        } else if (!(out = written(IDS[i], f, &out_len)) || out_len != len || memcmp(out, bytes, len) != 0) {
+            fail(IDS[i], "an unchanged .vmp doesn't write back byte for byte");
+        }
+        free(out);
+        out = NULL;
+
+        char removed[SIGIL_CARD_NAME_MAX], kept[SIGIL_CARD_NAME_MAX];
+        sigil_ps1_file *changed = NULL;
+        if (f && i == 0) {
+            sigil_ps1_format(f->image);
+            size_t mcs_len = 0;
+            uint8_t *mcs = load_sample_bytes(manifest, "bugs-bunny-mcs", &mcs_len);
+            if (!mcs || sigil_ps1_inject(f->image, mcs, mcs_len) != SIGIL_OK) fail(IDS[i], "setup failed");
+            free(mcs);
+        } else if (f && !swap_first_save(manifest, f, removed, kept)) {
+            fail(IDS[i], "setup failed");
+        }
+        if (f && (out = written(IDS[i], f, &out_len))) {
+            if (out_len != VMP_FILE_SIZE || memcmp(out, bytes, VMP_SIGNATURE) != 0 ||
+                memcmp(out + VMP_SIGNATURE + 20, bytes + VMP_SIGNATURE + 20, PS1_VMP_HEADER_SIZE - VMP_SIGNATURE - 20) != 0) {
+                fail(IDS[i], "a rewritten .vmp lost its header or seed, or its size");
+            }
+            if (memcmp(out + VMP_SIGNATURE, bytes + VMP_SIGNATURE, 20) == 0) fail(IDS[i], "a changed card kept the old signature");
+            changed = file_from(out, out_len, &rc);
+            if (!changed || sigil_ps1_file_check(changed) != SIGIL_OK) fail(IDS[i], "a rewritten .vmp's signature doesn't check");
+        }
+        free(changed);
+        free(out);
+        out = NULL;
+        free(f);
+
+        /* One flipped byte of the card: damaged; written again, signed anew. */
+        bytes[PS1_VMP_HEADER_SIZE + PS1_BLOCK_SIZE + 0x100] ^= 0xFF;
+        sigil_ps1_file *bad = file_from(bytes, len, &rc), *fixed = NULL;
+        if (!bad || sigil_ps1_file_check(bad) != SIGIL_ERR_DAMAGED) {
+            fail(IDS[i], "a .vmp whose card doesn't match its signature didn't read as damaged");
+        } else if ((out = written(IDS[i], bad, &out_len))) {
+            fixed = file_from(out, out_len, &rc);
+            if (!fixed || sigil_ps1_file_check(fixed) != SIGIL_OK || memcmp(fixed->image, bad->image, PS1_CARD_SIZE) != 0) {
+                fail(IDS[i], "a damaged .vmp written again isn't signed for its card");
+            }
+        }
+        free(fixed);
+        free(out);
+        free(bad);
+        free(bytes);
+    }
+}
+
+/* A DexDrive .gme: unchanged, it writes back byte for byte; changed, every
+ * header byte but the frame copies and comments stays, the copies follow the
+ * directory as DexDrive writes them, and a comment stays only beside its own
+ * save. A short file writes back full size. */
+static void check_gme(const corpus_table *manifest) {
+    size_t len = 0, out_len = 0;
+    uint8_t *bytes = load_sample_bytes(manifest, "gran-turismo-gme", &len);
+    if (bytes) {
+        int rc = 0;
+        sigil_ps1_file *f = file_from(bytes, len, &rc);
+        uint8_t *out = f ? written("gran-turismo-gme", f, &out_len) : NULL;
+        if (!f || f->format != SIGIL_CARD_FORMAT_PS1_GME || !out || out_len != len || memcmp(out, bytes, len) != 0) {
+            fail("gran-turismo-gme", "an unchanged .gme doesn't write back byte for byte");
+        }
+        free(out);
+        out = NULL;
+        free(f);
+        f = NULL;
+
+        char removed[SIGIL_CARD_NAME_MAX], kept[SIGIL_CARD_NAME_MAX];
+        uint8_t *image = bytes + PS1_GME_HEADER_SIZE;
+        uint32_t removed_slot = UINT32_MAX, kept_slot = UINT32_MAX, free_slot = UINT32_MAX;
+        sigil_card_listing *l = NULL;
+        if (sigil_ps1_card_list(image, SIGIL_CARD_FORMAT_PS1_RAW, &l) == SIGIL_OK && l->entry_count >= 2) {
+            removed_slot = l->entries[0].first_block - 1;
+            kept_slot = l->entries[1].first_block - 1;
+        }
+        sigil_card_listing_free(l);
+        for (uint32_t s = 0; s < PS1_DATA_BLOCKS && free_slot == UINT32_MAX; s++) {
+            uint8_t state = image[(s + 1) * PS1_FRAME_SIZE];
+            if (state >= 0xA0 && state <= 0xA3) free_slot = s;
+        }
+        if (removed_slot != UINT32_MAX && free_slot != UINT32_MAX) {
+            memcpy(bytes + GME_COMMENTS + GME_COMMENT * removed_slot, "the removed save", 17);
+            memcpy(bytes + GME_COMMENTS + GME_COMMENT * kept_slot, "the kept save", 14);
+            memcpy(bytes + GME_COMMENTS + GME_COMMENT * free_slot, "a deleted save", 15);
+            f = file_from(bytes, len, &rc);
+        }
+        if (!f || removed_slot == UINT32_MAX || !swap_first_save(manifest, f, removed, kept) ||
+            !(out = written("gran-turismo-gme", f, &out_len))) {
+            fail("gran-turismo-gme", "setup failed");
+        } else {
+            uint8_t *card = out + PS1_GME_HEADER_SIZE;
+            bool others = out_len == GME_FILE_SIZE && memcmp(out, bytes, GME_STATES) == 0 &&
+                          out[GME_STATES + 15] == bytes[GME_STATES + 15] &&
+                          memcmp(out + GME_LINKS + 15, bytes + GME_LINKS + 15, GME_COMMENTS - GME_LINKS - 15) == 0;
+            if (!others) fail("gran-turismo-gme", "a header byte outside the frame copies and comments changed");
+            for (uint32_t s = 0; s < PS1_DATA_BLOCKS; s++) {
+                const uint8_t *frame = card + (s + 1) * PS1_FRAME_SIZE;
+                bool deleted = frame[0] >= 0xA1 && frame[0] <= 0xA3;
+                if (out[GME_STATES + s] != (deleted ? 0xA0 : frame[0]) || out[GME_LINKS + s] != (deleted ? 0xFF : frame[8])) {
+                    fail("gran-turismo-gme", "a frame copy doesn't follow the directory");
+                }
+            }
+            size_t mcs_len = 0;
+            uint8_t *mcs = load_sample_bytes(manifest, "bugs-bunny-mcs", &mcs_len);
+            char new_name[PS1_NAME_LEN + 1] = { 0 };
+            if (mcs) memcpy(new_name, mcs + 0x0A, PS1_NAME_LEN);
+            free(mcs);
+            uint32_t now_kept = slot_of(card, kept);
+            uint32_t new_slot = slot_of(card, new_name);
+            if (now_kept != kept_slot || strcmp((const char *)out + GME_COMMENTS + GME_COMMENT * kept_slot, "the kept save") != 0) {
+                fail("gran-turismo-gme", "the comment beside a save that stayed was lost");
+            }
+            const uint32_t cleared[2] = { removed_slot, new_slot };
+            for (size_t c = 0; c < 2; c++) {
+                const uint8_t *comment = out + GME_COMMENTS + GME_COMMENT * cleared[c];
+                for (uint32_t b = 0; b < GME_COMMENT; b++) {
+                    if (comment[b]) { fail("gran-turismo-gme", "a comment stayed on a slot whose save changed"); break; }
+                }
+            }
+            if (new_slot != free_slot) fail("gran-turismo-gme", "setup: the new save didn't take the lowest free slot");
+        }
+        free(out);
+        out = NULL;
+        free(f);
+
+        /* Another save in the same slot, same state byte: only its name says
+         * the comment no longer belongs. */
+        f = removed_slot != UINT32_MAX ? file_from(bytes, len, &rc) : NULL;
+        if (f) {
+            memcpy(f->image + (removed_slot + 1) * PS1_FRAME_SIZE + 0x0A, "BASLUS-00000OTHERSAV", PS1_NAME_LEN);
+            out = written("gran-turismo-gme", f, &out_len);
+            const uint8_t *comment = out ? out + GME_COMMENTS + GME_COMMENT * removed_slot : NULL;
+            if (!comment || comment[0]) fail("gran-turismo-gme", "a comment stayed beside another save in its slot");
+        }
+        free(out);
+        free(f);
+        free(bytes);
+    }
+
+    bytes = load_sample_bytes(manifest, "sotn-short-gme", &len);
+    if (bytes) {
+        int rc = 0;
+        sigil_ps1_file *f = file_from(bytes, len, &rc);
+        uint8_t *out = f ? written("sotn-short-gme", f, &out_len) : NULL;
+        bool zero_tail = out && out_len == GME_FILE_SIZE;
+        for (size_t b = len; zero_tail && b < out_len; b++) zero_tail = out[b] == 0;
+        if (!out || out_len != GME_FILE_SIZE || memcmp(out, bytes, len) != 0 || !zero_tail) {
+            fail("sotn-short-gme", "a short .gme doesn't write back as the full card it reads as");
+        }
+        free(out);
+        free(f);
+        free(bytes);
+    }
+}
+
 int main(void) {
     char path[1024];
     corpus_table manifest, entries;
@@ -377,6 +722,10 @@ int main(void) {
     check_mcs_round_trip(&manifest);
     check_inject_keeps_other_saves(&manifest);
     check_full_card_refuses(&manifest);
+    check_broken_chains(&manifest);
+    check_refusals(&manifest);
+    check_vmp(&manifest);
+    check_gme(&manifest);
     int missing = g_cards ? corpus_count_missing(&manifest, "psx") : 0;
     corpus_free(&manifest);
     corpus_free(&entries);

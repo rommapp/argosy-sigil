@@ -21,12 +21,12 @@ sigil does the format work, decides who owns each save, and keeps the sync bookk
 1. Lists directories and provides the `open` and `write` callbacks.
 2. Says when a session has ended. Only the client can see the emulator close or die.
 3. Stores the state blob and moves units to and from RomM.
-4. Shows the user anything that needs a decision, meaning conflicts and saves with no known owner, and passes the answers back.
+4. Decides which side wins when the local and the remote saves both changed, shows the user saves with no known owner, and passes the answers back. sigil reports what it finds and never picks a winner.
 
 The public calls:
 
-- `collect(request, listing, state, open)` returns the units to upload, conflicts, saves with no known owner, and a new state.
-- `restore(request, listing, units, state, open, write)` writes units into place, verifies them, and returns a new state. It refuses to overwrite a save that changed locally since the last sync and reports a conflict instead.
+- `collect(request, listing, state, open)` returns the units to upload, whether each changed since the last sync, saves with no known owner, and a new state.
+- `restore(request, listing, units, state, open, write)` writes units into place, verifies them, and returns a new state. It refuses with a conflict, writing nothing, to overwrite a save that changed locally since the last sync, unless the request says to overwrite local saves.
 - `list(request, listing, open)` returns the entries on a card or volume for a card explorer.
 
 The request carries what sigil can't discover by itself:
@@ -37,7 +37,7 @@ The request carries what sigil can't discover by itself:
 - `compatible_with` links, when the user chose to use another release's save
 - the mode: managed when the client launches the game, unmanaged when it only syncs
 - PCSX2's `memcardFilters` list, when the client has it
-- the user's answers to conflicts and to saves with no known owner
+- the client's answers: whether a restore overwrites local saves that changed, and which saves with no known owner the user claimed
 
 From those, sigil works out the kind of target (folder card, shared card or per-game card), whether to swap a volume or inject into it, which entries are safe to delete, and whether a change is local, remote or both.
 
@@ -110,7 +110,7 @@ Emulators that keep saves as folders convert at the edges. Dolphin's GCI folder 
 
 | Target | Upload | Restore |
 |---|---|---|
-| Folder card (PCSX2, AetherSX2, NetherSX2, ARMSX2) | Pack the game's save folders into a per-game card | Unpack into save folders, each with an `_pcsx2_index` built from the card's entries, writing only files whose bytes differ. Files of the game's folders that the unit lacks, and the game's folders it lacks, are removed. Other games' folders and the system folders stay as they are. When the card folder's `_pcsx2_superblock` is missing or shorter than 0x2000 bytes, or byte 0x16 isn't `0x6F`, write a full formatted one first, or PCSX2 shows the card as unformatted and hides every save. Never write it empty. sigil works on the card PCSX2 shows the game: the game's folders and the system folders packed into an 8 MB card, so another game's folders never count against its space |
+| Folder card (PCSX2, AetherSX2, NetherSX2, ARMSX2) | Pack the game's save folders into a per-game card | Unpack into save folders, each with an `_pcsx2_index` built from the card's entries, writing only files whose bytes differ. Files of the game's folders that the unit lacks, and the game's folders it lacks, are removed. Other games' folders and the system folders stay as they are. A `_pcsx2_superblock` missing or shorter than 0x2000 bytes, or with byte 0x16 not `0x6F`, makes PCSX2 show the card as unformatted and hide every save. On a new card, one with no save folders, restore writes a full formatted one first. On a card that holds saves it is damage: restore returns `SIGIL_ERR_DAMAGED` naming it and writes it only with `repair`. Never write it empty. A save folder whose `_pcsx2_index` doesn't parse is damage too: with `repair`, collect packs it without the index and restore writes a fresh one. sigil works on the card PCSX2 shows the game: the game's folders and the system folders packed into an 8 MB card, so another game's folders never count against its space |
 | Shared file card (`Mcd001.ps2`) | Extract the game's entries into a per-game card | Inject the entries into the shared card, rebuilding its FAT and ECC |
 | Per-game file card (LRPS2 per-content `<content>.ps2`, a PCSX2 per-game card) | Extract, dropping other games' entries | Inject, as for a shared card, so another game's save the user put there stays |
 
@@ -147,8 +147,8 @@ PS2 `DATA-SYSTEM` and `BWNETCNF` carry no serial and every game sees them. They 
 
 `restore` refuses before writing when:
 
-- the saves don't fit the card's blocks or directory entries, with `SIGIL_ERR_NO_SPACE`. The result names the save that overflowed and the blocks it lacked.
-- a GameCube companion's save belongs to another Dolphin region than the game, with `SIGIL_ERR_INVALID_ARG`. The game can't read it, and Dolphin keeps it in another region's folder or card. A `compatible_with` link will lift this once it exists.
+- the saves don't fit the card's blocks or directory entries, with `SIGIL_ERR_NO_SPACE`. The result's `problem` names the save and `blocks_short` the blocks it lacked.
+- a GameCube companion's save belongs to another Dolphin region than the game, with `SIGIL_ERR_REGION`, `problem` naming the save. The game can't read it, and Dolphin keeps it in another region's folder or card. A `compatible_with` link will lift this once it exists.
 
 ### Saturn, Sega CD and Dreamcast
 
@@ -192,16 +192,16 @@ A PCSX2 folder card keeps each save's timestamps and file order in `_pcsx2_index
 - The index holds `$ROOT` times for the folder and `order`, `timeCreated` and `timeModified` for each file. PCSX2 still reads the older `%ROOT` key.
 - Card dates convert to Unix seconds as UTC, as PCSX2 does, so a round trip doesn't shift the time.
 - `order` follows the card's directory entry order. Some games, GTA among them, break when it changes.
-- `_pcsx2_meta/<file>` and `_pcsx2_meta_directory` hold raw directory entries and take precedence over the index. sigil writes them only for entries whose mode isn't PCSX2's default. Otherwise PCSX2 applies that default when it loads.
+- `_pcsx2_meta/<file>` and `_pcsx2_meta_directory` hold raw directory entries and take precedence over the index. sigil writes them only for entries whose mode isn't PCSX2's default. Otherwise PCSX2 applies that default when it loads. PCSX2 reads a meta file of any length over the entry it would build, and sigil does the same. Two deliberate differences: a full meta file names the entry in PCSX2, while sigil keeps the host file's name so a folder packs back to the files it unpacked to; and a file the index doesn't list takes the host file's times in PCSX2, while sigil, which sees names but not times, gives it none. sigil orders such files as PCSX2 does, after the indexed ones in reverse listing order.
 - `_pcsx2_superblock` at the card folder's root is the one card-level file. PCSX2 reads all 0x2000 bytes and treats the card as formatted only when byte 0x16 is `0x6F`, so a missing, empty or short file hides every save ([sony.md](save-research/sony.md) section 2.2). sigil builds it from the same superblock page `sigil_ps2_card_format` writes, zero-padded to the erase block, which is mymc's blank card's first block. A superblock that already passes the check stays as it is, since it may describe a larger card.
 - The emulators don't agree on the index's YAML style. AetherSX2 writes block style and quotes some keys; ARMSX2 writes one line of flow style. PCSX2's YAML reader takes either, so sigil reads both and writes one fixed style. The index is never part of what RomM stores, since PS2 saves travel as cards.
 
-`.vmp` and `.psv` are signed with an HMAC. sigil reads them and doesn't write them.
+`.vmp` and `.psv` are signed with an HMAC-SHA1 whose key comes from a seed in the header. sigil checks a `.vmp`'s signature when it reads one and signs it again under the same seed when it writes one. A `.psv` holds a single save and isn't a card, so sigil only reads it.
 
 | Order | Container | Source for the format |
 |---|---|---|
 | 1 | PS2 `.ps2` card image, and PCSX2 folder cards | mymc (public domain) for the card. A Python adaptation in progress for RomM's memory card tab is the reference to test against. PCSX2's `MemoryCardFolder.cpp` for the folder form, read and not copied (GPL-3), checked against ARMSX2 for Android |
-| 2 | PS1 card (`.mcr`, `.mcd`, `.srm`; `.gme` and `.vmp` read only) | MemcardRex and DuckStation for the documented layout |
+| 2 | PS1 card (`.mcr`, `.mcd`, `.srm`, DexDrive `.gme`, PSP and Vita `.vmp`) | MemcardRex and DuckStation for the documented layout; the `.vmp` signature and the `.gme` header copies checked against real files |
 | 3 | Saturn and Sega CD backup RAM. Yaba Sanshiro keeps one `backup.bin` for every game with no option to split it | emulator source |
 | 4 | Dreamcast VMU. redream shares its VMUs with no per-game option | VMS/VMI format documentation |
 | 5 | GameCube raw card. Dolphin's default GCI folder mode is already per game, so only users who switched to raw cards need this | YAGCD and the Dolphin wiki (Dolphin's code is GPL) |
@@ -243,7 +243,7 @@ The user plays outside the client, which only syncs. It calls `collect` on each 
 
 - Cards with ids (PS1, PS2, GameCube raw) and folder saves sync in place. Inject works per entry or per folder and never touches other games' saves.
 - Saturn and Sega CD volumes and Dreamcast VMUs are never swapped, because the next launch outside the client would lose every other game's saves. Entries with a known owner sync normally. Entries with no known owner wait in a holding unit until the user claims them. `collect` reports these platforms as partially synced, and the client shows that.
-- `restore` injects only when the target hasn't changed since the previous `collect`. The next `collect` checks that the injected entries survived, since a core that unloads after the inject writes its in-memory copy over the file. Entries that didn't survive come back from `collect` to be restored again, or as a conflict if they changed locally in the meantime.
+- `restore` injects only when the target hasn't changed since the previous `collect`. The next `collect` checks that the injected entries survived, since a core that unloads after the inject writes its in-memory copy over the file. When `collect` finds the entries the restore replaced back on disk, it sets `restore_again`. When the local entries match neither those nor the restored ones, the player changed them in the meantime: `collect` returns them as a changed unit, and the client decides which side wins.
 
 ## Open questions
 

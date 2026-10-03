@@ -7,6 +7,7 @@
 #include "card_saturn.h"
 #include "card_segacd.h"
 #include <ctype.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 /* Each reader checks its own magic or layout. The ones with a fixed magic go
@@ -25,11 +26,25 @@ sigil_card_listing *sigil_card_listing_new(int format, size_t capacity) {
     if (!listing) return NULL;
     if (capacity > 0) {
         listing->entries = (sigil_card_entry *)calloc(capacity, sizeof(sigil_card_entry));
-        if (!listing->entries) { free(listing); return NULL; }
+        listing->corrupt_entries = (sigil_card_entry *)calloc(capacity, sizeof(sigil_card_entry));
+        if (!listing->entries || !listing->corrupt_entries) {
+            sigil_card_listing_free(listing);
+            return NULL;
+        }
     }
     listing->struct_version = SIGIL_CARD_LISTING_V1;
     listing->format = format;
     return listing;
+}
+
+void sigil_card_listing_corrupt(sigil_card_listing *listing, const char *name, const char *owner_id,
+                                uint32_t first_block) {
+    listing->corrupt_count++;
+    if (!name || !listing->corrupt_entries) return;
+    sigil_card_entry *e = &listing->corrupt_entries[listing->corrupt_entry_count++];
+    snprintf(e->name, sizeof(e->name), "%s", name);
+    snprintf(e->owner_id, sizeof(e->owner_id), "%s", owner_id ? owner_id : "");
+    e->first_block = first_block;
 }
 
 void sigil_card_sony_owner(const char *name, char out[SIGIL_CARD_OWNER_MAX]) {
@@ -61,5 +76,6 @@ int sigil_card_list(const sigil_io *io, sigil_card_listing **out) {
 void sigil_card_listing_free(sigil_card_listing *listing) {
     if (!listing) return;
     free(listing->entries);
+    free(listing->corrupt_entries);
     free(listing);
 }

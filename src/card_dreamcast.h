@@ -56,6 +56,13 @@ int sigil_dreamcast_extract(const uint8_t image[VMU_CARD_SIZE], uint32_t first_b
 void sigil_dreamcast_format(uint8_t image[VMU_CARD_SIZE]);
 
 /**
+ * Makes `image` an empty VMU laid out as `like` (its root block, user block
+ * count, FAT and directory placement), or a stock one when `like` doesn't
+ * read as a VMU.
+ */
+void sigil_dreamcast_format_like(uint8_t image[VMU_CARD_SIZE], const uint8_t like[VMU_CARD_SIZE]);
+
+/**
  * Adds the .dci file `dci` to the VMU. A game file takes the contiguous
  * blocks from block 0; a data file takes free blocks from the top of the user
  * area down. SIGIL_ERR_NO_SPACE when the VMU lacks the blocks or a directory
@@ -65,6 +72,9 @@ void sigil_dreamcast_format(uint8_t image[VMU_CARD_SIZE]);
  * the VMU is left unchanged.
  */
 int sigil_dreamcast_inject(uint8_t image[VMU_CARD_SIZE], const uint8_t *dci, size_t len);
+
+/** Blocks sigil_dreamcast_inject takes for `dci`; 0 when it isn't one save. */
+uint32_t sigil_dreamcast_cost(const uint8_t *dci, size_t len);
 
 /** Removes the file starting at `first_block`, freeing its blocks and directory slot. */
 int sigil_dreamcast_delete(uint8_t image[VMU_CARD_SIZE], uint32_t first_block);

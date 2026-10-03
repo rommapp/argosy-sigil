@@ -80,10 +80,47 @@ target_link_libraries(unit_switch_cnmt PRIVATE sigil_aes)
 
 sigil_add_test(unit_save_names)
 target_include_directories(unit_save_names PRIVATE ${CMAKE_SOURCE_DIR}/src)
+sigil_add_test(unit_sha1)
+target_include_directories(unit_sha1 PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(unit_save_unit PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
 # The JNI binding's name escaping is plain C, tested here without a JDK.
 sigil_add_test(unit_jni_names)
 target_include_directories(unit_jni_names PRIVATE ${CMAKE_SOURCE_DIR}/bindings/android/src/main/cpp)
+
+# The Go and Python bindings link the static libraries this build makes, so
+# their tests run here when the toolchain is there and the build is plain and
+# static: a sanitized archive needs its runtime in the host process.
+if(NOT SIGIL_BUILD_SHARED AND NOT CMAKE_C_FLAGS MATCHES "-fsanitize")
+    find_program(SIGIL_GO go)
+    if(SIGIL_GO)
+        add_test(NAME binding_go COMMAND ${SIGIL_GO} test -count=1 ./...
+                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/bindings/go)
+        set_tests_properties(binding_go PROPERTIES ENVIRONMENT "CGO_LDFLAGS=-L${CMAKE_BINARY_DIR}")
+    else()
+        message(STATUS "Go binding tests off: no go")
+    endif()
+
+    set(SIGIL_BINDING_PYTHON "${CMAKE_SOURCE_DIR}/bindings/python/.venv/bin/python" CACHE FILEPATH
+        "Python with cffi and pytest that runs the binding tests")
+    set(python_ready 1)
+    if(EXISTS "${SIGIL_BINDING_PYTHON}")
+        execute_process(COMMAND ${SIGIL_BINDING_PYTHON} -c "import cffi, pytest"
+                        RESULT_VARIABLE python_ready OUTPUT_QUIET ERROR_QUIET)
+    endif()
+    if(python_ready EQUAL 0)
+        set(python_dir ${CMAKE_SOURCE_DIR}/bindings/python)
+        add_test(NAME binding_python_build COMMAND ${SIGIL_BINDING_PYTHON} build_sigil.py WORKING_DIRECTORY ${python_dir})
+        set_tests_properties(binding_python_build PROPERTIES ENVIRONMENT "SIGIL_LIB_DIR=${CMAKE_BINARY_DIR}"
+                             FIXTURES_SETUP sigil_python_extension)
+        add_test(NAME binding_python COMMAND ${SIGIL_BINDING_PYTHON} -m pytest -q test_sigil.py WORKING_DIRECTORY ${python_dir})
+        set_tests_properties(binding_python PROPERTIES FIXTURES_REQUIRED sigil_python_extension)
+        add_test(NAME binding_contract COMMAND ${SIGIL_BINDING_PYTHON} -m pytest -q test_contract.py
+                 WORKING_DIRECTORY ${python_dir})
+    else()
+        message(STATUS "Python binding tests off: set SIGIL_BINDING_PYTHON to a Python with cffi and pytest")
+    endif()
+endif()
 
 # save_id case is emitted by the extractors AND by the filename fallback, so
 # these carry assertions against both paths.

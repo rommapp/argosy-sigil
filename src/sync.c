@@ -9,6 +9,16 @@ static sigil_sync_result *new_result(void) {
     return r;
 }
 
+/* Gives the caller the result on success and with each refusal that reports
+ * through it (a conflict, the save or file at fault); frees it otherwise. */
+static int hand_back(sigil_sync_result *r, int rc, sigil_sync_result **out) {
+    bool reports = rc == SIGIL_OK || rc == SIGIL_ERR_CONFLICT || rc == SIGIL_ERR_NO_SPACE || rc == SIGIL_ERR_REGION ||
+                   rc == SIGIL_ERR_DAMAGED || rc == SIGIL_ERR_NO_TARGET || rc == SIGIL_ERR_AMBIGUOUS;
+    if (reports && r) *out = r;
+    else sigil_sync_result_free(r);
+    return rc;
+}
+
 static bool request_valid(const sigil_sync_request *req) {
     return req && req->struct_version == SIGIL_SYNC_REQUEST_V1 && req->save.open && req->save.content_path &&
            req->save.listing;
@@ -78,14 +88,24 @@ int sigil_sync_finish_collect(sigil_sync_ctx *x, const sigil_sync_saves *saves, 
     return rc;
 }
 
+/* The game's cards and the saves of the game and its companions on them,
+ * naming in the result a damaged file they refused on. */
+static int gather_cards(sigil_sync_ctx *x, sigil_sync_cards *cards, sigil_sync_saves *saves, sigil_sync_result *r) {
+    int rc = sigil_sync_gather_cards(x, cards, r->artifact);
+    if (rc == SIGIL_OK) {
+        rc = sigil_sync_gather_card_saves(x, cards, saves);
+        if (rc != SIGIL_OK) sigil_sync_cards_free(cards);
+    }
+    if (rc == SIGIL_ERR_DAMAGED || rc == SIGIL_ERR_AMBIGUOUS) snprintf(r->problem, sizeof(r->problem), "%s", cards->problem);
+    return rc;
+}
+
 static int collect_cards(sigil_sync_ctx *x, sigil_sync_result *r) {
     sigil_sync_cards cards;
-    int rc = sigil_sync_gather_cards(x, &cards, r->artifact);
-    if (rc != SIGIL_OK) return rc;
     sigil_sync_saves saves;
-    rc = sigil_sync_gather_card_saves(x, &cards, &saves);
-    sigil_sync_cards_free(&cards);
+    int rc = gather_cards(x, &cards, &saves, r);
     if (rc != SIGIL_OK) return rc;
+    sigil_sync_cards_free(&cards);
     rc = sigil_sync_finish_collect(x, &saves, NULL, r);
     sigil_sync_saves_free(&saves);
     return rc;
@@ -152,9 +172,7 @@ int sigil_collect(const sigil_sync_request *req, sigil_sync_result **out) {
     if (rc == SIGIL_OK) rc = collect_any(&x, r);
     if (rc == SIGIL_OK) rc = finish(&x, r, true);
     sigil_sync_ctx_close(&x);
-    if (rc != SIGIL_OK) { sigil_sync_result_free(r); return rc; }
-    *out = r;
-    return SIGIL_OK;
+    return hand_back(r, rc, out);
 }
 
 /* ---- restore ------------------------------------------------------------------ */
@@ -208,16 +226,15 @@ static int note_companions(sigil_sync_ctx *x, const sigil_sync_saves *incoming) 
 static int restore_cards(sigil_sync_ctx *x, sigil_sync_saves *incoming, sigil_sync_result *r,
                          char local_identity[33]) {
     sigil_sync_cards cards;
-    int rc = sigil_sync_gather_cards(x, &cards, r->artifact);
-    if (rc != SIGIL_OK) return rc;
     sigil_sync_saves local;
-    rc = sigil_sync_gather_card_saves(x, &cards, &local);
+    int rc = gather_cards(x, &cards, &local, r);
+    if (rc != SIGIL_OK) return rc;
     bool already_there = false;
-    if (rc == SIGIL_OK) {
-        rc = sigil_sync_check_restore(x, &local, incoming, r, local_identity, &already_there);
-        sigil_sync_saves_free(&local);
-    }
-    if (rc == SIGIL_OK && !already_there) rc = sigil_sync_place_on_cards(x, &cards, incoming, r);
+    rc = sigil_sync_check_restore(x, &local, incoming, r, local_identity, &already_there);
+    sigil_sync_saves_free(&local);
+    bool repairing = false;
+    for (size_t c = 0; c < cards.count; c++) repairing = repairing || cards.files[c].changed;
+    if (rc == SIGIL_OK && (!already_there || repairing)) rc = sigil_sync_place_on_cards(x, &cards, incoming, r);
     sigil_sync_cards_free(&cards);
     return rc;
 }
@@ -230,7 +247,7 @@ static int restore_folder(sigil_sync_ctx *x, const char *folder, sigil_sync_save
     if (rc != SIGIL_OK) return rc;
     bool already_there = false;
     rc = sigil_sync_check_restore(x, &local, incoming, r, local_identity, &already_there);
-    if (rc == SIGIL_OK && !already_there) rc = sigil_sync_place_in_folder(x, folder, &local, &stale, incoming);
+    if (rc == SIGIL_OK && !already_there) rc = sigil_sync_place_in_folder(x, folder, &local, &stale, incoming, r);
     sigil_sync_saves_free(&local);
     free(stale.paths);
     return rc;
@@ -274,7 +291,7 @@ int sigil_restore(const sigil_sync_request *req, const uint8_t *unit, size_t uni
     sigil_sync_saves_init(&incoming, kind);
     size_t sizes[SIGIL_DEVICE_COUNT];
     char local_identity[33] = "";
-    if (rc == SIGIL_OK) rc = sigil_sync_request_saves(&x, unit, unit_len, &incoming, sizes);
+    if (rc == SIGIL_OK) rc = sigil_sync_request_saves(&x, unit, unit_len, &incoming, sizes, r);
     if (rc == SIGIL_OK) rc = sigil_sync_identity_of(&incoming, r->identity_hash);
     if (rc == SIGIL_OK) {
         sigil_md5_of(unit, unit_len, r->content_hash);
@@ -294,13 +311,7 @@ int sigil_restore(const sigil_sync_request *req, const uint8_t *unit, size_t uni
     if (rc == SIGIL_OK) rc = finish(&x, r, false);
     if (rc == SIGIL_OK) r->changed = 0;
     sigil_sync_ctx_close(&x);
-    if (rc == SIGIL_ERR_CONFLICT || rc == SIGIL_ERR_NO_SPACE) {
-        *out = r;
-        return rc;
-    }
-    if (rc != SIGIL_OK) { sigil_sync_result_free(r); return rc; }
-    *out = r;
-    return SIGIL_OK;
+    return hand_back(r, rc, out);
 }
 
 void sigil_sync_result_free(sigil_sync_result *result) {

@@ -67,6 +67,9 @@ int sigil_gamecube_format(uint8_t *image, size_t size, bool shift_jis);
  */
 int sigil_gamecube_inject(uint8_t *image, size_t size, const uint8_t *gci, size_t len);
 
+/** Blocks sigil_gamecube_inject takes for `gci`, the same on every card size; 0 when it isn't one save. */
+uint32_t sigil_gamecube_cost(const uint8_t *gci, size_t len);
+
 /** Removes the save starting at `first_block`, freeing and erasing its blocks. */
 int sigil_gamecube_delete(uint8_t *image, size_t size, uint32_t first_block);
 

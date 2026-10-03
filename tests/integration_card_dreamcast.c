@@ -382,6 +382,14 @@ static void check_vms_round_trip(const corpus_table *manifest, const corpus_tabl
             if (memcmp(dci, IKARUGA_ENTRY, VMU_DIR_ENTRY_SIZE) != 0) fail("ikaruga-vms-vmi", "directory entry differs");
             check_round_trip("ikaruga-vms-vmi", entries, dci, len, "IKARUGA_DATA", 199);
         }
+        /* VMI file mode 0x0003: a protected game file, type 0xCC, copy byte
+         * 0xFF, its VMS header at block 1. */
+        vmi[0x64] = 0x03;
+        if (sigil_dreamcast_dci_from_vms(vms, vms_len, vmi, vmi_len, dci) != SIGIL_OK || dci[0] != 0xCC ||
+            dci[1] != 0xFF || dci[0x1A] != 1 || dci[0x1B] != 0) {
+            fail("ikaruga-vms-vmi", "a protected game file's VMI didn't convert to a protected game entry");
+        }
+        vmi[0x64] = 0x00;
         vmi[0] ^= 0x01;
         if (sigil_dreamcast_dci_from_vms(vms, vms_len, vmi, vmi_len, dci) != SIGIL_ERR_UNSUPPORTED_FORMAT) {
             fail("ikaruga-vms-vmi", "a VMI with a bad checksum converted");
@@ -510,6 +518,8 @@ static void check_broken_chain(const corpus_table *manifest) {
         sigil_card_listing *l = NULL;
         if (sigil_dreamcast_card_list(image, &l) != SIGIL_OK || l->entry_count != 0 || l->corrupt_count != 1) {
             fail("gundam-0079-flycast", "a broken chain was listed");
+        } else if (l->corrupt_entry_count != 1 || strcmp(l->corrupt_entries[0].name, "GUNDAM_US_01") != 0) {
+            fail("gundam-0079-flycast", "the broken save isn't named among the corrupt entries");
         }
         sigil_card_listing_free(l);
         memcpy(image + BREAKS[i].off, original, 2);
@@ -537,6 +547,55 @@ static int64_t mem_size(void *ctx) { return (int64_t)((mem_ctx *)ctx)->len; }
 
 /* A real VMU with one byte added or cut is no VMU, whether or not the stream
  * reports its size. */
+/* A VMU whose root or FAT block isn't marked the chain's end, or whose
+ * directory overlaps the FAT, isn't a VMU sigil reads; a .dci whose entry
+ * counts one block fewer than it carries isn't injected. */
+static void check_layout_guards(const corpus_table *manifest) {
+    uint8_t *image = (uint8_t *)malloc(VMU_CARD_SIZE);
+    if (!image || !load_sample(manifest, "gundam-0079-flycast", image)) { free(image); return; }
+    static const struct { size_t off; uint8_t bytes[2]; const char *what; } BREAKS[] = {
+        { FAT_OFFSET + 2 * 255, { 0xFC, 0xFF }, "a root block not marked the end of its chain" },
+        { FAT_OFFSET + 2 * 254, { 0xFC, 0xFF }, "a FAT block not marked the end of its chain" },
+        { 255u * VMU_BLOCK_SIZE + 0x4A, { 254, 0x00 }, "a directory over the FAT" },
+    };
+    for (size_t i = 0; i < sizeof(BREAKS) / sizeof(BREAKS[0]); i++) {
+        uint8_t original[2];
+        memcpy(original, image + BREAKS[i].off, 2);
+        memcpy(image + BREAKS[i].off, BREAKS[i].bytes, 2);
+        sigil_card_listing *l = NULL;
+        if (sigil_dreamcast_card_list(image, &l) == SIGIL_OK) fail("gundam-0079-flycast", BREAKS[i].what);
+        sigil_card_listing_free(l);
+        memcpy(image + BREAKS[i].off, original, 2);
+    }
+
+    sigil_card_listing *l = NULL;
+    uint8_t *dci = NULL, *blank = (uint8_t *)malloc(VMU_CARD_SIZE);
+    size_t len = 0;
+    if (blank && sigil_dreamcast_card_list(image, &l) == SIGIL_OK && l->entry_count == 1) {
+        len = sigil_dreamcast_dci_size(l->entries[0].blocks);
+        dci = (uint8_t *)malloc(len);
+        if (dci && sigil_dreamcast_extract(image, l->entries[0].first_block, l->entries[0].blocks, dci) == SIGIL_OK) {
+            /* A .dci another tool wrote may keep the block the file started
+             * at; the block it goes to on this VMU replaces it. */
+            dci[0x02] = 0x05;
+            sigil_dreamcast_format(blank);
+            if (sigil_dreamcast_inject(blank, dci, len) != SIGIL_OK || sigil_dreamcast_verify(blank, dci, len) != SIGIL_OK) {
+                fail("gundam-0079-flycast", "a .dci that names its old first block didn't verify once in");
+            }
+            dci[0x02] = 0x00;
+            dci[0x18]--;
+            sigil_dreamcast_format(blank);
+            if (sigil_dreamcast_inject(blank, dci, len) != SIGIL_ERR_UNSUPPORTED_FORMAT) {
+                fail("gundam-0079-flycast", "a .dci counting fewer blocks than it carries went in");
+            }
+        }
+    }
+    sigil_card_listing_free(l);
+    free(dci);
+    free(blank);
+    free(image);
+}
+
 static void check_wrong_size(const corpus_table *manifest) {
     uint8_t *bytes = (uint8_t *)calloc(1, VMU_CARD_SIZE + 1);
     if (!bytes || !load_sample(manifest, "gundam-0079-flycast", bytes)) { free(bytes); return; }
@@ -556,6 +615,23 @@ static void check_wrong_size(const corpus_table *manifest) {
     if (sigil_card_list(&io, &l) != SIGIL_OK) fail("gundam-0079-flycast", "an unsized stream of the VMU did not list");
     sigil_card_listing_free(l);
     free(bytes);
+}
+
+/* An empty VMU laid out as one with 241 user blocks has all 241 free, and
+ * a save written to it reads back. */
+static void check_format_like(const corpus_table *manifest) {
+    uint8_t *like = (uint8_t *)malloc(VMU_CARD_SIZE), *image = (uint8_t *)malloc(VMU_CARD_SIZE);
+    sigil_card_listing *l = NULL;
+    if (like && image && load_sample(manifest, "extended-blocks-vmu", like)) {
+        sigil_dreamcast_format_like(image, like);
+        if (sigil_dreamcast_card_list(image, &l) != SIGIL_OK || l->entry_count != 0 || l->total_blocks != 241 ||
+            l->free_blocks != 241) {
+            fail("extended-blocks-vmu", "an empty VMU laid out alike lost blocks or kept saves");
+        }
+    }
+    sigil_card_listing_free(l);
+    free(image);
+    free(like);
 }
 
 int main(void) {
@@ -583,6 +659,7 @@ int main(void) {
     }
     check_ps1_cards_not_vmu();
     check_format(&manifest);
+    check_format_like(&manifest);
     check_dci_round_trip(&manifest, &entries);
     check_vms_round_trip(&manifest, &entries);
     check_game_rules(&manifest);
@@ -590,6 +667,7 @@ int main(void) {
     check_delete(&manifest);
     check_broken_chain(&manifest);
     check_wrong_size(&manifest);
+    check_layout_guards(&manifest);
     int missing = g_cards ? corpus_count_missing(&manifest, "dc") : 0;
     corpus_free(&manifest);
     corpus_free(&entries);

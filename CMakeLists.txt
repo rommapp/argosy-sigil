@@ -133,6 +133,7 @@ set(SIGIL_SOURCES
     src/gb.c
     src/snes.c
     src/md5.c
+    src/sha1.c
     src/zip_entries.c
     src/save_layout.c
     src/save_unit.c

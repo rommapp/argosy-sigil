@@ -214,14 +214,18 @@ int sigil_ps2_card_list(const sigil_ps2_card *card, sigil_card_listing **out) {
         if (!(mode & PS2_MODE_EXISTS) || !(mode & PS2_MODE_DIR)) continue;
         uint32_t first = sigil_read_le32(e + PS2_ENTRY_CLUSTER);
         uint32_t blocks = 0;
+        char name[PS2_NAME_LEN + 1];
+        memcpy(name, e + PS2_ENTRY_NAME, PS2_NAME_LEN);
+        name[PS2_NAME_LEN] = '\0';
+        char owner[SIGIL_CARD_OWNER_MAX];
+        sigil_card_sony_owner(name, owner);
         if (!save_clusters(card, first, sigil_read_le32(e + PS2_ENTRY_LENGTH), &blocks)) {
-            listing->corrupt_count++;
+            sigil_card_listing_corrupt(listing, name, owner, first);
             continue;
         }
         sigil_card_entry *entry = &listing->entries[listing->entry_count++];
-        memcpy(entry->name, e + PS2_ENTRY_NAME, PS2_NAME_LEN);
-        entry->name[PS2_NAME_LEN] = '\0';
-        sigil_card_sony_owner(entry->name, entry->owner_id);
+        memcpy(entry->name, name, sizeof(name));
+        memcpy(entry->owner_id, owner, sizeof(owner));
         entry->blocks = blocks;
         entry->first_block = first;
     }
@@ -642,6 +646,13 @@ static bool reserve_entry(cluster_allocator *a, uint32_t *chain, uint32_t *chain
     return true;
 }
 
+uint32_t sigil_ps2_cost(const sigil_ps2_card *card, const sigil_ps2_save *save) {
+    if (!card || !card->clusters || !save) return 0;
+    uint32_t root_count = root_entry_count(card);
+    if (root_count < 2) return 0;
+    return clusters_needed(card, save, root_slot_for_new(card, root_count), root_count);
+}
+
 int sigil_ps2_inject(sigil_ps2_card *card, const sigil_ps2_save *save) {
     if (!card || !card->clusters || !card->dirty || !save) return SIGIL_ERR_INVALID_ARG;
     uint32_t root_count = root_entry_count(card);
@@ -762,6 +773,12 @@ int sigil_ps2_verify(const sigil_ps2_card *card, const sigil_ps2_save *save) {
         const uint8_t *e = root + (size_t)i * PS2_ENTRY_SIZE;
         if (!(sigil_read_le16(e + PS2_ENTRY_MODE) & PS2_MODE_EXISTS)) continue;
         if (memcmp(e + PS2_ENTRY_NAME, save->entry + PS2_ENTRY_NAME, PS2_NAME_LEN) != 0) continue;
+        uint8_t have[PS2_ENTRY_SIZE], want[PS2_ENTRY_SIZE];
+        memcpy(have, e, PS2_ENTRY_SIZE);
+        memcpy(want, save->entry, PS2_ENTRY_SIZE);
+        sigil_write_le32(have + PS2_ENTRY_CLUSTER, 0);
+        sigil_write_le32(want + PS2_ENTRY_CLUSTER, 0);
+        if (memcmp(have, want, PS2_ENTRY_SIZE) != 0) continue;
         sigil_ps2_save found;
         if (sigil_ps2_extract(card, sigil_read_le32(e + PS2_ENTRY_CLUSTER), &found) != SIGIL_OK) continue;
         bool same = found.file_count == save->file_count;
@@ -796,7 +813,6 @@ void sigil_ps2_save_md5(const sigil_ps2_save *save, char out[33]) {
 #define PCSX2_META_DIR       "_pcsx2_meta_directory"
 #define PCSX2_META_PREFIX    "_pcsx2_meta/"
 #define PCSX2_PREFIX         "_pcsx2_"
-#define PCSX2_META_MIN       0x60u
 #define PCSX2_DIR_MODE       0x8427u
 #define PCSX2_FILE_MODE      0x8497u
 
@@ -1132,6 +1148,19 @@ static int compare_items(const void *a, const void *b) {
     return x->given < y->given ? -1 : (x->given > y->given);
 }
 
+/* The entry PCSX2 builds for `name`: its default, with whatever bytes the
+ * _pcsx2_meta file `meta` (or NULL) holds read over it, as PCSX2 reads a meta
+ * file of any length (MemoryCardFolder.cpp). The file or folder on the host
+ * names the entry. PCSX2 keeps a full meta's own name instead; sigil keeps
+ * the host's, so a folder packs back to the files it unpacked to. */
+static void entry_from_meta(uint8_t e[PS2_ENTRY_SIZE], const sigil_ps2_folder_file *meta, const char *name,
+                            uint16_t mode, int64_t created, int64_t modified) {
+    default_entry(e, mode, name, created, modified);
+    if (meta) memcpy(e, meta->data, meta->len < PS2_ENTRY_SIZE ? meta->len : PS2_ENTRY_SIZE);
+    memset(e + PS2_ENTRY_NAME, 0, PS2_NAME_LEN);
+    memcpy(e + PS2_ENTRY_NAME, name, strlen(name));
+}
+
 int sigil_ps2_pack(const char *folder, const sigil_ps2_folder_file *files, size_t count, sigil_ps2_save *out) {
     if (!folder || !out || (!files && count)) return SIGIL_ERR_INVALID_ARG;
     memset(out, 0, sizeof(*out));
@@ -1173,14 +1202,9 @@ int sigil_ps2_pack(const char *folder, const sigil_ps2_folder_file *files, size_
         char meta_path[PS2_FOLDER_PATH_MAX];
         snprintf(meta_path, sizeof(meta_path), "%s%s", PCSX2_META_PREFIX, f->path);
         const sigil_ps2_folder_file *meta = find_folder_file(files, count, meta_path);
-        if (meta && meta->len >= PCSX2_META_MIN) {
-            memset(pf->entry, 0, PS2_ENTRY_SIZE);
-            memcpy(pf->entry, meta->data, meta->len < PS2_ENTRY_SIZE ? meta->len : PS2_ENTRY_SIZE);
-        } else {
-            const index_row *row = index_find(&index, f->path);
-            default_entry(pf->entry, PCSX2_FILE_MODE, f->path, row && row->has_created ? row->created : 0,
-                          row && row->has_modified ? row->modified : 0);
-        }
+        const index_row *row = index_find(&index, f->path);
+        entry_from_meta(pf->entry, meta, f->path, PCSX2_FILE_MODE, row && row->has_created ? row->created : 0,
+                        row && row->has_modified ? row->modified : 0);
         if (f->len > UINT32_MAX) { rc = SIGIL_ERR_UNSUPPORTED_FORMAT; break; }
         sigil_write_le32(pf->entry + PS2_ENTRY_LENGTH, (uint32_t)f->len);
         sigil_write_le32(pf->entry + PS2_ENTRY_CLUSTER, 0);
@@ -1193,12 +1217,8 @@ int sigil_ps2_pack(const char *folder, const sigil_ps2_folder_file *files, size_
 
     if (rc == SIGIL_OK) {
         const sigil_ps2_folder_file *meta = find_folder_file(files, count, PCSX2_META_DIR);
-        if (meta && meta->len >= PCSX2_META_MIN) {
-            memcpy(out->entry, meta->data, meta->len < PS2_ENTRY_SIZE ? meta->len : PS2_ENTRY_SIZE);
-        } else {
-            default_entry(out->entry, PCSX2_DIR_MODE, folder, root && root->has_created ? root->created : 0,
-                          root && root->has_modified ? root->modified : 0);
-        }
+        entry_from_meta(out->entry, meta, folder, PCSX2_DIR_MODE, root && root->has_created ? root->created : 0,
+                        root && root->has_modified ? root->modified : 0);
         sigil_write_le32(out->entry + PS2_ENTRY_LENGTH, (uint32_t)out->file_count + 2);
         default_entry(out->self, PCSX2_DIR_MODE, ".", 0, 0);
         memset(out->self + PS2_ENTRY_CREATED, 0, PS2_TOD_SIZE);

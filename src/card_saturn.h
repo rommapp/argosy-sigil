@@ -131,6 +131,9 @@ int sigil_saturn_extract(const sigil_saturn_volume *vol, uint32_t first_block,
  */
 int sigil_saturn_inject(sigil_saturn_volume *vol, const uint8_t *bup, size_t len);
 
+/** Blocks sigil_saturn_inject takes for `bup` at `vol`'s block size; 0 when `bup` isn't one save. */
+uint32_t sigil_saturn_cost(const sigil_saturn_volume *vol, const uint8_t *bup, size_t len);
+
 /** Zeroes every block of the save whose archive block is `first_block`, freeing them. */
 int sigil_saturn_delete(sigil_saturn_volume *vol, uint32_t first_block);
 

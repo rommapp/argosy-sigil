@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "card_dreamcast.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -17,8 +18,15 @@ static int mem_read(void *ctx, uint64_t off, void *buf, size_t len) {
 
 static int64_t mem_size(void *ctx) { return (int64_t)((mem_ctx *)ctx)->len; }
 
+static void broken(const char *what) {
+    fprintf(stderr, "oracle: %s\n", what);
+    abort();
+}
+
 static void inject_and_verify(uint8_t *image, const uint8_t *dci, size_t len) {
-    if (sigil_dreamcast_inject(image, dci, len) == SIGIL_OK) sigil_dreamcast_verify(image, dci, len);
+    if (sigil_dreamcast_inject(image, dci, len) == SIGIL_OK && sigil_dreamcast_verify(image, dci, len) != SIGIL_OK) {
+        broken("an injected save doesn't verify");
+    }
 }
 
 /* Lists the input as a VMU, extracts and verifies every file it lists, then
@@ -40,13 +48,14 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             size_t len = sigil_dreamcast_dci_size(e->blocks);
             uint8_t *dci = (uint8_t *)malloc(len);
             if (dci && sigil_dreamcast_extract(image, e->first_block, e->blocks, dci) == SIGIL_OK) {
-                sigil_dreamcast_verify(image, dci, len);
+                if (sigil_dreamcast_verify(image, dci, len) != SIGIL_OK) broken("a listed save doesn't verify");
                 if (!first) { first = dci; first_len = len; dci = NULL; }
             }
             free(dci);
         }
         if (first && sigil_dreamcast_delete(image, listing->entries[0].first_block) == SIGIL_OK) {
-            inject_and_verify(image, first, first_len);
+            if (sigil_dreamcast_inject(image, first, first_len) != SIGIL_OK) broken("a deleted save didn't go back");
+            if (sigil_dreamcast_verify(image, first, first_len) != SIGIL_OK) broken("a reinjected save doesn't verify");
         }
         free(first);
     }

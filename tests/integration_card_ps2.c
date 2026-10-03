@@ -241,6 +241,15 @@ static bool load_card(const corpus_table *manifest, const char *id, sigil_ps2_ca
     return false;
 }
 
+static uint32_t free_clusters_of(const sigil_ps2_card *card) {
+    sigil_card_listing *l = NULL;
+    uint32_t n = sigil_ps2_card_list(card, &l) == SIGIL_OK ? l->free_blocks : 0;
+    sigil_card_listing_free(l);
+    return n;
+}
+
+/* Each save also checks that its cost is the clusters its inject took, root
+ * growth included. */
 static bool build_from(const sigil_ps2_card *source, const sigil_card_listing *listing, sigil_ps2_card *built) {
     if (sigil_ps2_card_format(built, MC01_TOD) != SIGIL_OK) return false;
     bool ok = true;
@@ -248,8 +257,14 @@ static bool build_from(const sigil_ps2_card *source, const sigil_card_listing *l
         sigil_ps2_save save;
         ok = sigil_ps2_extract(source, listing->entries[i].first_block, &save) == SIGIL_OK;
         if (ok) {
+            uint32_t before = free_clusters_of(built), cost = sigil_ps2_cost(built, &save);
             ok = sigil_ps2_inject(built, &save) == SIGIL_OK && sigil_ps2_verify(built, &save) == SIGIL_OK &&
                  sigil_ps2_inject(built, &save) == SIGIL_ERR_EXISTS;
+            if (ok && before - free_clusters_of(built) != cost) {
+                fprintf(stderr, "FAIL ps2 cost: %s cost %u, took %u\n", listing->entries[i].name, cost,
+                        before - free_clusters_of(built));
+                ok = false;
+            }
             sigil_ps2_save_free(&save);
         }
     }
@@ -315,6 +330,33 @@ static void check_delete_and_restore(const corpus_table *manifest) {
             sigil_ps2_card_list(&card, &restored) != SIGIL_OK || restored->free_blocks != before->free_blocks) {
             fail("mymc-mc01", "restoring the deleted save failed");
         }
+        /* A save holding a subdirectory isn't one sigil lifts off a card. */
+        sigil_ps2_card odd;
+        sigil_ps2_save lifted;
+        sigil_card_listing *odd_list = NULL;
+        static const uint8_t TOD[PS2_TOD_SIZE] = { 0, 0, 0, 0, 1, 1, 0xD0, 0x07 };
+        if (rez.file_count > 0 && sigil_ps2_card_format(&odd, TOD) == SIGIL_OK) {
+            uint8_t mode[2];
+            memcpy(mode, rez.files[0].entry, 2);
+            rez.files[0].entry[0] = 0x27;
+            rez.files[0].entry[1] = 0x84;
+            int injected = sigil_ps2_inject(&odd, &rez);
+            memcpy(rez.files[0].entry, mode, 2);
+            if (injected == SIGIL_OK && sigil_ps2_card_list(&odd, &odd_list) == SIGIL_OK && odd_list->entry_count == 1 &&
+                sigil_ps2_extract(&odd, odd_list->entries[0].first_block, &lifted) != SIGIL_ERR_UNSUPPORTED_FORMAT) {
+                fail("mymc-mc01", "a save holding a subdirectory was lifted off the card");
+                sigil_ps2_save_free(&lifted);
+            } else if (injected != SIGIL_OK) {
+                fail("mymc-mc01", "setup: a save with a directory entry didn't go on");
+            }
+            sigil_card_listing_free(odd_list);
+            odd_list = NULL;
+            sigil_ps2_card_free(&odd);
+        }
+        /* The folder's own entry (mode, times) is part of the save. */
+        rez.entry[0x08 + 1] ^= 0x01;
+        if (sigil_ps2_verify(&card, &rez) == SIGIL_OK) fail("mymc-mc01", "a save whose folder entry differs verified");
+        rez.entry[0x08 + 1] ^= 0x01;
     }
     sigil_ps2_save_free(&rez);
     sigil_ps2_save_free(&system);
@@ -525,6 +567,151 @@ static void check_meta_for_hidden_folder(const corpus_table *manifest) {
     sigil_ps2_card_free(&card);
 }
 
+/* Every page whose data differs between `before` and `after` carries the
+ * ECC of its new data. */
+static bool changed_pages_have_ecc(const uint8_t *before, const uint8_t *after, size_t size, size_t *changed) {
+    const size_t stride = 512 + 16;
+    *changed = 0;
+    for (size_t at = 0; at + stride <= size; at += stride) {
+        if (memcmp(before + at, after + at, 512) == 0) continue;
+        (*changed)++;
+        uint8_t want[16] = {0};
+        for (int chunk = 0; chunk < 4; chunk++) sigil_ps2_ecc(after + at + chunk * 128, want + chunk * 3);
+        if (memcmp(after + at + 512, want, 16) != 0) return false;
+    }
+    return true;
+}
+
+/* An inject into and a delete from a real card leave every page they change
+ * with the ECC of its new data. */
+static void check_ecc_on_changed_pages(const corpus_table *manifest) {
+    sigil_ps2_card card;
+    if (!load_card(manifest, "mymc-mc01", &card)) return;
+    sigil_ps2_folder_file files[16];
+    char folder[64];
+    size_t n = load_folder(manifest, "ace-combat-04-aethersx2", files, 16, folder);
+    sigil_ps2_save ace;
+    memset(&ace, 0, sizeof(ace));
+    size_t size = sigil_ps2_card_file_size(&card);
+    uint8_t *before = (uint8_t *)malloc(size), *after = (uint8_t *)malloc(size);
+    sigil_card_listing *l = NULL;
+    size_t changed = 0;
+    if (!card.ecc || !n || !before || !after || sigil_ps2_pack(folder, files, n, &ace) != SIGIL_OK ||
+        sigil_ps2_card_write(&card, before) != SIGIL_OK) {
+        fail("mymc-mc01", "ecc setup failed");
+    } else if (sigil_ps2_inject(&card, &ace) != SIGIL_OK || sigil_ps2_card_write(&card, after) != SIGIL_OK ||
+               !changed_pages_have_ecc(before, after, size, &changed) || changed == 0) {
+        fail("mymc-mc01", "a page an inject changed carries stale ECC");
+    } else {
+        memcpy(before, after, size);
+        const sigil_card_entry *e = NULL;
+        if (sigil_ps2_card_list(&card, &l) == SIGIL_OK) e = find_entry(l, "BASLUS-20152AC04");
+        if (!e || sigil_ps2_delete(&card, e->first_block) != SIGIL_OK || sigil_ps2_card_write(&card, after) != SIGIL_OK ||
+            !changed_pages_have_ecc(before, after, size, &changed) || changed == 0) {
+            fail("mymc-mc01", "a page a delete changed carries stale ECC");
+        }
+    }
+    sigil_card_listing_free(l);
+    free(before);
+    free(after);
+    sigil_ps2_save_free(&ace);
+    free_folder(files, n);
+    sigil_ps2_card_free(&card);
+}
+
+/* A file whose entry PCSX2 couldn't rebuild from the index (a mode bit
+ * beyond the default) travels in _pcsx2_meta/<file>, and packing it back
+ * restores the entry. */
+static void check_meta_for_file_mode(const corpus_table *manifest) {
+    sigil_ps2_folder_file files[16];
+    char folder[64];
+    size_t n = load_folder(manifest, "ace-combat-04-aethersx2", files, 16, folder);
+    sigil_ps2_save save, again;
+    memset(&save, 0, sizeof(save));
+    memset(&again, 0, sizeof(again));
+    sigil_ps2_folder_file *unpacked = NULL;
+    size_t unpacked_n = 0;
+    if (!n || sigil_ps2_pack(folder, files, n, &save) != SIGIL_OK || save.file_count == 0) {
+        fail("ace-combat-04-aethersx2", "meta setup failed");
+    } else {
+        save.files[0].entry[1] ^= 0x20;
+        char meta[PS2_FOLDER_PATH_MAX], name[33];
+        snprintf(name, sizeof(name), "%.32s", (const char *)save.files[0].entry + 0x40);
+        snprintf(meta, sizeof(meta), "_pcsx2_meta/%s", name);
+        if (sigil_ps2_unpack(&save, &unpacked, &unpacked_n) != SIGIL_OK || !find_path(unpacked, unpacked_n, meta)) {
+            fail("ace-combat-04-aethersx2", "a file's mode beyond the default wasn't kept in _pcsx2_meta");
+        } else if (sigil_ps2_pack(folder, unpacked, unpacked_n, &again) != SIGIL_OK || again.file_count != save.file_count ||
+                   memcmp(again.files[0].entry, save.files[0].entry, 4) != 0) {
+            fail("ace-combat-04-aethersx2", "a file's mode didn't survive the folder round trip");
+        } else {
+            sigil_ps2_folder_file *m = (sigil_ps2_folder_file *)find_path(unpacked, unpacked_n, meta);
+            sigil_ps2_save renamed;
+            memcpy(m->data + 0x40, "OTHER", 6);
+            if (sigil_ps2_pack(folder, unpacked, unpacked_n, &renamed) != SIGIL_OK) {
+                fail("ace-combat-04-aethersx2", "a meta naming another file didn't pack");
+            } else {
+                if (strncmp((const char *)renamed.files[0].entry + 0x40, name, 32) != 0) {
+                    fail("ace-combat-04-aethersx2", "a meta file renamed the file it describes");
+                }
+                sigil_ps2_save_free(&renamed);
+            }
+            /* PCSX2 reads a meta file shorter than 0x60 bytes over the
+             * entry it would build, so its mode still counts. */
+            sigil_ps2_save shorter;
+            m->len = 0x10;
+            if (sigil_ps2_pack(folder, unpacked, unpacked_n, &shorter) != SIGIL_OK) {
+                fail("ace-combat-04-aethersx2", "a short meta didn't pack");
+            } else {
+                if (memcmp(shorter.files[0].entry, save.files[0].entry, 4) != 0 ||
+                    strncmp((const char *)shorter.files[0].entry + 0x40, name, 32) != 0) {
+                    fail("ace-combat-04-aethersx2", "a short meta's mode was ignored");
+                }
+                sigil_ps2_save_free(&shorter);
+            }
+        }
+    }
+    sigil_ps2_folder_files_free(unpacked, unpacked_n);
+    sigil_ps2_save_free(&save);
+    sigil_ps2_save_free(&again);
+    free_folder(files, n);
+}
+
+/* The folder's own times come from the index's $ROOT row, which older
+ * PCSX2 builds wrote as %ROOT. */
+static void check_root_times(const corpus_table *manifest) {
+    sigil_ps2_folder_file files[16];
+    char folder[64];
+    size_t n = load_folder(manifest, "ace-combat-04-aethersx2", files, 16, folder);
+    sigil_ps2_save save;
+    memset(&save, 0, sizeof(save));
+    if (!n || sigil_ps2_pack(folder, files, n, &save) != SIGIL_OK) {
+        fail("ace-combat-04-aethersx2", "root times setup failed");
+        free_folder(files, n);
+        return;
+    }
+    sigil_ps2_folder_file *index = NULL;
+    for (size_t i = 0; i < n; i++) {
+        if (strcmp(files[i].path, "_pcsx2_index") == 0) index = &files[i];
+    }
+    uint8_t *root = index ? (uint8_t *)memmem(index->data, index->len, "$ROOT", 5) : NULL;
+    if (!root || entry_time(save.entry + 0x08) != 1784833824LL || entry_time(save.entry + 0x18) != 1784833829LL) {
+        fail("ace-combat-04-aethersx2", "the folder's times didn't come from $ROOT");
+    } else {
+        root[0] = '%';
+        sigil_ps2_save old;
+        if (sigil_ps2_pack(folder, files, n, &old) != SIGIL_OK) {
+            fail("ace-combat-04-aethersx2", "an index with %ROOT didn't pack");
+        } else {
+            if (memcmp(old.entry + 0x08, save.entry + 0x08, 8) != 0 || memcmp(old.entry + 0x18, save.entry + 0x18, 8) != 0) {
+                fail("ace-combat-04-aethersx2", "%ROOT times differ from $ROOT times");
+            }
+            sigil_ps2_save_free(&old);
+        }
+    }
+    sigil_ps2_save_free(&save);
+    free_folder(files, n);
+}
+
 int main(void) {
     char path[1024];
     corpus_table manifest, entries;
@@ -555,6 +742,9 @@ int main(void) {
     check_full_card_refuses(&manifest);
     for (size_t i = 0; i < sizeof(FOLDER_FACTS) / sizeof(FOLDER_FACTS[0]); i++) check_folder(&manifest, &FOLDER_FACTS[i]);
     check_meta_for_hidden_folder(&manifest);
+    check_ecc_on_changed_pages(&manifest);
+    check_meta_for_file_mode(&manifest);
+    check_root_times(&manifest);
     int missing = g_cards ? corpus_count_missing(&manifest, "ps2") : 0;
     corpus_free(&manifest);
     corpus_free(&entries);

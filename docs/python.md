@@ -156,6 +156,7 @@ SigilCardListing(
     free_slots: int,                # Directory slots a new save can use.
     corrupt_count: int,             # Saves left out because their block chain is broken.
     entries: tuple[SigilCardEntry, ...],   # Live saves, in directory order.
+    corrupt_entries: tuple[SigilCardEntry, ...],   # The left-out saves the card still names; blocks is 0.
 )
 
 SigilCardEntry(
@@ -192,13 +193,19 @@ sigil.collect(
     mode: "managed" | "unmanaged" = "managed",
     claimed: Iterable[str] = (),            # Saturn, Sega CD: names from `unowned` the user gave this game.
     companions: Iterable[SigilCompanion] = (),   # Games whose saves this game reads, in the order they go on.
+    repair: bool = False,                   # Rebuild what SigilDamagedError named, where sigil can.
 ) -> SigilSyncResult
+    # Raises SigilDamagedError when a file holding the saves is damaged and repair is False,
+    #   or isn't a card sigil can read at all (repair doesn't change that).
 
 sigil.restore(unit: bytes, ..., overwrite_local: bool = False) -> SigilSyncResult
-    # Raises SigilConflictError, writing nothing, when the saves under save_root changed since
-    #   the last sync, and SigilUncollectedError when a shared volume holds saves no collect
-    #   has passed on yet. SigilNoSpaceError carries `overflow`, the save that didn't fit, and
-    #   `overflow_blocks`, the blocks it lacked (0 when a directory slot ran out instead).
+    # Each of these writes nothing: SigilConflictError (the saves under save_root changed since
+    #   the last sync), SigilUncollectedError (a shared volume holds saves no collect has passed
+    #   on yet), SigilNoSpaceError (the saves don't fit; `blocks_short` says by how much),
+    #   SigilRegionError (a companion's save from another region), SigilNoTargetError (the
+    #   unit holds a volume the emulator's settings keep no file for), SigilAmbiguousError (more
+    #   than one file could be the emulator's card) and SigilDamagedError. The last five name
+    #   the save, member or files in `problem`. c.md, "Sync", has the table.
 
 SigilCompanion(
     game_ids: tuple[str, ...],  # The companion's ids, as for game_ids.

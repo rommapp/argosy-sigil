@@ -35,11 +35,6 @@ size_t sigil_sync_no_unit_size(int device, const void *source) {
     return 0;
 }
 
-bool sigil_sync_any_format(int format) {
-    (void)format;
-    return true;
-}
-
 const sigil_sync_kind *sigil_sync_kind_for(const sigil_sync_request *req) {
     const char *slug = req->save.platform ? sigil_layout_platform(req->save.platform) : NULL;
     if (slug) {

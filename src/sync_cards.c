@@ -15,12 +15,29 @@ static int load_card_file(const sigil_sync_request *req, const char *path, sigil
     }
     sigil_io *io = req->save.open(req->save.open_ctx, path);
     if (!io) return SIGIL_OK;
+    if (io->size && io->size(io->ctx) == 0) {
+        sigil_io_close(io);
+        return SIGIL_OK;
+    }
     sigil_sync_card_file *f = &s->files[s->count];
     memset(f, 0, sizeof(*f));
     int rc = s->kind->load(io, SIGIL_DEVICE_NONE, &f->card, &f->format);
     sigil_io_close(io);
-    if (rc == SIGIL_ERR_UNSUPPORTED_FORMAT) return SIGIL_OK;
+    if (rc == SIGIL_ERR_UNSUPPORTED_FORMAT) {
+        snprintf(s->problem, sizeof(s->problem), "%s", path);
+        return SIGIL_ERR_DAMAGED;
+    }
     if (rc != SIGIL_OK) return rc;
+    rc = s->kind->check ? s->kind->check(f->card) : SIGIL_OK;
+    if (rc == SIGIL_ERR_DAMAGED && req->repair) {
+        f->changed = true;
+        rc = SIGIL_OK;
+    }
+    if (rc != SIGIL_OK) {
+        s->kind->free_card(f->card);
+        if (rc == SIGIL_ERR_DAMAGED) snprintf(s->problem, sizeof(s->problem), "%s", path);
+        return rc;
+    }
     snprintf(f->path, sizeof(f->path), "%s", path);
     f->primary = strcmp(path, s->primary_path) == 0;
     s->count++;
@@ -34,6 +51,26 @@ static void artifact_from(const sigil_sync_request *req, const char *path, char 
     const char *base = strrchr(path, '/');
     const char *ext = strrchr(base ? base : path, '.');
     snprintf(artifact, SIGIL_SAVE_ENTRY_MAX, "%s%s", stem, ext ? ext : "");
+}
+
+/* SIGIL_ERR_AMBIGUOUS, naming the files one per line in `problem`, when more
+ * than one alternative for a device is there: sigil can't tell which one the
+ * emulator reads. */
+static int check_alternatives(const sigil_sync_request *req, char (*shared)[SIGIL_SAVE_PATH_MAX], const int *devices,
+                              size_t count, char problem[SIGIL_SAVE_PATH_MAX]) {
+    for (size_t i = 0; i < count; i++) {
+        if (devices[i] == SIGIL_DEVICE_NONE || !sigil_sync_listed(req, shared[i])) continue;
+        size_t used = (size_t)snprintf(problem, SIGIL_SAVE_PATH_MAX, "%s", shared[i]);
+        size_t present = 1;
+        for (size_t j = i + 1; j < count; j++) {
+            if (devices[j] != devices[i] || !sigil_sync_listed(req, shared[j])) continue;
+            present++;
+            if (used < SIGIL_SAVE_PATH_MAX) used += (size_t)snprintf(problem + used, SIGIL_SAVE_PATH_MAX - used, "\n%s", shared[j]);
+        }
+        if (present > 1) return SIGIL_ERR_AMBIGUOUS;
+        problem[0] = '\0';
+    }
+    return SIGIL_OK;
 }
 
 /* The game's own card is the layout's primary member; a layout whose game
@@ -60,7 +97,13 @@ int sigil_sync_gather_cards(const sigil_sync_ctx *x, sigil_sync_cards *s, char a
         snprintf(artifact, SIGIL_SAVE_ENTRY_MAX, "%s", unit->expected[i].entry);
     }
     char shared[SYNC_MAX_SHARED][SIGIL_SAVE_PATH_MAX];
-    size_t shared_count = sigil_save_shared_paths(&req->save, shared, SYNC_MAX_SHARED);
+    int devices[SYNC_MAX_SHARED];
+    size_t shared_count = sigil_save_shared_paths(&req->save, shared, devices, SYNC_MAX_SHARED);
+    rc = check_alternatives(req, shared, devices, shared_count, s->problem);
+    if (rc != SIGIL_OK) {
+        sigil_save_unit_free(unit);
+        return rc;
+    }
     bool folder[SYNC_MAX_SHARED] = { false };
     for (size_t i = 0; i < shared_count; i++) folder[i] = x->kind->folder_cards && sigil_sync_is_folder_card(req, shared[i]);
     if (!s->primary_path[0] && shared_count > 0) {
@@ -70,6 +113,11 @@ int sigil_sync_gather_cards(const sigil_sync_ctx *x, sigil_sync_cards *s, char a
         }
         snprintf(s->primary_path, SIGIL_SAVE_PATH_MAX, "%s", shared[pick]);
         artifact_from(req, shared[pick], artifact);
+    }
+    if (s->kind->raw_ext && s->kind->new_form && s->kind->new_form(req, s->primary_path) != SIGIL_FORM_RAW) {
+        char stem[SIGIL_SAVE_ENTRY_MAX];
+        sigil_content_stem(req->save.content_path, stem, sizeof(stem));
+        snprintf(artifact, SIGIL_SAVE_ENTRY_MAX, "%s%s", stem, s->kind->raw_ext);
     }
 
     for (size_t i = 0; i < unit->member_count && rc == SIGIL_OK; i++) rc = load_card_file(req, unit->members[i].path, s);
@@ -82,12 +130,13 @@ int sigil_sync_gather_cards(const sigil_sync_ctx *x, sigil_sync_cards *s, char a
     return rc;
 }
 
-int sigil_sync_gather_card_saves(const sigil_sync_ctx *x, const sigil_sync_cards *s, sigil_sync_saves *out) {
+int sigil_sync_gather_card_saves(const sigil_sync_ctx *x, sigil_sync_cards *s, sigil_sync_saves *out) {
     sigil_sync_saves_init(out, s->kind);
     int rc = SIGIL_OK;
     for (size_t c = 0; c < s->count && rc == SIGIL_OK; c++) {
         rc = sigil_sync_add_card_saves(x, s->files[c].card, s->files[c].format, SIGIL_DEVICE_NONE, c, SYNC_WHO_LOCAL,
                                        out);
+        if (rc == SIGIL_ERR_DAMAGED) snprintf(s->problem, sizeof(s->problem), "%s", s->files[c].path);
     }
     if (rc != SIGIL_OK) sigil_sync_saves_free(out);
     return rc;
@@ -125,7 +174,7 @@ static size_t primary_card(const sigil_sync_ctx *x, sigil_sync_cards *s, int *rc
     if (!s->primary_path[0] || s->count >= SYNC_MAX_CARD_FILES) { *rc = SIGIL_ERR_INVALID_ARG; return 0; }
     sigil_sync_card_file *f = &s->files[s->count];
     memset(f, 0, sizeof(*f));
-    int form = s->kind->new_form ? s->kind->new_form(x->req) : SIGIL_FORM_RAW;
+    int form = s->kind->new_form ? s->kind->new_form(x->req, s->primary_path) : SIGIL_FORM_RAW;
     *rc = s->kind->blank(&f->card, &f->format, SIGIL_DEVICE_NONE, 0, form, NULL);
     if (*rc != SIGIL_OK) return 0;
     f->primary = true;
@@ -143,21 +192,18 @@ int sigil_sync_place_on_cards(const sigil_sync_ctx *x, sigil_sync_cards *cards, 
     for (size_t i = 0; i < incoming->count; i++) incoming->items[i].card = SIZE_MAX;
     for (size_t c = 0; c < cards->count && rc == SIGIL_OK; c++) rc = clear_game(x, cards, c, incoming);
     size_t primary = rc == SIGIL_OK ? primary_card(x, cards, &rc) : 0;
-    for (size_t c = 0; c < cards->count && rc == SIGIL_OK; c++) {
-        if (cards->files[c].changed && !cards->kind->writable(cards->files[c].format)) rc = SIGIL_ERR_UNSUPPORTED_FORMAT;
-    }
     for (size_t i = 0; i < incoming->count && rc == SIGIL_OK; i++) {
         sigil_sync_save *o = &incoming->items[i];
         if (o->card == SIZE_MAX) o->card = primary;
         sigil_sync_card_file *f = &cards->files[o->card];
         rc = cards->kind->inject(f->card, o->save);
-        if (rc == SIGIL_ERR_NO_SPACE) sigil_sync_note_overflow(x, f->card, f->format, SIGIL_DEVICE_NONE, o, r);
+        if (rc == SIGIL_ERR_NO_SPACE) sigil_sync_note_overflow(x, f->card, f->format, o, r);
         f->changed = true;
     }
     for (size_t c = 0; c < cards->count && rc == SIGIL_OK; c++) {
         size_t removes = 0;
         if (cards->files[c].changed && cards->files[c].folder) {
-            rc = sigil_sync_folder_card_removals(x, &cards->files[c], &removes);
+            rc = sigil_sync_check_folder_card(x, &cards->files[c], &removes, r);
         }
         if (rc == SIGIL_OK && removes && !x->req->remove) rc = SIGIL_ERR_INVALID_ARG;
     }

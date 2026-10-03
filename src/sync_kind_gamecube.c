@@ -48,9 +48,9 @@ static int gc_blank_sized(void **card, size_t size, bool shift_jis) {
 static int gc_blank(void **card, int *format, int device, size_t size, int form, const void *like) {
     (void)device;
     (void)size;
-    const gc_card *l = (const gc_card *)like;
+    (void)like;
     *format = SIGIL_CARD_FORMAT_GAMECUBE_RAW;
-    return gc_blank_sized(card, l ? l->size : GC_MAX_CARD_SIZE, form == SIGIL_FORM_SHIFT_JIS);
+    return gc_blank_sized(card, GC_MAX_CARD_SIZE, form == SIGIL_FORM_SHIFT_JIS);
 }
 
 static size_t gc_size(const void *card) { return ((const gc_card *)card)->size; }
@@ -105,6 +105,12 @@ static int gc_inject(void *card, const void *save) {
     if (rc != SIGIL_OK) return rc;
     uint32_t first = gc_first_block_of(c, s->data);
     return first == 0xFFFF ? SIGIL_ERR_IO : sigil_gamecube_bind_serial(c->image, c->size, first);
+}
+
+static uint32_t gc_cost(const void *card, const void *save) {
+    (void)card;
+    const sigil_sync_blob *s = (const sigil_sync_blob *)save;
+    return sigil_gamecube_cost(s->data, s->len);
 }
 
 static int gc_remove(void *card, const sigil_card_entry *entry) {
@@ -181,7 +187,8 @@ static const char *gc_game_region(const sigil_sync_request *req) {
     return sigil_gc_region_folder(sigil_gc_region_letter(req->save.result));
 }
 
-static int gc_new_form(const sigil_sync_request *req) {
+static int gc_new_form(const sigil_sync_request *req, const char *path) {
+    (void)path;
     const char *region = gc_game_region(req);
     return region && strcmp(region, "JAP") == 0 ? SIGIL_FORM_SHIFT_JIS : SIGIL_FORM_RAW;
 }
@@ -194,11 +201,38 @@ static bool gc_foreign(const sigil_sync_request *req, const void *save) {
     return game && theirs && strcmp(game, theirs) != 0;
 }
 
+/* CP1252's 0x80-0x9F; 0 where the code page has no character. */
+static const uint16_t CP1252_HIGH[32] = {
+    0x20AC, 0,      0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0, 0x017D, 0,
+    0,      0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0, 0x017E, 0x0178,
+};
+
+/* `c` (0x80 and up) of a CP1252 name as UTF-8 at `out`; 0 when it has no
+ * character. */
+static size_t cp1252_utf8(unsigned char c, char *out) {
+    uint16_t u = c < 0xA0 ? CP1252_HIGH[c - 0x80] : c;
+    if (!u) return 0;
+    if (u < 0x800) {
+        out[0] = (char)(0xC0 | (u >> 6));
+        out[1] = (char)(0x80 | (u & 0x3F));
+        return 2;
+    }
+    out[0] = (char)(0xE0 | (u >> 12));
+    out[1] = (char)(0x80 | ((u >> 6) & 0x3F));
+    out[2] = (char)(0x80 | (u & 0x3F));
+    return 3;
+}
+
 /* The name Dolphin gives a .gci (GCMemcardUtils GenerateFilename and
- * NandPaths EscapeFileName): maker-gamecode-filename, with each "__" doubled
- * into escapes and characters a file name can't hold as __xx__. */
+ * NandPaths EscapeFileName): maker-gamecode-filename, decoded from CP1252,
+ * with each "__" doubled into escapes and characters a file name can't hold
+ * as __xx__. Dolphin decodes a Japanese save's name from Shift-JIS; sigil
+ * escapes its bytes above 0x7F instead, which keeps the name UTF-8, and
+ * Dolphin loads every .gci in the folder whatever its name. */
 static void gc_file_name(const void *save, char *out, size_t cap) {
     const uint8_t *gci = ((const sigil_sync_blob *)save)->data;
+    const char *region = sigil_gc_region_folder((char)gci[GCI_GAMECODE + 3]);
+    bool shift_jis = region && strcmp(region, "JAP") == 0;
     char raw[GC_FILENAME_LEN + 16];
     size_t n = 0;
     raw[n++] = (char)gci[GCI_MAKER];
@@ -211,10 +245,13 @@ static void gc_file_name(const void *save, char *out, size_t cap) {
     size_t o = 0;
     for (size_t i = 0; i < n && o + 14 < cap; i++) {
         unsigned char c = (unsigned char)raw[i];
-        if (c == '_' && i + 1 < n && raw[i + 1] == '_') {
+        size_t wide = c >= 0x80 && !shift_jis ? cp1252_utf8(c, out + o) : 0;
+        if (wide) {
+            o += wide;
+        } else if (c == '_' && i + 1 < n && raw[i + 1] == '_') {
             o += (size_t)snprintf(out + o, cap - o, "__5f____5f__");
             i++;
-        } else if (c <= 0x1F || c == 0x7F || strchr("\"*/:<>?\\|", c)) {
+        } else if (c <= 0x1F || c >= 0x7F || strchr("\"*/:<>?\\|", c)) {
             o += (size_t)snprintf(out + o, cap - o, "__%02x__", c);
         } else {
             out[o++] = (char)c;
@@ -237,8 +274,8 @@ const sigil_sync_kind sigil_sync_gamecube_kind = {
     .platform = "gamecube", .has_ids = true, .main_device = SIGIL_DEVICE_NONE,
     .load = gc_load, .blank = gc_blank, .free_card = gc_free_card, .size = gc_size,
     .unit_size = sigil_sync_no_unit_size, .list = gc_list, .extract = gc_extract,
-    .free_save = sigil_sync_blob_free, .inject = gc_inject, .remove = gc_remove, .verify = gc_verify,
-    .image = gc_image, .identity = gc_identity, .writable = sigil_sync_any_format,
+    .free_save = sigil_sync_blob_free, .inject = gc_inject, .cost = gc_cost, .remove = gc_remove, .verify = gc_verify,
+    .image = gc_image, .identity = gc_identity,
     .save_key = gc_save_key, .new_form = gc_new_form, .save_files = true,
     .file_name = gc_file_name, .file_to_save = gc_file_to_save, .foreign = gc_foreign,
 };

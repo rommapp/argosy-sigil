@@ -52,6 +52,13 @@ extern "C" {
 #define SIGIL_ERR_EXISTS              -10  /* a save with that name is already there */
 #define SIGIL_ERR_NO_SPACE            -11  /* the card or volume has too few free blocks or slots */
 #define SIGIL_ERR_UNCOLLECTED         -12  /* a shared volume holds saves no collect has passed on yet */
+#define SIGIL_ERR_DAMAGED             -13  /* a file the saves are in is damaged; the request's `repair` rebuilds it
+                                                 when sigil can, and a card sigil can't read stays refused */
+#define SIGIL_ERR_REGION              -14  /* a save belongs to another region than the game, which can't read it */
+#define SIGIL_ERR_NO_TARGET           -15  /* the unit holds a volume the emulator's settings keep no file for;
+                                                 `problem` names it */
+#define SIGIL_ERR_AMBIGUOUS           -16  /* more than one file could be the card the emulator uses and the
+                                                 options don't say which; `problem` names them, one per line */
 
 /* SIGIL_FLAG_FILENAME_FALLBACK: when the binary parser fails, scan the
  * filename for community naming patterns ([ULUS10064] etc.). On by default
@@ -332,6 +339,9 @@ typedef struct {
     uint32_t          corrupt_count;    /* saves left out because their block chain is broken */
     sigil_card_entry *entries;          /* live saves, in directory order */
     size_t            entry_count;
+    sigil_card_entry *corrupt_entries;  /* the left-out saves the card still names, with name, owner_id and
+                                           first_block; blocks is 0. At most corrupt_count */
+    size_t            corrupt_entry_count;
 } sigil_card_listing;
 
 /* Lists the saves on a memory card. The format is detected from the content.
@@ -392,9 +402,12 @@ typedef struct {
                                                Needed where saves are files of their own (Dolphin's GCI folder,
                                                PCSX2 folder cards), so a save the unit lacks can go; restore refuses with
                                                SIGIL_ERR_INVALID_ARG, writing nothing, when it must remove one and
-                                               this is NULL */
+                                               this is NULL. A path ending in '/' names a directory sigil emptied
+                                               (a dropped PCSX2 save folder): remove the directory */
     const sigil_sync_companion *companions; /* games whose saves this game reads, in the order they go on */
     size_t                companion_count;
+    int                   repair;           /* 1 to rebuild the damaged structures that SIGIL_ERR_DAMAGED
+                                               named, instead of refusing */
 } sigil_sync_request;
 
 typedef struct {
@@ -419,21 +432,34 @@ typedef struct {
                                                   overwritten, as a core does when it unloads after the restore */
     sigil_sync_companion_result *companions;   /* collect: one per request companion, in request order */
     size_t    companion_count;
-    char      overflow[SIGIL_CARD_NAME_MAX];   /* restore, SIGIL_ERR_NO_SPACE: the save that didn't fit */
-    uint32_t  overflow_blocks;                 /* blocks it lacked, in the card's block size; 0 when a directory
-                                                  slot was missing instead */
+    char      problem[SIGIL_SAVE_PATH_MAX];    /* with SIGIL_ERR_NO_SPACE or _REGION, the save at fault; with
+                                                  SIGIL_ERR_DAMAGED, the damaged file; with
+                                                  SIGIL_ERR_NO_TARGET, the unit member with no file; with
+                                                  SIGIL_ERR_AMBIGUOUS, the candidate files, one per line */
+    uint32_t  blocks_short;                    /* SIGIL_ERR_NO_SPACE: blocks the save lacked, in the card's block
+                                                  size; 0 when a directory slot was missing instead */
 } sigil_sync_result;
 
-/* Gathers the game's saves into one unit. */
+/* Gathers the game's saves into one unit. Returns SIGIL_ERR_DAMAGED when a structure holding
+ * them is damaged and req->repair is 0; *out then names the file in `problem`. */
 SIGIL_API int  sigil_collect(const sigil_sync_request *req, sigil_sync_result **out);
 /* Puts the unit `unit` back into the save root through req->write, then reads it back to verify.
- * Returns SIGIL_ERR_CONFLICT, writing nothing, when the saves on disk changed since the last
- * sync and req->overwrite_local is 0. Returns SIGIL_ERR_UNCOLLECTED, writing nothing, when a
- * shared Saturn or Sega CD volume holds saves of other games, or with no known owner, that no
- * collect has passed on yet: call collect for the game that ran last, then restore again.
- * Returns SIGIL_ERR_NO_SPACE, writing nothing, when the saves don't fit; *out then names the
- * save in `overflow`. Returns SIGIL_ERR_INVALID_ARG, writing nothing, for a GameCube companion
- * whose save belongs to another Dolphin region than the game. */
+ * Each of these refusals writes nothing:
+ *   SIGIL_ERR_CONFLICT     the saves on disk changed since the last sync and req->overwrite_local is 0.
+ *   SIGIL_ERR_UNCOLLECTED  a shared Saturn or Sega CD volume holds saves of other games, or with no
+ *                          known owner, that no collect has passed on yet: call collect for the game
+ *                          that ran last, then restore again.
+ *   SIGIL_ERR_NO_SPACE     the saves don't fit; `problem` names the save, `blocks_short` its shortfall.
+ *   SIGIL_ERR_REGION       a GameCube companion's save belongs to another region than the game;
+ *                          `problem` names it.
+ *   SIGIL_ERR_DAMAGED      a file the saves go in is damaged and req->repair is 0, or it isn't a
+ *                          card sigil can read at all; `problem` names the file.
+ *   SIGIL_ERR_NO_TARGET    the unit holds a volume the emulator's settings keep no file for (a cart,
+ *                          a VMU port); `problem` names the unit member.
+ *   SIGIL_ERR_AMBIGUOUS    more than one file could be the emulator's card (Dolphin raw cards of two
+ *                          sizes) and the options don't say which; `problem` names them, one per line.
+ *                          Collect refuses the same way.
+ * With these, *out is set as well; free it as usual. */
 SIGIL_API int  sigil_restore(const sigil_sync_request *req, const uint8_t *unit, size_t unit_len,
                              sigil_sync_result **out);
 SIGIL_API void sigil_sync_result_free(sigil_sync_result *result);

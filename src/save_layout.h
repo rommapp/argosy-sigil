@@ -29,7 +29,8 @@ typedef enum {
 typedef enum {
     SIGIL_FORM_RAW = 0,
     SIGIL_FORM_EXPANDED_FF,  /* each byte in the odd half of a word, the even half 0xFF (Yabause) */
-    SIGIL_FORM_SHIFT_JIS     /* a GameCube card formatted for Japanese text */
+    SIGIL_FORM_SHIFT_JIS,    /* a GameCube card formatted for Japanese text */
+    SIGIL_FORM_VMP           /* a PS1 card signed as the PSP and Vita keep one */
 } sigil_volume_form;
 
 /* Template variables and option semantics: README, "Save units". */
