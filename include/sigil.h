@@ -62,6 +62,9 @@ extern "C" {
                                                  `problem` names it */
 #define SIGIL_ERR_AMBIGUOUS           -16  /* more than one file could be the card the emulator uses and the
                                                  options don't say which; `problem` names them, one per line */
+#define SIGIL_ERR_KEYS_INCOMPATIBLE   -17  /* the keys given don't open this content: the key file lacks the key
+                                                 for its key generation, or its header key is wrong. Switch
+                                                 NSP and XCI need prod.keys (SIGIL_ERR_NEEDS_KEY without) */
 
 /* SIGIL_FLAG_FILENAME_FALLBACK: when the binary parser fails, scan the
  * filename for community naming patterns ([ULUS10064] etc.). On by default

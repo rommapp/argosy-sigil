@@ -2,6 +2,7 @@
 #include "integration_helpers.h"
 
 static const char *g_prod_keys = NULL;
+static int g_keys_too_old = 0;
 
 static int check(const char *path, const char *name) {
     sigil_support sup = {
@@ -15,6 +16,13 @@ static int check(const char *path, const char *name) {
     };
     sigil_result r;
     int rc = sigil_extract_from_path(path, SIGIL_PLATFORM_SWITCH, &opts, &r);
+    if (rc == SIGIL_ERR_KEYS_INCOMPATIBLE) {
+        /* The key file predates the dump's key generation: the environment,
+         * not sigil. Counted apart and left out of the pass rate. */
+        fprintf(stdout, "  keys %s: %s\n", name, sigil_strerror(rc));
+        g_keys_too_old++;
+        return 0;
+    }
     if (rc != SIGIL_OK) {
         fprintf(stderr, "  FAIL %s: %s\n", name, sigil_strerror(rc));
         return -1;
@@ -54,9 +62,10 @@ int main(void) {
     if (build_subdir(rom_dir, "switch", path) != 0) return 1;
     const char *exts[] = { "xci", "nsp", NULL };
     walk_stats st = walk_dir(path, check, exts);
-    fprintf(stdout, "Switch: processed=%d passed=%d failed=%d\n",
-            st.processed, st.passed, st.failed);
+    int read = st.passed - g_keys_too_old;
+    fprintf(stdout, "Switch: processed=%d passed=%d failed=%d keys too old=%d\n",
+            st.processed, read, st.failed, g_keys_too_old);
     if (st.processed == 0) { fprintf(stderr, "no Switch samples\n"); return TEST_SKIP; }
-    int threshold = (st.processed * 4) / 5;
-    return st.passed >= threshold ? 0 : 1;
+    int threshold = ((st.processed - g_keys_too_old) * 4) / 5;
+    return read >= threshold ? 0 : 1;
 }

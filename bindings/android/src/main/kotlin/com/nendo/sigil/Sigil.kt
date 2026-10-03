@@ -100,6 +100,8 @@ class SigilException(val code: Int, message: String, val problem: String = "", v
         const val NO_TARGET = -15
         /** More than one file could be the emulator's card and the options don't say which. */
         const val AMBIGUOUS = -16
+        /** The key file doesn't open this content: it lacks the key for its generation, or its header key is wrong. */
+        const val KEYS_INCOMPATIBLE = -17
     }
 }
 

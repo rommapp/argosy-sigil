@@ -33,6 +33,7 @@ __all__ = [
     "SigilIOError",
     "SigilInvalidArgError",
     "SigilNeedsKeyError",
+    "SigilKeysIncompatibleError",
     "SigilNotFoundError",
     "SigilOOMError",
     "SigilResult",
@@ -140,6 +141,11 @@ class SigilAmbiguousError(SigilError):
     `problem` names them, one per line. Nothing was written."""
 
 
+class SigilKeysIncompatibleError(SigilError):
+    """The keys given don't open this content: the key file lacks the key for its key
+    generation, or its header key is wrong."""
+
+
 _ERROR_CLASSES = {
     lib.SIGIL_ERR_INVALID_ARG: SigilInvalidArgError,
     lib.SIGIL_ERR_IO: SigilIOError,
@@ -157,6 +163,7 @@ _ERROR_CLASSES = {
     lib.SIGIL_ERR_REGION: SigilRegionError,
     lib.SIGIL_ERR_NO_TARGET: SigilNoTargetError,
     lib.SIGIL_ERR_AMBIGUOUS: SigilAmbiguousError,
+    lib.SIGIL_ERR_KEYS_INCOMPATIBLE: SigilKeysIncompatibleError,
 }
 
 _SOURCE_NAMES: dict[int, Literal["binary", "filename"]] = {

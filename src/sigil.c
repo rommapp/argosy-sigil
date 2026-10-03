@@ -98,6 +98,7 @@ const char *sigil_strerror(int code) {
     case SIGIL_ERR_REGION:               return "the save is from another region";
     case SIGIL_ERR_NO_TARGET:            return "the emulator's settings keep no file for a volume in the unit";
     case SIGIL_ERR_AMBIGUOUS:            return "more than one file could be the emulator's card";
+    case SIGIL_ERR_KEYS_INCOMPATIBLE:    return "key file incompatible with this content";
     default:                             return "unknown error";
     }
 }

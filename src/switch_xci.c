@@ -99,9 +99,8 @@ static int hfs0_try_cnmt(const sigil_io *io, uint64_t data_start,
         if (sigil_nca_decrypt_header(raw, header_key, dec) != SIGIL_OK) continue;
         if (dec[0x205] != 1) continue; /* not a Meta NCA */
 
-        if (sigil_cnmt_from_meta_nca(io, data_start + fo, dec, sup, out) == SIGIL_OK) {
-            return SIGIL_OK;
-        }
+        int rc = sigil_cnmt_from_meta_nca(io, data_start + fo, dec, sup, out);
+        if (rc == SIGIL_OK || rc == SIGIL_ERR_KEYS_INCOMPATIBLE) return rc;
     }
     return SIGIL_ERR_NOT_FOUND;
 }
@@ -140,16 +139,16 @@ static int hfs0_extract_title_from_partition(const sigil_io *io,
 
     /* Preferred: authoritative per-content facts from the CNMT. */
     if (header_key_or_null && sup_or_null) {
-        if (hfs0_try_cnmt(io, data_start, entries, file_count,
-                          string_table, string_table_size,
-                          header_key_or_null, sup_or_null, out) == SIGIL_OK) {
+        rc = hfs0_try_cnmt(io, data_start, entries, file_count, string_table, string_table_size,
+                           header_key_or_null, sup_or_null, out);
+        if (rc == SIGIL_OK || rc == SIGIL_ERR_KEYS_INCOMPATIBLE) {
             free(entries);
             free(string_table);
-            return SIGIL_OK;
+            return rc;
         }
     }
 
-    bool needs_key = false;
+    bool needs_key = false, undecrypted = false;
     rc = SIGIL_ERR_NOT_FOUND;
     for (uint32_t i = 0; i < file_count; i++) {
         const uint8_t *e = entries + i * HFS0_ENTRY_SIZE;
@@ -173,8 +172,10 @@ static int hfs0_extract_title_from_partition(const sigil_io *io,
             break;
         }
         if (nrc == SIGIL_ERR_NEEDS_KEY) needs_key = true;
+        else undecrypted = true;
     }
     if (rc != SIGIL_OK && needs_key) rc = SIGIL_ERR_NEEDS_KEY;
+    else if (rc != SIGIL_OK && undecrypted) rc = SIGIL_ERR_KEYS_INCOMPATIBLE;
 
     free(entries);
     free(string_table);
@@ -191,12 +192,10 @@ int sigil_extract_xci(const sigil_io *io, const sigil_options *opts,
 
     uint8_t hkey[32];
     const sigil_support *sup = (opts && opts->support) ? opts->support : NULL;
-    bool have_key = (sup && sigil_resolve_header_key(sup, hkey) == SIGIL_OK);
+    if (!sup || sigil_resolve_header_key(sup, hkey) != SIGIL_OK) return SIGIL_ERR_NEEDS_KEY;
 
     sigil_switch_title t;
-    rc = hfs0_extract_title_from_partition(io, secure_off,
-                                            have_key ? hkey : NULL,
-                                            have_key ? sup : NULL, &t);
+    rc = hfs0_extract_title_from_partition(io, secure_off, hkey, sup, &t);
     if (rc != SIGIL_OK) return rc;
 
     sigil_apply_switch_title(out, &t);

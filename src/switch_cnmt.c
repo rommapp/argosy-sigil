@@ -38,20 +38,23 @@ void sigil_aes_ctr_crypt(const uint8_t key[16], uint8_t ctr[16],
     AES_CTR_xcrypt_buffer(&c, buf, len);
 }
 
+/* The key-area key for generation `gen_index`. SIGIL_ERR_NEEDS_KEY without a
+ * prod.keys source; SIGIL_ERR_KEYS_INCOMPATIBLE when the source lacks it, as
+ * a key file older than the content does. */
 static int load_kaek(const sigil_support *sup, unsigned gen_index,
                      uint8_t out[16]) {
     char name[48];
     snprintf(name, sizeof(name), "key_area_key_application_%02x", gen_index);
+    int rc = SIGIL_ERR_NEEDS_KEY;
     if (sup->switch_prod_keys_text && sup->switch_prod_keys_text_len > 0) {
-        return sigil_decode_key16_from_text(sup->switch_prod_keys_text,
-                                            sup->switch_prod_keys_text_len,
-                                            name, out);
+        rc = sigil_decode_key16_from_text(sup->switch_prod_keys_text,
+                                          sup->switch_prod_keys_text_len,
+                                          name, out);
+    } else if (sup->switch_prod_keys_path) {
+        rc = sigil_load_key16_from_prod_keys(sup->switch_prod_keys_path,
+                                             name, out);
     }
-    if (sup->switch_prod_keys_path) {
-        return sigil_load_key16_from_prod_keys(sup->switch_prod_keys_path,
-                                               name, out);
-    }
-    return SIGIL_ERR_NEEDS_KEY;
+    return rc == SIGIL_ERR_NOT_FOUND ? SIGIL_ERR_KEYS_INCOMPATIBLE : rc;
 }
 
 static int content_type_from_meta(uint8_t meta_type) {
