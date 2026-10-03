@@ -50,7 +50,7 @@ Cases no sample covers yet. The saves already gathered came from a RomM store an
 
 - One Genesis game saved by both genesis_plus_gx and picodrive.
 - A picodrive Sega CD `.srm`, and a genesis_plus_gx `scd_U.brm` from a known version.- A real 32 KiB Saturn internal volume with several games on it.
-- Kronos `.ram` files, and a Saturn cart of 1 MiB or more. A Kronos 4 MiB cart (`-ext4M.ram`) with a save on it would confirm its 1024-byte blocks, which sigil takes from Kronos `bios.c` `GetDeviceStats` and no sample has shown yet.
+- A Saturn cart of 1 MiB or more (`sega-rally-kronos` covers Kronos's internal `.ram` and its 512 KiB cart). A Kronos 4 MiB cart (`-ext4M.ram`) with a save on it would confirm its 1024-byte blocks, which sigil takes from Kronos `bios.c` `GetDeviceStats` and no sample has shown yet.
 - A redream VMU.
 
 ## Other

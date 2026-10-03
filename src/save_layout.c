@@ -44,14 +44,17 @@ static const sigil_layout_shared BEETLE_PSX_SHARED[] = {
 
 /* `.srm` is always per game. The `.bkr` that save_method=mednafen uses, the
  * `.smpc` and the cart `.bcr` move to the shared files with shared_int and
- * shared_ext (sega.md section 1, Beetle Saturn rows). */
+ * shared_ext (sega.md section 1, Beetle Saturn rows). The `.bcr` is always a
+ * 4 Mbit cart, as mednafen's uncompressed samples are, and Kronos fixes the
+ * same cart for its Beetle-compatible saves. */
 static const sigil_layout_member BEETLE_SATURN_MEMBERS[] = {
     { .template_ = "{stem}.srm", .role = SIGIL_SAVE_ROLE_PRIMARY, .opt_key = "beetle_saturn_save_method",
       .opt_value = "libretro", .opt_default = true, .device = SIGIL_DEVICE_INTERNAL, .new_size = SATURN_INTERNAL_SIZE },
     { .template_ = "{stem}.bkr", .role = SIGIL_SAVE_ROLE_PRIMARY, .opt_key = "beetle_saturn_save_method",
       .opt_value = "mednafen", .opt_default = false, .device = SIGIL_DEVICE_INTERNAL, .opt2_key = "beetle_saturn_shared_int",
       .opt2_value = "disabled", .opt2_default = true, .new_size = SATURN_INTERNAL_SIZE },
-    M_OPT_DEV("{stem}.bcr", SIDECAR, "beetle_saturn_shared_ext", "disabled", true, CART),
+    { .template_ = "{stem}.bcr", .role = SIGIL_SAVE_ROLE_SIDECAR, .opt_key = "beetle_saturn_shared_ext",
+      .opt_value = "disabled", .opt_default = true, .device = SIGIL_DEVICE_CART, .new_size = SATURN_CART_SIZE },
     M_OPT("{stem}.smpc", SIDECAR, "beetle_saturn_shared_int", "disabled", true),
 };
 static const sigil_layout_shared BEETLE_SATURN_SHARED[] = {
@@ -59,7 +62,8 @@ static const sigil_layout_shared BEETLE_SATURN_SHARED[] = {
       .opt_default = false, .device = SIGIL_DEVICE_INTERNAL, .opt2_key = "beetle_saturn_save_method",
       .opt2_value = "mednafen", .opt2_default = false, .new_size = SATURN_INTERNAL_SIZE },
     S_OPT("mednafen_saturn_libretro_shared.smpc", "beetle_saturn_shared_int", "enabled", false),
-    S_OPT_DEV("mednafen_saturn_libretro_shared.bcr", "beetle_saturn_shared_ext", "enabled", false, CART, 0),
+    { .template_ = "mednafen_saturn_libretro_shared.bcr", .opt_key = "beetle_saturn_shared_ext", .opt_value = "enabled",
+      .opt_default = false, .device = SIGIL_DEVICE_CART, .new_size = SATURN_CART_SIZE },
 };
 
 /* Kronos (libretro/yabause `kronos`): libretro.c configure_saturn_addon_cart
@@ -80,7 +84,8 @@ static const sigil_layout_member KRONOS_MEMBERS[] = {
     KRONOS_CART("kronos/saturn/{stem}-ext1M.ram", "1M_backup_ram", false, 1024u * 1024u),
     KRONOS_CART("kronos/saturn/{stem}-ext2M.ram", "2M_backup_ram", false, 2048u * 1024u),
     KRONOS_CART("kronos/saturn/{stem}-ext4M.ram", "4M_backup_ram", false, 4096u * 1024u),
-    M_OPT_DEV("{stem}.bcr", SIDECAR, "kronos_use_beetle_saves", "enabled", false, CART),
+    { .template_ = "{stem}.bcr", .role = SIGIL_SAVE_ROLE_SIDECAR, .opt_key = "kronos_use_beetle_saves",
+      .opt_value = "enabled", .opt_default = false, .device = SIGIL_DEVICE_CART, .new_size = SATURN_CART_SIZE },
 };
 static const char *const KRONOS_SUBDIRS[] = { "kronos/saturn" };
 

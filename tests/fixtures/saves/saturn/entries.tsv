@@ -47,3 +47,9 @@ touge-king-bup	TGKRPLY_RP1.BUP	TGKRPLY_RP1	-	685	82566c9e393ae32dcfc650969c34658
 three-dirty-dwarves-bup	THREE_DIRTY.BUP	THREE_DIRTY	-	1	f2b66b1e27a9e68c9b4293ca7acb6d47	spec-script
 tokimeki-bup	TOKIMEKI_01.BUP	TOKIMEKI_01	-	0	bb8e9a0b32a6d15f4b9d4c6bcc320ca9	spec-script
 tokimeki-bup	TOKIMEKI_99.BUP	TOKIMEKI_99	-	2	574030430278ebb5f02f85a06d091379	spec-script
+sega-rally-beetle	Sega Rally Championship (USA).bcr	SEGARALLY_0	-	11	a69393d0289fd555d57f06b75a76484e	independent backup RAM reader
+sega-rally-beetle	Sega Rally Championship (USA).bcr	SEGARALLY_1	-	124	cd12f8b06363ce0dd29d88e2850d9e22	independent backup RAM reader
+sega-rally-kronos	kronos/saturn/Sega Rally Championship (USA)-ext512K.ram	SEGARALLY_0	-	11	1f943d8b9799bf25a792ee221705270b	independent backup RAM reader
+sega-rally-kronos	kronos/saturn/Sega Rally Championship (USA)-ext512K.ram	SEGARALLY_1	-	124	d08a7519e0de26f88dc1f120151afd60	independent backup RAM reader
+sega-rally-kronos-beetle-saves	Sega Rally Championship (USA).bcr	SEGARALLY_0	-	11	89581563477e9e5732c5d1e1d071cdf1	independent backup RAM reader
+sega-rally-kronos-beetle-saves	Sega Rally Championship (USA).bcr	SEGARALLY_1	-	124	cd12f8b06363ce0dd29d88e2850d9e22	independent backup RAM reader; equals sega-rally-beetle's
