@@ -145,6 +145,16 @@ set(SIGIL_SOURCES
     src/card_segacd.c
     src/clock_gb.c
     src/sync.c
+    src/sync_state.c
+    src/sync_kinds.c
+    src/sync_kind_sony.c
+    src/sync_kind_sega.c
+    src/sync_kind_gamecube.c
+    src/sync_units.c
+    src/sync_cards.c
+    src/sync_folder_cards.c
+    src/sync_volumes.c
+    src/sync_gci_folder.c
     src/zip_mem.c
     src/save_names.c
 )
