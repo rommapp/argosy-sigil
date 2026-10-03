@@ -49,9 +49,7 @@ Cases no sample covers yet. The saves already gathered came from a RomM store an
 ## Sega (`genesis`, `segacd`, `saturn`, `dc`)
 
 - One Genesis game saved by both genesis_plus_gx and picodrive.
-- A picodrive Sega CD `.srm`, and a genesis_plus_gx `scd_U.brm` from a known version.
-- A Sega CD volume the BIOS filled to the last block with an even file count. sigil keeps the block before the directory free there, as the BIOS's free count implies; a volume where the BIOS wrote into it would show sigil refuses one block early.
-- A real 32 KiB Saturn internal volume with several games on it.
+- A picodrive Sega CD `.srm`, and a genesis_plus_gx `scd_U.brm` from a known version.- A real 32 KiB Saturn internal volume with several games on it.
 - Kronos `.ram` files, and a Saturn cart of 1 MiB or more. A Kronos 4 MiB cart (`-ext4M.ram`) with a save on it would confirm its 1024-byte blocks, which sigil takes from Kronos `bios.c` `GetDeviceStats` and no sample has shown yet.
 - A redream VMU.
 
