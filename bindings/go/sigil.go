@@ -256,6 +256,7 @@ var (
 	ErrRegion            = errors.New("sigil: the save is from another region")
 	ErrNoTarget          = errors.New("sigil: the emulator's settings keep no file for a volume in the unit")
 	ErrAmbiguous         = errors.New("sigil: more than one file could be the emulator's card")
+	ErrKeysIncompatible  = errors.New("sigil: key file incompatible with this content")
 )
 
 func errFromCode(rc C.int) error {
@@ -294,6 +295,8 @@ func errFromCode(rc C.int) error {
 		return ErrNoTarget
 	case C.SIGIL_ERR_AMBIGUOUS:
 		return ErrAmbiguous
+	case C.SIGIL_ERR_KEYS_INCOMPATIBLE:
+		return ErrKeysIncompatible
 	default:
 		return fmt.Errorf("sigil: error %d", int(rc))
 	}

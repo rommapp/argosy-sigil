@@ -38,8 +38,7 @@ static int mem_read(void *ctx, uint64_t off, void *buf, size_t len) {
 }
 static int64_t mem_size(void *ctx) { return (int64_t)((mem_ctx *)ctx)->len; }
 
-/* Minimal single-file NSP: PFS0 header, one entry, "game.nca" (deliberately
- * not a 16-hex name so the string-table shortcut cannot resolve it), then a
+/* Minimal single-file NSP: PFS0 header, one entry, "game.nca", then a
  * plaintext NCA header carrying title 0100000000010000. */
 static void build_image(uint8_t *buf, const char *magic) {
     memset(buf, 0, IMAGE_SIZE);
@@ -104,8 +103,8 @@ int main(void) {
     uint8_t plain[IMAGE_SIZE];
     build_image(plain, "NCA3");
 
-    /* Plaintext header must resolve without any key. */
-    if (run_case("plaintext no key", plain, &no_key, SIGIL_OK)) return 1;
+    /* prod.keys is required, even for a plaintext header. */
+    if (run_case("plaintext no key", plain, &no_key, SIGIL_ERR_NEEDS_KEY)) return 1;
 
     /* A supplied key must not scramble an already-plaintext header. */
     if (run_case("plaintext with key", plain, &with_key, SIGIL_OK)) return 1;
@@ -119,7 +118,17 @@ int main(void) {
 
     uint8_t nca2[IMAGE_SIZE];
     build_image(nca2, "NCA2");
-    if (run_case("NCA2 plaintext", nca2, &no_key, SIGIL_OK)) return 1;
+    if (run_case("NCA2 plaintext", nca2, &with_key, SIGIL_OK)) return 1;
+    if (run_case("NCA2 plaintext no key", nca2, &no_key, SIGIL_ERR_NEEDS_KEY)) return 1;
+
+    /* An encrypted header the key given doesn't open is a key mismatch. */
+    uint8_t other[32];
+    for (int i = 0; i < 32; i++) other[i] = (uint8_t)(key[i] ^ 0xA5);
+    sigil_support wrong_sup = sup;
+    wrong_sup.switch_header_key = other;
+    sigil_options wrong_key = no_key;
+    wrong_key.support = &wrong_sup;
+    if (run_case("encrypted wrong key", enc, &wrong_key, SIGIL_ERR_KEYS_INCOMPATIBLE)) return 1;
 
     printf("ok unit_switch_nca\n");
     return 0;

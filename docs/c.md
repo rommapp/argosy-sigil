@@ -35,6 +35,11 @@ typedef struct {
 } sigil_support;
 ```
 
+A Switch XCI or NSP needs keys: without them extract returns
+`SIGIL_ERR_NEEDS_KEY`, and with keys that don't open the content (a key file
+older than the dump's key generation, or a wrong header key)
+`SIGIL_ERR_KEYS_INCOMPATIBLE`.
+
 ```c
 typedef struct {
     uint32_t struct_version;

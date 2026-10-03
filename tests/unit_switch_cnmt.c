@@ -26,7 +26,7 @@ void sigil_aes_ctr_crypt(const uint8_t key[16], uint8_t ctr[16],
 /* Outer NSP (PFS0) layout wrapping the single Meta NCA. */
 #define OUT_HDR    16u
 #define OUT_ENTRY  24u
-#define OUT_STRTBL 16u
+#define OUT_STRTBL 48u
 #define OUT_DATA   (OUT_HDR + OUT_ENTRY + OUT_STRTBL)
 #define OUT_SIZE   (OUT_DATA + NCA_SIZE)
 
@@ -162,40 +162,68 @@ static void build_image(uint8_t buf[OUT_SIZE]) {
     write_le64(entry + 8, NCA_SIZE);
     write_le32(entry + 16, 0);
 
-    memcpy(buf + OUT_HDR + OUT_ENTRY, "a.nca", 6);
+    /* A retail NCA name: its 32-hex content id, whose last 16 characters
+     * start with 01 (issue #9, Radiant Silvergun). A keyless guess read them
+     * as a title id. */
+    memcpy(buf + OUT_HDR + OUT_ENTRY, "db705e4d8570380301cd8d0cd59fbf16.nca", 37);
 
     build_nca(buf + OUT_DATA);
+}
+
+/* Extracts the image with prod.keys text `keys` (NULL for none). */
+static int extract_with(const uint8_t *image, const char *keys, sigil_result *r) {
+    sigil_support sup;
+    memset(&sup, 0, sizeof(sup));
+    sup.struct_version = SIGIL_SUPPORT_V1;
+    sup.switch_prod_keys_text = keys;
+    sup.switch_prod_keys_text_len = keys ? strlen(keys) : 0;
+
+    sigil_options opts;
+    memset(&opts, 0, sizeof(opts));
+    opts.struct_version = SIGIL_OPTIONS_V1;
+    opts.support = keys ? &sup : NULL;
+
+    mem_ctx ctx = { image, OUT_SIZE };
+    sigil_io io = { mem_read, mem_size, NULL, &ctx };
+    return sigil_extract_from_io(&io, "meta.nsp", SIGIL_PLATFORM_SWITCH, &opts, r);
 }
 
 int main(void) {
     uint8_t image[OUT_SIZE];
     build_image(image);
 
-    char kaek_hex[33], hkey_hex[65];
+    char kaek_hex[33], hkey_hex[65], wrong_hex[65];
     hex_encode(KAEK, 16, kaek_hex);
     hex_encode(HEADER_KEY, 32, hkey_hex);
+    uint8_t wrong[32];
+    for (int i = 0; i < 32; i++) wrong[i] = (uint8_t)(HEADER_KEY[i] ^ 0x5A);
+    hex_encode(wrong, 32, wrong_hex);
 
-    char keys_text[256];
-    int n = snprintf(keys_text, sizeof(keys_text),
-                     "header_key = %s\nkey_area_key_application_00 = %s\n",
-                     hkey_hex, kaek_hex);
+    char keys_text[256], no_kaek[256], wrong_header[256];
+    snprintf(keys_text, sizeof(keys_text), "header_key = %s\nkey_area_key_application_00 = %s\n", hkey_hex, kaek_hex);
+    snprintf(no_kaek, sizeof(no_kaek), "header_key = %s\n", hkey_hex);
+    snprintf(wrong_header, sizeof(wrong_header), "header_key = %s\nkey_area_key_application_00 = %s\n", wrong_hex,
+             kaek_hex);
 
-    sigil_support sup;
-    memset(&sup, 0, sizeof(sup));
-    sup.struct_version = SIGIL_SUPPORT_V1;
-    sup.switch_prod_keys_text = keys_text;
-    sup.switch_prod_keys_text_len = (size_t)n;
-
-    sigil_options opts;
-    memset(&opts, 0, sizeof(opts));
-    opts.struct_version = SIGIL_OPTIONS_V1;
-    opts.support = &sup;
-
-    mem_ctx ctx = { image, OUT_SIZE };
-    sigil_io io = { mem_read, mem_size, NULL, &ctx };
-
+    /* prod.keys is required: no title id is guessed without it, from the
+     * NCA names or anywhere else. */
     sigil_result r;
-    int rc = sigil_extract_from_io(&io, "meta.nsp", SIGIL_PLATFORM_SWITCH, &opts, &r);
+    int rc = extract_with(image, NULL, &r);
+    if (rc != SIGIL_ERR_NEEDS_KEY) {
+        fprintf(stderr, "FAIL: no keys gave rc=%d title_id='%s', want NEEDS_KEY\n", rc, r.title_id);
+        return 1;
+    }
+    /* Keys that can't open the content are a key file mismatch. */
+    if ((rc = extract_with(image, no_kaek, &r)) != SIGIL_ERR_KEYS_INCOMPATIBLE) {
+        fprintf(stderr, "FAIL: a key file without the generation's key gave rc=%d\n", rc);
+        return 1;
+    }
+    if ((rc = extract_with(image, wrong_header, &r)) != SIGIL_ERR_KEYS_INCOMPATIBLE) {
+        fprintf(stderr, "FAIL: a wrong header key gave rc=%d\n", rc);
+        return 1;
+    }
+
+    rc = extract_with(image, keys_text, &r);
     if (rc != SIGIL_OK) {
         fprintf(stderr, "FAIL: rc=%d (%s)\n", rc, sigil_strerror(rc));
         return 1;

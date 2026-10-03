@@ -449,12 +449,15 @@ sigil_options opts = { .struct_version = SIGIL_OPTIONS_V1, .support = &sup };
 sigil_extract_from_path("game.xci", SIGIL_PLATFORM_SWITCH, &opts, &r);
 ```
 
-If no key is provided, sigil tries the unencrypted-NCA fallback path
-(NSPs / XCIs whose NCA filenames are themselves the 16-hex title ID).
-This works for decrypted dumps and homebrew but encrypted retail
-content will fall through to the filename source — set
-`SIGIL_FLAG_FILENAME_FALLBACK` in `opts.flags` to allow that, or
-unset it to fail cleanly.
+Without a key, sigil reads nothing from an XCI or NSP and returns
+`SIGIL_ERR_NEEDS_KEY`. It never guesses a title id from NCA file names,
+which in a retail dump are content ids. When keys are given but don't
+open the content, because the key file lacks the key for the dump's key
+generation or its header key is wrong, it returns
+`SIGIL_ERR_KEYS_INCOMPATIBLE`; a newer `prod.keys` fixes that. Either
+error falls through to the file-name source when the caller sets
+`SIGIL_FLAG_FILENAME_FALLBACK`, and the result then says
+`source = filename`.
 
 ## Platform-specific notes
 
