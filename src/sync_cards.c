@@ -212,6 +212,7 @@ int sigil_sync_place_on_cards(const sigil_sync_ctx *x, sigil_sync_cards *cards, 
         if (!f->changed) continue;
         rc = f->folder ? sigil_sync_write_folder_card(x, f)
                        : sigil_sync_write_and_verify(x, f->path, SIGIL_DEVICE_NONE, f->card, incoming, c);
+        if (rc == SIGIL_OK && !f->folder && cards->kind->beside) rc = cards->kind->beside(x->req, f->path, f->card);
     }
     return rc;
 }

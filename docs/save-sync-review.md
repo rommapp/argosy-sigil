@@ -212,7 +212,6 @@ Blocked on samples or hardware:
 
 - SA-11: a real Kronos 4 MiB cart file, to pin the 1024-byte block size (`tests/fixtures/saves/WANTED.md`).
 - PS2 inject and delete against mymc: `mymc-mc01` after mymc imports a save and after it deletes one (`WANTED.md`).
-- `vita_pops` on a real Vita (see the test plan below).
 - The JNI binding at runtime: nothing runs it off a device; the AAR builds and the contract test checks its descriptors.
 - Go's `_rmdir` branch on Windows: no Windows run.
 
@@ -229,6 +228,14 @@ On a Vita with a PS1 game, as a PSN PS1 Classic or an Adrenaline EBOOT:
 3. Change the save in sigil's unit (restore a different unit, or a save from another card) and restore onto the copied folder. Put the folder back on the Vita. Expect the game to load the restored save. This checks the re-signing on a real console.
 4. Delete the game's SAVEDATA folder. Restore into the empty location so sigil writes `SCEVMC0.VMP` alone, then boot the game. This settles whether POPS accepts a card with no `PARAM.SFO` beside it. If not, document that a game must run once before a first restore, or have sigil refuse.
 5. Record the results in this section and in the README's `vita_pops` row (its source column cites guides today).
+
+Results (2026-10-04, PS Vita, Adrenaline, games under `ux0:pspemu/PSP/GAME/`, copied over VitaShell FTP):
+
+1. Folders are the serial without punctuation (`SLUS01363`, `SLUS00664`). POPS writes `SCEVMC0.VMP`, `SCEVMC1.VMP` (131200 bytes each), `PARAM.SFO` (4912), `ICON0.PNG` and `CONFIG.BIN` on a game's first run. Fixtures `chrono-trigger-vita-pops` and `vita-pops-empty`.
+2. Collect reads all three PS1 folders with no DAMAGED: the console's `.vmp` signatures verify. Chrono Trigger's card uses seed `00..13`, the seed sigil gives a new card; the others use `14..27` and `28..3B`.
+3. A restore that has to make Chrono Trigger's card anew writes the Vita's `.vmp` byte for byte, once sigil leaves the card's write-test frame zero as POPS does (`check_vita_console_card`). Xenogears booted sigil's card with 15 saves from the corpus.
+4. POPS refuses ("cannot read memory card") a folder holding only the card. Bisecting on the console: the card and `PARAM.SFO` alone boot; another game's `PARAM.SFO` doesn't; a `PARAM.SFO` with its hash at 0x10 broken boots; one with its title changed doesn't, and does once the hashes at 0x10 and 0x70 are recomputed. So POPS checks the hash at 0x70 (AES-CMAC under KIRK key slot 0x10, masked) and not the one at 0x20, which needs the console's own key. sigil now writes `PARAM.SFO` when a restore makes a card in a folder without one (`src/psp_sfo.c`, the PS1 kind's `beside` hook); re-signing both real files gives back the console's hashes (`check_pops_param_sfo`). Crash Team Racing, with no save folder on the console, booted and loaded its save from a folder sigil created holding only the card and `PARAM.SFO`; POPS then rewrote the file with all three hashes and kept its fields.
+5. Recorded in the README's `vita_pops` row.
 
 ## Drop
 

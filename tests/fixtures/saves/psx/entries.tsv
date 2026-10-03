@@ -68,3 +68,4 @@ bugs-bunny-mcs	psx.mcs	BESLES-01726 BBLIT	SLES-01726	1	6433bef77ff7ff7023c0c3890
 suikoden2-psv	Suikoden 2-BASLUS-009584753322D37.PSV	BASLUS-00958GS2-7	SLUS-00958	2	72c7977f05d13d26e48a0d139f682f0c	spec-script+save-file-converter
 parasite-eve-psv	BASLUS-006623030303030303041.PSV	BASLUS-006620000000A	SLUS-00662	1	d7c2da3f40a148dd51031932f4f38928	spec-script+hex
 thps2-duckstation-mcd	Tony Hawk's Pro Skater 2 (USA)_1.mcd	BASLUS-01066CEEAG01	SLUS-01066	1	aa04fc88edcaa627e8de8ac1fd64a817	independent-decode+hex
+chrono-trigger-vita-pops	PSP/SAVEDATA/SLUS01363/SCEVMC0.VMP	BASLUS-01363-00001	SLUS-01363	1	778506ee27705a68c92048393c19ec60	hex; dd + md5 of block 1
