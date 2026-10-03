@@ -148,4 +148,69 @@ static unsigned char *corpus_read_file(const char *path, size_t *len_out) {
     return buf;
 }
 
+/* Samples a check named that weren't there. Once a platform's samples are
+ * present, every sample a check names must be: a test with any missing
+ * sample fails instead of passing on the checks that did run. */
+static int g_corpus_missing = 0;
+
+/* The manifest row of sample `id`: its row with `path`, or its first row when `path` is NULL. */
+static int corpus_row_of(const corpus_table *manifest, const char *id, const char *path) {
+    for (size_t r = 0; r < manifest->nrows; r++) {
+        if (strcmp(corpus_get(manifest, r, "id"), id) != 0) continue;
+        if (path && strcmp(corpus_get(manifest, r, "path"), path) != 0) continue;
+        return (int)r;
+    }
+    return -1;
+}
+
+static unsigned char *corpus_try_sample(const corpus_table *manifest, const char *platform, const char *id,
+                                        const char *path, size_t *len) {
+    int r = corpus_row_of(manifest, id, path);
+    char full[1024];
+    if (r < 0 || corpus_sample_path(platform, id, corpus_get(manifest, (size_t)r, "path"), full, sizeof(full)) != 0) {
+        return NULL;
+    }
+    return corpus_read_file(full, len);
+}
+
+/** True when sample `id` is on disk; probes whether a platform's samples are present at all. */
+static int corpus_present(const corpus_table *manifest, const char *platform, const char *id) {
+    size_t len = 0;
+    unsigned char *data = corpus_try_sample(manifest, platform, id, NULL, &len);
+    free(data);
+    return data != NULL;
+}
+
+/** The bytes of sample `id` (see corpus_row_of), or NULL after counting and reporting it missing. */
+static unsigned char *corpus_sample(const corpus_table *manifest, const char *platform, const char *id,
+                                    const char *path, size_t *len) {
+    unsigned char *data = corpus_try_sample(manifest, platform, id, path, len);
+    if (!data) {
+        fprintf(stderr, "MISSING sample %s/%s%s%s\n", platform, id, path ? "/" : "", path ? path : "");
+        g_corpus_missing++;
+    }
+    return data;
+}
+
+/** Counts and reports every file `manifest` lists for `platform` that isn't on disk. */
+static int corpus_count_missing(const corpus_table *manifest, const char *platform) {
+    int missing = 0;
+    for (size_t r = 0; r < manifest->nrows; r++) {
+        const char *id = corpus_get(manifest, r, "id");
+        const char *path = corpus_get(manifest, r, "path");
+        char full[1024];
+        if (!id || !path || corpus_sample_path(platform, id, path, full, sizeof(full)) != 0) continue;
+        FILE *f = fopen(full, "rb");
+        if (f) { fclose(f); continue; }
+        fprintf(stderr, "MISSING sample %s/%s/%s\n", platform, id, path);
+        missing++;
+    }
+    return missing;
+}
+
+/** The exit status for `fails` failed checks: any missing sample fails the run too. */
+static int corpus_exit(int fails) {
+    return fails || g_corpus_missing ? 1 : 0;
+}
+
 #endif

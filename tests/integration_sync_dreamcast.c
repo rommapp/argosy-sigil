@@ -20,13 +20,7 @@ static void fail(const char *where, const char *what) {
 static corpus_table g_manifest;
 
 static uint8_t *sample(const char *id, size_t *len) {
-    for (size_t r = 0; r < g_manifest.nrows; r++) {
-        if (strcmp(corpus_get(&g_manifest, r, "id"), id) != 0) continue;
-        char full[1024];
-        if (corpus_sample_path("dc", id, corpus_get(&g_manifest, r, "path"), full, sizeof(full)) != 0) return NULL;
-        return corpus_read_file(full, len);
-    }
-    return NULL;
+    return corpus_sample(&g_manifest, "dc", id, NULL, len);
 }
 
 static size_t entry_count(const uint8_t *vmu, size_t len) {
@@ -277,14 +271,11 @@ int main(void) {
         fprintf(stderr, "SKIP: no dc manifest\n");
         return TEST_SKIP;
     }
-    size_t probe_len = 0;
-    uint8_t *probe = sample("gundam-0079-flycast", &probe_len);
-    if (!probe) {
+    if (!corpus_present(&g_manifest, "dc", "gundam-0079-flycast")) {
         fprintf(stderr, "SKIP: dc samples missing\n");
         corpus_free(&g_manifest);
         return TEST_SKIP;
     }
-    free(probe);
 
     check_per_game_a1();
     check_all_vmus();
@@ -294,5 +285,5 @@ int main(void) {
 
     corpus_free(&g_manifest);
     printf("dreamcast sync: %d failures\n", g_fails);
-    return g_fails ? 1 : 0;
+    return corpus_exit(g_fails);
 }

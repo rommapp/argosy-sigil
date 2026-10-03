@@ -681,10 +681,11 @@ int main(void) {
     check_delete(&manifest, &entries);
     check_copy_choice(&manifest, &entries);
     check_bind_serial(&manifest, &entries);
+    int missing = g_checks ? corpus_count_missing(&manifest, "ngc") : 0;
     corpus_free(&manifest);
     corpus_free(&entries);
 
     printf("gamecube cards: %d checks, %d failures\n", g_checks, g_fails);
-    if (g_fails) return 1;
-    return g_checks ? 0 : TEST_SKIP;
+    if (!g_checks) return TEST_SKIP;
+    return corpus_exit(g_fails + missing);
 }

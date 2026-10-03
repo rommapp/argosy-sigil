@@ -377,10 +377,11 @@ int main(void) {
     check_mcs_round_trip(&manifest);
     check_inject_keeps_other_saves(&manifest);
     check_full_card_refuses(&manifest);
+    int missing = g_cards ? corpus_count_missing(&manifest, "psx") : 0;
     corpus_free(&manifest);
     corpus_free(&entries);
 
     printf("ps1 cards: %d checked, %d failures\n", g_cards, g_fails);
-    if (g_fails) return 1;
-    return g_cards ? 0 : TEST_SKIP;
+    if (!g_cards) return TEST_SKIP;
+    return corpus_exit(g_fails + missing);
 }

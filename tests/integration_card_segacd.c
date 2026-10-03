@@ -612,10 +612,11 @@ int main(void) {
     check_no_silent_damage();
     check_expanded(&entries);
     check_not_volumes();
+    int missing = g_volumes ? corpus_count_missing(&manifest, PLATFORM) : 0;
     corpus_free(&manifest);
     corpus_free(&entries);
 
     printf("segacd volumes: %d checked, %d failures\n", g_volumes, g_fails);
-    if (g_fails) return 1;
-    return g_volumes ? 0 : TEST_SKIP;
+    if (!g_volumes) return TEST_SKIP;
+    return corpus_exit(g_fails + missing);
 }

@@ -22,6 +22,8 @@ typedef struct {
     size_t      count;
     int         writes;
     int         removes;
+    int         fail_write;      /* the write (1-based) that reports failure; 0 for none */
+    int         corrupt_write;   /* the write (1-based) stored with its last byte flipped; 0 for none */
     const char *listing[MEM_ROOT_FILES];
 } mem_root;
 
@@ -87,8 +89,10 @@ static sigil_io *root_open(void *ctx, const char *path) {
 
 static int root_write(void *ctx, const char *path, const uint8_t *data, size_t len) {
     mem_root *r = (mem_root *)ctx;
-    root_put(r, path, data, len);
     r->writes++;
+    if (r->writes == r->fail_write) return -1;
+    root_put(r, path, data, len);
+    if (r->writes == r->corrupt_write && len > 0) root_find(r, path)->data[len - 1] ^= 0xFF;
     return 0;
 }
 
