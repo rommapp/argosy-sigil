@@ -71,7 +71,7 @@ Open questions for the discussion:
 
 ## Direction
 
-- The client gives the base save path, as today, and the profile id for the user it syncs for. sigil never picks a profile. It may list the profiles it finds under the base path (yuzu forks `profiles.dat`, Cemu `act/` accounts, Ryubing `Profiles.json`) for the client to show.
+- The client gives the base save path, as today. The user profile follows the rule Dolphin's card files already use: a profile id the client passes wins; else the one user profile under the base path; with two or more and none given, `SIGIL_ERR_AMBIGUOUS` listing them; with none, account saves have no target (`SIGIL_ERR_NO_TARGET`). The device or system profile needs no choice. sigil reads the profiles from the emulator's own list (yuzu forks `profiles.dat`, Cemu `act/` accounts, Ryubing `Profiles.json`).
 - The account-versus-device split is per save, not per game. Collect knows each save's kind from where it sits (a user's folder or the device location; Ryubing's indexer records the type). The unit records each part's kind, likely as a top-level folder per kind in the zip, so restore puts account saves under the given profile and device saves in the device location without asking for a profile.
 - Folder units already carry `save_id` and its usage (exact, prefix, or the 3DS split `00040000/00033500`); the profile only decides the parent folder.
 - Ryubing (the live Ryujinx fork, git.ryujinx.app) names save folders by an allocated id from `imkvdb.arc`, so its restore needs that lookup, and a title it has never booted has no folder yet.
