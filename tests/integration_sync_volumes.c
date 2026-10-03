@@ -970,10 +970,29 @@ static void check_cart_too_small(void) {
     make_game(&g, &root, "kronos", "saturn", RAYMAN ".cue", SIGIL_SYNC_MANAGED);
     add_option(&g, "kronos_addon_cartridge", "1M_backup_ram");
     if (sigil_collect(&g.req, &unit) != SIGIL_OK || !unit->data) { fail("cart too small", "setup collect failed"); goto done; }
-    make_game(&fresh, &empty, "kronos", "saturn", RAYMAN ".cue", SIGIL_SYNC_MANAGED);
-    if (sigil_restore(&fresh.req, unit->data, unit->len, &r) != SIGIL_ERR_NO_SPACE || !r || empty.writes != 0 ||
-        strcmp(r->problem, "PANDRA_ZWEI") != 0 || r->blocks_short != need - room) {
-        fail("cart too small", "a cart save too big for the cart wasn't refused with its shortfall in cart blocks");
+    /* Kronos's default cart, and the 4 Mbit .bcr that Beetle (per game and
+     * shared) and Kronos's Beetle-saves mode always use. */
+    static const struct { const char *layout, *key, *value; } CARTS[] = {
+        { "kronos", NULL, NULL },
+        { "kronos", "kronos_use_beetle_saves", "enabled" },
+        { "mednafen_saturn", NULL, NULL },
+        { "mednafen_saturn", "beetle_saturn_shared_ext", "enabled" },
+    };
+    for (size_t i = 0; i < sizeof(CARTS) / sizeof(CARTS[0]); i++) {
+        memset(&empty, 0, sizeof(empty));
+        make_game(&fresh, &empty, CARTS[i].layout, "saturn", RAYMAN ".cue", SIGIL_SYNC_MANAGED);
+        if (CARTS[i].key) add_option(&fresh, CARTS[i].key, CARTS[i].value);
+        if (sigil_restore(&fresh.req, unit->data, unit->len, &r) != SIGIL_ERR_NO_SPACE || !r || empty.writes != 0 ||
+            strcmp(r->problem, "PANDRA_ZWEI") != 0 || r->blocks_short != need - room) {
+            char what[160];
+            snprintf(what, sizeof(what), "%s %s: a cart save too big for the cart wasn't refused with its shortfall",
+                     CARTS[i].layout, CARTS[i].key ? CARTS[i].key : "");
+            fail("cart too small", what);
+        }
+        sigil_sync_result_free(r);
+        r = NULL;
+        root_free(&empty);
+        memset(&empty, 0, sizeof(empty));
     }
 done:
     sigil_sync_result_free(r);
@@ -984,6 +1003,73 @@ done:
     free(big);
     free(internal);
     free_shared_saves(&s);
+}
+
+/* Real saves from Kronos and Beetle Saturn (Sega Rally's records and ghosts
+ * on the 512 KiB cart) move between the cores, Kronos's Beetle-compatible
+ * saves included: what one setup's files collect to restores under another
+ * and collects back to the same saves. */
+static void check_kronos_beetle_cross(void) {
+    static const char *const KRONOS_INT = "kronos/saturn/Sega Rally Championship (USA).ram";
+    static const char *const KRONOS_CART = "kronos/saturn/Sega Rally Championship (USA)-ext512K.ram";
+    static const char *const BEETLE_INT = "Sega Rally Championship (USA).bkr";
+    static const char *const BEETLE_CART = "Sega Rally Championship (USA).bcr";
+    /* Each side's option: Beetle's mednafen save method, or Kronos's
+     * Beetle-compatible saves, which write Beetle's file names. */
+    static const char *const BEETLE_KEY = "beetle_saturn_save_method", *const BEETLE_VALUE = "mednafen";
+    static const char *const KRONOS_KEY = "kronos_use_beetle_saves", *const KRONOS_VALUE = "enabled";
+    static const struct {
+        const char *from, *from_key, *from_value, *to, *to_key, *to_value, *id, *int_path, *cart_path, *want_cart;
+    } CROSS[] = {
+        { "kronos", NULL, NULL, "mednafen_saturn", BEETLE_KEY, BEETLE_VALUE, "sega-rally-kronos", KRONOS_INT, KRONOS_CART,
+          BEETLE_CART },
+        { "mednafen_saturn", BEETLE_KEY, BEETLE_VALUE, "kronos", NULL, NULL, "sega-rally-beetle", BEETLE_INT, BEETLE_CART,
+          KRONOS_CART },
+        { "kronos", KRONOS_KEY, KRONOS_VALUE, "kronos", NULL, NULL, "sega-rally-kronos-beetle-saves", BEETLE_INT,
+          BEETLE_CART, KRONOS_CART },
+    };
+    for (size_t i = 0; i < sizeof(CROSS) / sizeof(CROSS[0]); i++) {
+        size_t int_len = 0, cart_len = 0;
+        uint8_t *internal = sample(&g_saturn, "saturn", CROSS[i].id, CROSS[i].int_path, &int_len);
+        uint8_t *cart = sample(&g_saturn, "saturn", CROSS[i].id, CROSS[i].cart_path, &cart_len);
+        mem_root src = {0}, dst = {0};
+        sigil_sync_result *unit = NULL, *r = NULL, *back = NULL;
+        if (!internal || !cart) { fail("kronos beetle cross", "setup failed"); goto next; }
+        root_put(&src, CROSS[i].int_path, internal, int_len);
+        root_put(&src, CROSS[i].cart_path, cart, cart_len);
+        game from, to;
+        make_game(&from, &src, CROSS[i].from, "saturn", "Sega Rally Championship (USA).cue", SIGIL_SYNC_MANAGED);
+        if (CROSS[i].from_key) add_option(&from, CROSS[i].from_key, CROSS[i].from_value);
+        if (sigil_collect(&from.req, &unit) != SIGIL_OK || !unit->data || unit->shape != SIGIL_SAVE_SHAPE_MULTI) {
+            fail("kronos beetle cross", "collect from the real files failed");
+            goto next;
+        }
+        make_game(&to, &dst, CROSS[i].to, "saturn", "Sega Rally Championship (USA).cue", SIGIL_SYNC_MANAGED);
+        if (CROSS[i].to_key) add_option(&to, CROSS[i].to_key, CROSS[i].to_value);
+        const char *want_cart = CROSS[i].want_cart;
+        mem_file *written = NULL;
+        sigil_card_listing *l = NULL;
+        if (sigil_restore(&to.req, unit->data, unit->len, &r) != SIGIL_OK || !(written = root_find(&dst, want_cart)) ||
+            written->len != 512u * 1024u || !(l = listing_of(written->data, written->len)) ||
+            !has_name(l, "SEGARALLY_0") || !has_name(l, "SEGARALLY_1")) {
+            fail("kronos beetle cross", "the cart didn't restore where the other core reads it, as a 512 KiB cart");
+        } else {
+            refresh(&to, &dst);
+            use_state(&to, r);
+            if (sigil_collect(&to.req, &back) != SIGIL_OK || strcmp(back->identity_hash, unit->identity_hash) != 0) {
+                fail("kronos beetle cross", "the saves differ after moving between the cores");
+            }
+        }
+        sigil_card_listing_free(l);
+    next:
+        sigil_sync_result_free(back);
+        sigil_sync_result_free(r);
+        sigil_sync_result_free(unit);
+        root_free(&src);
+        root_free(&dst);
+        free(internal);
+        free(cart);
+    }
 }
 
 /* A volume file that is empty is no volume yet; one holding a cart where
@@ -1888,6 +1974,7 @@ int main(void) {
     check_big_units_and_forms();
     check_too_big_for_internal();
     check_cart_too_small();
+    check_kronos_beetle_cross();
     check_volume_files();
     check_kept_companion_overflow();
     check_yabasanshiro();

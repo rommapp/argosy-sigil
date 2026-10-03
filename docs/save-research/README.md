@@ -11,5 +11,6 @@ The research date is 2026-09-26. Each file records the upstream commits or branc
 - [variants.md](variants.md) covers when saves carry across regional releases, revisions, fan translations and disc regions.
 - [android.md](android.md) covers when save files reach disk on Android after HOME or a process kill.
 - [other.md](other.md) covers PCE/PCE-CD, Neo Geo, NGP, Lynx, Jaguar, 3DO, WonderSwan, arcade, DOS, CD-i, Xbox and Xbox 360.
+- [user-profiles.md](user-profiles.md) covers per-user and device-wide saves (Switch, Wii U, 3DS, Vita, PS3, PS4, Xbox 360): what the files above say, the metadata that may declare a game's split, and options for sigil.
 
 Rows here are research, not yet layout data; a row moves into sigil's layout table only after it is verified with a captured sample.
