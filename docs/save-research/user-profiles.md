@@ -69,6 +69,14 @@ Open questions for the discussion:
 - When a device save exists and a second RomM user syncs on the same device, which one wins? Under the current model sigil reports a conflict and the client decides.
 - How much key handling is in scope for reading the Switch NACP and the 3DS exheader?
 
+## Direction
+
+- The client gives the base save path, as today, and the profile id for the user it syncs for. sigil never picks a profile. It may list the profiles it finds under the base path (yuzu forks `profiles.dat`, Cemu `act/` accounts, Ryubing `Profiles.json`) for the client to show.
+- The account-versus-device split is per save, not per game. Collect knows each save's kind from where it sits (a user's folder or the device location; Ryubing's indexer records the type). The unit records each part's kind, likely as a top-level folder per kind in the zip, so restore puts account saves under the given profile and device saves in the device location without asking for a profile.
+- Folder units already carry `save_id` and its usage (exact, prefix, or the 3DS split `00040000/00033500`); the profile only decides the parent folder.
+- Ryubing (the live Ryujinx fork, git.ryujinx.app) names save folders by an allocated id from `imkvdb.arc`, so its restore needs that lookup, and a title it has never booted has no folder yet.
+- Still to verify: whether Animal Crossing: New Horizons keeps its island in an account save, a device save, or both.
+
 ## Next checks, cheapest first
 
 1. Read `meta.xml` from a Wii U WUA in the corpus and confirm the `common_save_size` and `account_save_size` fields.
