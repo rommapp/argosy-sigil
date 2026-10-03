@@ -1177,16 +1177,41 @@ static void check_folder_removes(const sigil_sync_result *first) {
  * counts more entries than the card holds), or lists but won't extract (a
  * file entry whose mode isn't a file's), is DAMAGED naming the card on
  * collect and restore: reading on would take the save as deleted. */
+/* The FAT entry of relative cluster `n`, found as the PS2 finds it: through
+ * the superblock's indirect FAT clusters to the FAT cluster holding it. */
+static uint8_t *fat_slot(sigil_ps2_card *card, uint32_t n) {
+    uint32_t per = card->cluster_size / 4, fat_index = n / per;
+    uint32_t indirect = card->ifc[fat_index / per];
+    uint32_t fat_cluster = sigil_read_le32(card->clusters + (size_t)indirect * card->cluster_size + (fat_index % per) * 4);
+    return card->clusters + (size_t)fat_cluster * card->cluster_size + (n % per) * 4;
+}
+
+/* Ends the chain of `save`'s first file longer than a cluster at its first
+ * cluster, so the chain is shorter than the file's length says. */
+static bool cut_first_long_chain(sigil_ps2_card *card, const sigil_ps2_save *save) {
+    for (size_t i = 0; i < save->file_count; i++) {
+        const uint8_t *e = save->files[i].entry;
+        if (sigil_read_le32(e + 0x04) <= card->cluster_size) continue;
+        uint8_t *slot = fat_slot(card, sigil_read_le32(e + 0x10));
+        sigil_write_le32(slot, 0xFFFFFFFFu);
+        if (card->dirty) card->dirty[(size_t)(slot - card->clusters) / 512] = 1;
+        return true;
+    }
+    return false;
+}
+
 static void check_broken_own_save(const sigil_sync_result *first) {
     size_t mc01_len = 0, newer_len = 0;
     uint8_t *mc01 = sample("mymc-mc01", &mc01_len);
     uint8_t *newer = first ? newer_unit(first, &newer_len) : NULL;
     if (!mc01 || !newer) { fail("broken own save", "setup failed"); free(mc01); free(newer); return; }
     /* variant 2: another game's folder entry pointing at Ace Combat's
-     * clusters, so both folders claim one chain. */
+     * clusters, so both folders claim one chain. variant 3: a file's FAT
+     * chain ending before its length. */
     static const char *const WHAT[] = { "a corrupt save read as missing", "a save that won't extract read as missing",
-                                        "a save sharing its clusters with another read as missing" };
-    for (int variant = 0; variant < 3; variant++) {
+                                        "a save sharing its clusters with another read as missing",
+                                        "a save whose chain is shorter than its file read as missing" };
+    for (int variant = 0; variant < 4; variant++) {
         sigil_ps2_card card;
         sigil_ps2_save ace, athf;
         size_t len = 0;
@@ -1211,7 +1236,13 @@ static void check_broken_own_save(const sigil_sync_result *first) {
                 if (edited && variant == 0) sigil_write_le32(edited + 4, 0x00FFFFFFu);
                 if (edited && variant == 2 && ace_entry) memcpy(edited + 0x10, ace_entry + 0x10, 4);
                 if (edited && card.dirty) card.dirty[(size_t)(edited - card.clusters) / 512] = 1;
-                if (ok && (variant == 1 || edited)) bytes = card_bytes(&card, &len);
+                sigil_ps2_save placed;
+                bool cut = false;
+                if (ok && variant == 3 && extract_named(&card, ACE_COMBAT, &placed)) {
+                    cut = cut_first_long_chain(&card, &placed);
+                    sigil_ps2_save_free(&placed);
+                }
+                if (ok && (variant == 1 || edited || cut)) bytes = card_bytes(&card, &len);
                 sigil_ps2_save_free(&ace);
             }
             sigil_ps2_card_free(&card);
@@ -1227,6 +1258,15 @@ static void check_broken_own_save(const sigil_sync_result *first) {
         }
         if (listed_rc == SIGIL_OK && variant == 2 && l->corrupt_entry_count != 2) {
             fail("broken own save", "two folders sharing clusters listed");
+        }
+        if (listed_rc == SIGIL_OK && variant == 3) {
+            sigil_ps2_save gone;
+            if (l->corrupt_entry_count != 1 || strcmp(l->corrupt_entries[0].name, ACE_COMBAT) != 0) {
+                fail("broken own save", "a save whose chain is shorter than its file listed");
+            } else if (sigil_ps2_extract(&listed, l->corrupt_entries[0].first_block, &gone) == SIGIL_OK) {
+                sigil_ps2_save_free(&gone);
+                fail("broken own save", "a save whose chain is shorter than its file extracted");
+            }
         }
         sigil_card_listing_free(l);
         sigil_ps2_card_free(&listed);

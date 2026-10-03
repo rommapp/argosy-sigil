@@ -591,9 +591,10 @@ static uint32_t unit_blocks(const uint8_t *unit, size_t len) {
 /* A new save takes its blocks and, when the file count is odd, one more:
  * its entry fits the free half of the last directory block, but at the
  * even count it leaves, the BIOS holds the block before the directory for
- * the next entry (bios_free). The hold comes from the BIOS's free count;
- * no sample yet shows the BIOS writing into that block, so sigil keeps it
- * free, which refuses a save that would fit one block early. */
+ * the next entry (bios_free). Every BIOS-written sample's stored free count
+ * leaves that block out at an even count (Dark Wizard: 44 with 45 between
+ * data and directory), and the BIOS sizes a new save against that count, so
+ * it never writes there either. */
 static uint32_t inject_cost(uint32_t blocks, uint32_t files) {
     return blocks + (files & 1u);
 }
