@@ -36,7 +36,9 @@ __all__ = [
     "SigilKeysIncompatibleError",
     "SigilNotFoundError",
     "SigilOOMError",
+    "SigilProfile",
     "SigilResult",
+    "SigilSaveAlternate",
     "SigilSaveMember",
     "SigilSaveUnit",
     "SigilUnknownPlatformError",
@@ -46,11 +48,13 @@ __all__ = [
     "hash_saves",
     "layout_subdirs",
     "list_card",
+    "list_profiles",
     "list_save_root",
     "load_header_key_from_prod_keys",
     "locate_saves",
     "platform_from_slug",
     "platform_to_slug",
+    "save_base",
     "version",
 ]
 
@@ -64,6 +68,7 @@ class SigilError(Exception):
     region, damaged, no target, ambiguous, exists), decoded as SigilCardEntry.name is."""
 
     problem: str = ""
+    profiles: tuple[SigilProfile, ...] = ()
 
     def __init__(self, code: int, message: str):
         super().__init__(message)
@@ -132,13 +137,16 @@ class SigilRegionError(SigilError):
 
 
 class SigilNoTargetError(SigilError):
-    """The unit holds a volume, named in `problem`, that the emulator's settings keep no file
-    for; restore wrote nothing."""
+    """The unit holds a volume or member, named in `problem`, that has no file to go in: the
+    emulator's settings keep none, no profile is there for an account save, or the folder lies
+    outside the save root. Restore wrote nothing."""
 
 
 class SigilAmbiguousError(SigilError):
-    """More than one file could be the card the emulator uses and the options don't say which;
-    `problem` names them, one per line. Nothing was written."""
+    """More than one file could be the card the emulator uses, more than one profile and none
+    picked, or more than one emulator folder under the save root; `problem` names them, one per
+    line, and `profiles` lists the profiles. Nothing was written. When you don't know which
+    profile the user plays as, ask them from `profiles` (or list_profiles) and pass `profile`."""
 
 
 class SigilKeysIncompatibleError(SigilError):
@@ -188,6 +196,13 @@ _SWITCH_CONTENT_NAMES: dict[int, Literal["unknown", "application", "patch", "add
 
 SaveShape = Literal["none", "single", "multi", "folder"]
 SaveRole = Literal["primary", "sidecar", "rtc"]
+SaveArea = Literal["none", "account", "device"]
+
+_AREA_NAMES: dict[int, SaveArea] = {
+    lib.SIGIL_SAVE_AREA_NONE: "none",
+    lib.SIGIL_SAVE_AREA_ACCOUNT: "account",
+    lib.SIGIL_SAVE_AREA_DEVICE: "device",
+}
 
 _SHAPE_NAMES: dict[int, SaveShape] = {
     lib.SIGIL_SAVE_SHAPE_NONE: "none",
@@ -226,8 +241,10 @@ _CARD_FORMAT_NAMES: dict[int, CardFormat] = {
     lib.SIGIL_CARD_FORMAT_SEGACD_BRAM: "segacd-bram",
 }
 
-_SUBDIR_LIST_DEPTH = 4
+_SUBDIR_LIST_DEPTH = 12
 _SUBDIR_CAP = 16
+_BASE_SEARCH_DEPTH = 5
+_PATH_CAP = 4096
 
 
 @dataclass(frozen=True)
@@ -251,11 +268,14 @@ class SigilResult:
         return bool(self.features & lib.SIGIL_FEATURE_RTC)
 
     @classmethod
-    def persisted(cls, platform: str, title_id: str, save_id: str, features: int) -> SigilResult:
-        """A result rebuilt from stored columns, or built for a platform that has no title id."""
+    def persisted(cls, platform: str, title_id: str, save_id: str, features: int, raw_serial: str = "") -> SigilResult:
+        """A result rebuilt from stored columns, or built for a platform that has no title id.
+
+        ``raw_serial`` names pcsx_rearmed's per-disc cards, which follow the boot file as written.
+        """
         return cls(
             title_id=title_id,
-            raw_serial="",
+            raw_serial=raw_serial,
             save_id=save_id,
             platform=platform,
             source="binary",
@@ -269,12 +289,32 @@ class SigilResult:
 
 @dataclass(frozen=True)
 class SigilSaveMember:
-    """One file of a save unit. `path` is relative to the save root; `entry` is its archive name."""
+    """One file of a save unit. `path` is relative to the save root; `entry` is its archive name.
+    `area` says whose it is on an emulator that keeps saves per user profile."""
 
     path: str
     entry: str
     role: SaveRole
     present: bool
+    area: SaveArea = "none"
+
+
+@dataclass(frozen=True)
+class SigilProfile:
+    """A user profile the emulator lists. `id` is how its save folder is named."""
+
+    id: str
+    name: str
+
+
+@dataclass(frozen=True)
+class SigilSaveAlternate:
+    """A file under the save root the layout would take with other option values: a save kept under
+    another mode or by an older build of the core. Passing `options` takes it."""
+
+    path: str
+    shared: bool
+    options: Mapping[str, str]
 
 
 @dataclass(frozen=True)
@@ -289,6 +329,7 @@ class SigilSaveUnit:
     artifact: str
     content_hash: str
     identity_hash: str
+    alternates: tuple[SigilSaveAlternate, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -343,12 +384,14 @@ class SigilSyncResult:
     content_hash: str
     identity_hash: str
     changed: bool
-    conflict: bool
     state: bytes
     holding: bytes | None
     unowned: tuple[str, ...]
     restore_again: bool
     companions: tuple[SigilCompanionResult, ...]
+    profiles: tuple[SigilProfile, ...] = ()   # every profile the emulator lists
+    profile: str = ""                         # the profile whose saves were taken or written
+    alternates: tuple[SigilSaveAlternate, ...] = ()  # files other option values would take
 
 
 def _raise_error(code: int) -> None:
@@ -459,10 +502,10 @@ def extract(
 
 
 def content_stem(content_path: str) -> str:
-    """The base name RetroArch names save files after; see README, "Save units"."""
+    """The base name RetroArch names save files after; see docs/save-units.md, "Stem"."""
     out = ffi.new("char[]", lib.SIGIL_SAVE_ENTRY_MAX)
-    lib.sigil_content_stem(content_path.encode("utf-8"), out, lib.SIGIL_SAVE_ENTRY_MAX)
-    return ffi.string(out).decode("utf-8", "replace")
+    lib.sigil_content_stem(_path_bytes(content_path), out, lib.SIGIL_SAVE_ENTRY_MAX)
+    return _path_text(out)
 
 
 def layout_subdirs(layout: str) -> list[str]:
@@ -472,15 +515,94 @@ def layout_subdirs(layout: str) -> list[str]:
     return [ffi.string(out[i]).decode("utf-8") for i in range(n)]
 
 
+def save_base(layout: str, path: str | os.PathLike[str]) -> tuple[str, str]:
+    """On a layout with profiles, the emulator's base folder for `path` and the profile folder
+    `path` lies in ("" for none); collect and restore re-root there themselves. On other layouts,
+    `path` itself and ""."""
+    base = ffi.new("char[]", _PATH_CAP)
+    profile = ffi.new("char[]", lib.SIGIL_PROFILE_ID_MAX)
+    rc = lib.sigil_save_base(layout.encode("utf-8"), os.fsencode(path), base, _PATH_CAP, profile,
+                             lib.SIGIL_PROFILE_ID_MAX)
+    if rc != lib.SIGIL_OK:
+        _raise_error(rc)
+    return os.fsdecode(ffi.string(base)), _text(profile)
+
+
+def list_profiles(core: str, save_root: str | os.PathLike[str]) -> tuple[SigilProfile, ...]:
+    """The profiles the emulator lists around `save_root`, for asking the user which one they play
+    as when collect or restore raised SigilAmbiguousError. Raises SigilUnsupportedFormatError for a
+    core whose saves aren't kept per profile."""
+    keepalive: list[object] = []
+    root, _ = _rooted(core, save_root, None)
+    paths = [ffi.new("char[]", _path_bytes(p)) for p in list_save_root(root, core)]
+    keepalive.extend(paths)
+    listing = ffi.new("char *[]", paths if paths else [ffi.NULL])
+    req = ffi.new("sigil_save_request *")
+    req.struct_version = lib.SIGIL_SAVE_REQUEST_V1
+    layout = ffi.new("char[]", core.encode("utf-8"))
+    root_buf = ffi.new("char[]", os.fsencode(root))
+    opener = _open_callback(os.fsencode(root))
+    keepalive.extend([listing, layout, root_buf, opener])
+    req.layout = layout
+    req.listing = listing
+    req.listing_count = len(paths)
+    req.root_path = root_buf
+    req.open = opener
+    out = ffi.new("sigil_save_profile **")
+    count = ffi.new("size_t *")
+    rc = lib.sigil_save_profiles(req, out, count)
+    if rc != lib.SIGIL_OK:
+        _raise_error(rc)
+    try:
+        return tuple(SigilProfile(id=_text(out[0][i].id), name=_text(out[0][i].name)) for i in range(count[0]))
+    finally:
+        lib.sigil_save_profiles_free(out[0])
+
+
+def _layout_top(layout: str) -> str | None:
+    top = lib.sigil_save_layout_top(layout.encode("utf-8"))
+    return ffi.string(top).decode("utf-8") if top != ffi.NULL else None
+
+
+def _bases_below(root: str, top: str) -> list[str]:
+    """Root-relative folders under `root` that hold the layout's top folder."""
+    found: list[str] = []
+
+    def walk(directory: str, relative: str, depth: int) -> None:
+        if depth == 0:
+            return
+        try:
+            with os.scandir(directory) as it:
+                entries = [e for e in it if e.is_dir(follow_symlinks=False)]
+        except OSError:
+            return
+        for entry in entries:
+            if entry.name == top and relative:
+                found.append(relative)
+            elif entry.name != top:
+                walk(entry.path, f"{relative}/{entry.name}" if relative else entry.name, depth - 1)
+
+    walk(root, "", _BASE_SEARCH_DEPTH)
+    return found
+
+
 def list_save_root(root: str | os.PathLike[str], layout: str) -> list[str]:
-    """Root-relative paths of the files directly in `root` plus those under the layout's subfolders."""
+    """Root-relative paths of the files directly in `root` plus those under the layout's subfolders.
+    On a layout with profiles whose base sits below `root`, the subfolders under each such base."""
     root = os.fspath(root)
     out: list[str] = []
     if os.path.isdir(root):
         with os.scandir(root) as it:
             out.extend(e.name for e in it if e.is_file())
-    for subdir in layout_subdirs(layout):
-        _list_recursive(os.path.join(root, subdir), subdir, _SUBDIR_LIST_DEPTH, out)
+    subdirs = layout_subdirs(layout)
+    top = _layout_top(layout)
+    bases = [""]
+    if top and not os.path.isdir(os.path.join(root, top)):
+        bases = _bases_below(root, top) or [""]
+    for base in bases:
+        for subdir in subdirs:
+            relative = f"{base}/{subdir}" if base else subdir
+            _list_recursive(os.path.join(root, relative), relative, _SUBDIR_LIST_DEPTH, out)
     return out
 
 
@@ -497,20 +619,22 @@ def _list_recursive(directory: str, relative: str, depth: int, out: list[str]) -
 
 
 def _fill_save_request(req, keepalive: list[object], game: SigilResult, core: str, content_path: str,
-                       listing: Iterable[str], options: Mapping[str, str] | None) -> None:
+                       listing: Iterable[str], options: Mapping[str, str] | None, root: str | None = None,
+                       profile: str | None = None) -> None:
     """Fills a sigil_save_request; every buffer it points at goes into `keepalive`."""
 
-    def c_str(value: str):
-        buf = ffi.new("char[]", value.encode("utf-8"))
+    def c_str(value: str | bytes):
+        buf = ffi.new("char[]", value if isinstance(value, bytes) else value.encode("utf-8"))
         keepalive.append(buf)
         return buf
 
-    paths = [c_str(p) for p in listing]
+    paths = [c_str(_path_bytes(p)) for p in listing]
     option_items = list((options or {}).items())
 
     result = ffi.new("sigil_result *")
     result.struct_version = lib.SIGIL_RESULT_V3
     result.title_id = game.title_id.encode("utf-8")
+    result.raw_serial = game.raw_serial.encode("utf-8")
     result.save_id = game.save_id.encode("utf-8")
     result.platform = platform_from_slug(game.platform) if game.platform else lib.SIGIL_PLATFORM_AUTO
     result.features = game.features
@@ -519,7 +643,7 @@ def _fill_save_request(req, keepalive: list[object], game: SigilResult, core: st
     req.struct_version = lib.SIGIL_SAVE_REQUEST_V1
     req.layout = c_str(core)
     req.platform = c_str(game.platform) if game.platform else ffi.NULL
-    req.content_path = c_str(content_path)
+    req.content_path = c_str(_path_bytes(content_path))
     req.result = result
     req.features = game.features
 
@@ -537,6 +661,27 @@ def _fill_save_request(req, keepalive: list[object], game: SigilResult, core: st
     req.listing_count = len(paths)
     req.open = ffi.NULL
     req.open_ctx = ffi.NULL
+    if root is not None:
+        root_buf = ffi.new("char[]", os.fsencode(root))
+        keepalive.append(root_buf)
+        req.root_path = root_buf
+    if profile:
+        req.profile = c_str(profile)
+
+
+def _rooted(core: str, save_root: str | os.PathLike[str], profile: str | None) -> tuple[str, str | None]:
+    """The folder to list and write under for `save_root`, and the profile: one given wins over
+    the one `save_root` lies in."""
+    base, implied = save_base(core, save_root)
+    return base, profile or implied or None
+
+
+def _open_callback(root_bytes: bytes):
+    @ffi.callback("sigil_io *(void *, const char *)")
+    def open_member(_ctx, relative_path):
+        return lib.sigil_io_open_file(os.path.join(root_bytes, ffi.string(relative_path)))
+
+    return open_member
 
 
 def locate_saves(
@@ -547,16 +692,25 @@ def locate_saves(
     save_root: str | os.PathLike[str] | None = None,
     listing: Iterable[str] | None = None,
     options: Mapping[str, str] | None = None,
+    profile: str | None = None,
 ) -> SigilSaveUnit:
     """The files under a save root that belong to `game` when `core` runs `content_path`.
 
-    Names only; no file is read. docs/python.md defines every input.
+    No save is read; on a layout with profiles the emulator's profile list is, when `save_root`
+    is given. docs/python.md defines every input.
     """
     keepalive: list[object] = []
+    root = None
+    if save_root is not None:
+        root, profile = _rooted(core, save_root, profile)
     if listing is None:
-        listing = list_save_root(save_root, core) if save_root is not None else []
+        listing = list_save_root(root, core) if root is not None else []
     req = ffi.new("sigil_save_request *")
-    _fill_save_request(req, keepalive, game, core, content_path, listing, options)
+    _fill_save_request(req, keepalive, game, core, content_path, listing, options, root, profile)
+    if root is not None and _layout_top(core):
+        opener = _open_callback(os.fsencode(root))
+        keepalive.append(opener)
+        req.open = opener
 
     out = ffi.new("sigil_save_unit **")
     rc = lib.sigil_save_resolve(req, out)
@@ -565,14 +719,15 @@ def locate_saves(
     unit = out[0]
     try:
         return SigilSaveUnit(
-            key=_text(unit.key),
+            key=_path_text(unit.key),
             shape=_SHAPE_NAMES.get(unit.shape, "none"),
             members=tuple(_member(unit.members[i]) for i in range(unit.member_count)),
             expected=tuple(_member(unit.expected[i]) for i in range(unit.expected_count)),
-            unkeyed=tuple(_text(unit.unkeyed[i]) for i in range(unit.unkeyed_count)),
-            artifact=_text(unit.artifact),
-            content_hash="",
-            identity_hash="",
+            unkeyed=tuple(_path_text(unit.unkeyed[i]) for i in range(unit.unkeyed_count)),
+            artifact=_path_text(unit.artifact),
+            content_hash=_text(unit.content_hash),
+            identity_hash=_text(unit.identity_hash),
+            alternates=_alternates(unit),
         )
     finally:
         lib.sigil_save_unit_free(unit)
@@ -587,25 +742,19 @@ def hash_saves(saves: SigilSaveUnit, save_root: str | os.PathLike[str]) -> Sigil
 
     members = ffi.new("sigil_save_member[]", len(saves.members))
     for i, m in enumerate(saves.members):
-        members[i].path = m.path.encode("utf-8")
-        members[i].entry = m.entry.encode("utf-8")
+        members[i].path = _path_bytes(m.path)
+        members[i].entry = _path_bytes(m.entry)
         members[i].role = role_codes[m.role]
         members[i].present = 1
 
     unit = ffi.new("sigil_save_unit *")
     unit.struct_version = lib.SIGIL_SAVE_UNIT_V1
-    unit.key = saves.key.encode("utf-8")
+    unit.key = _path_bytes(saves.key)
     unit.shape = shape_code
     unit.members = members
     unit.member_count = len(saves.members)
 
-    root_bytes = os.fsencode(save_root)
-
-    @ffi.callback("sigil_io *(void *, const char *)")
-    def open_member(_ctx, relative_path):
-        return lib.sigil_io_open_file(os.path.join(root_bytes, ffi.string(relative_path)))
-
-    rc = lib.sigil_save_hash(unit, open_member, ffi.NULL)
+    rc = lib.sigil_save_hash(unit, _open_callback(os.fsencode(save_root)), ffi.NULL)
     if rc != lib.SIGIL_OK:
         _raise_error(rc)
     return replace(saves, content_hash=_text(unit.content_hash), identity_hash=_text(unit.identity_hash))
@@ -629,15 +778,17 @@ def _sync(
     claimed: Iterable[str],
     companions: Iterable[SigilCompanion],
     repair: bool,
+    profile: str | None,
 ) -> SigilSyncResult:
     keepalive: list[object] = []
-    root_bytes = os.fsencode(save_root)
+    root, profile = _rooted(core, save_root, profile)
+    root_bytes = os.fsencode(root)
     if listing is None:
-        listing = list_save_root(save_root, core)
+        listing = list_save_root(root, core)
 
     req = ffi.new("sigil_sync_request *")
     req.struct_version = lib.SIGIL_SYNC_REQUEST_V1
-    _fill_save_request(req.save, keepalive, game, core, content_path, list(listing), options)
+    _fill_save_request(req.save, keepalive, game, core, content_path, list(listing), options, root, profile)
 
     ids = [ffi.new("char[]", i.encode("utf-8")) for i in game_ids]
     keepalive.extend(ids)
@@ -678,9 +829,7 @@ def _sync(
         req.state = state_buf
         req.state_len = len(state)
 
-    @ffi.callback("sigil_io *(void *, const char *)")
-    def open_member(_ctx, relative_path):
-        return lib.sigil_io_open_file(os.path.join(root_bytes, ffi.string(relative_path)))
+    open_member = _open_callback(root_bytes)
 
     @ffi.callback("int(void *, const char *, const uint8_t *, size_t)")
     def write_member(_ctx, relative_path, data, length):
@@ -720,6 +869,7 @@ def _sync(
         error = _ERROR_CLASSES.get(rc, SigilError)(rc, message)
         if out[0] != ffi.NULL:
             error.problem = _save_name(out[0].problem)
+            error.profiles = _profiles(out[0])
             if isinstance(error, SigilNoSpaceError):
                 error.blocks_short = int(out[0].blocks_short)
             lib.sigil_sync_result_free(out[0])
@@ -727,13 +877,12 @@ def _sync(
     r = out[0]
     try:
         return SigilSyncResult(
-            artifact=_text(r.artifact),
+            artifact=_path_text(r.artifact),
             shape=_SHAPE_NAMES.get(r.shape, "none"),
             data=bytes(ffi.buffer(r.data, r.len)) if r.data != ffi.NULL else None,
             content_hash=_text(r.content_hash),
             identity_hash=_text(r.identity_hash),
             changed=bool(r.changed),
-            conflict=bool(r.conflict),
             state=bytes(ffi.buffer(r.state, r.state_len)) if r.state != ffi.NULL else b"",
             holding=bytes(ffi.buffer(r.holding, r.holding_len)) if r.holding != ffi.NULL else None,
             unowned=tuple(_save_name(r.unowned[i]) for i in range(r.unowned_count)),
@@ -747,9 +896,29 @@ def _sync(
                 )
                 for c in (r.companions[i] for i in range(r.companion_count))
             ),
+            profiles=_profiles(r),
+            profile=_text(r.profile),
+            alternates=_alternates(r),
         )
     finally:
         lib.sigil_sync_result_free(r)
+
+
+def _profiles(r) -> tuple[SigilProfile, ...]:
+    return tuple(
+        SigilProfile(id=_text(p.id), name=_text(p.name)) for p in (r.profiles[i] for i in range(r.profile_count))
+    )
+
+
+def _alternates(r) -> tuple[SigilSaveAlternate, ...]:
+    return tuple(
+        SigilSaveAlternate(
+            path=_path_text(a.path),
+            shared=bool(a.shared),
+            options={ffi.string(o.key).decode(): ffi.string(o.value).decode() for o in a.options[0 : a.option_count]},
+        )
+        for a in (r.alternates[i] for i in range(r.alternate_count))
+    )
 
 
 def collect(
@@ -766,6 +935,7 @@ def collect(
     claimed: Iterable[str] = (),
     companions: Iterable[SigilCompanion] = (),
     repair: bool = False,
+    profile: str | None = None,
 ) -> SigilSyncResult:
     """`game`'s saves under `save_root` gathered into the unit that travels to RomM.
 
@@ -774,7 +944,7 @@ def collect(
     defines every input.
     """
     return _sync(None, game, core, content_path, save_root, listing, options, game_ids, state, mode, False, claimed,
-                 companions, repair)
+                 companions, repair, profile)
 
 
 def restore(
@@ -793,6 +963,7 @@ def restore(
     claimed: Iterable[str] = (),
     companions: Iterable[SigilCompanion] = (),
     repair: bool = False,
+    profile: str | None = None,
 ) -> SigilSyncResult:
     """Puts `unit`, and each companion's unit given, back under `save_root` and reads them back.
 
@@ -800,15 +971,15 @@ def restore(
     sync and `overwrite_local` is False; SigilUncollectedError when a shared Saturn or Sega CD
     volume holds saves no collect has passed on yet; SigilNoSpaceError when the saves don't fit;
     SigilRegionError for a companion's save from another region; SigilNoTargetError when the
-    unit holds a volume the emulator's settings keep no file for; SigilAmbiguousError when more
-    than one file could be the emulator's card; SigilDamagedError when a file the saves go in is
-    damaged and `repair` is False, isn't a card sigil can read at all, or holds a corrupt save of
-    the game or a companion (`repair` changes neither of the last two); SigilExistsError when
-    Dolphin's GCI folder has no free name for a new save. The last six name the save, member or
-    files in `problem`.
+    unit holds a volume or member with no file to go in; SigilAmbiguousError when more than one
+    file could be the emulator's card, or more than one profile could take the saves;
+    SigilDamagedError when a file the saves go in is damaged and `repair` is False, isn't a card
+    sigil can read at all, or holds a corrupt save of the game or a companion (`repair` changes
+    neither of the last two); SigilExistsError when Dolphin's GCI folder has no free name for a
+    new save. The last six name the save, member or files in `problem`.
     """
     return _sync(unit, game, core, content_path, save_root, listing, options, game_ids, state, mode, overwrite_local,
-                 claimed, companions, repair)
+                 claimed, companions, repair, profile)
 
 
 def _card_entries(entries, count: int) -> tuple[SigilCardEntry, ...]:
@@ -854,6 +1025,17 @@ def _text(chars) -> str:
     return ffi.string(chars).decode("utf-8", "replace")
 
 
+def _path_bytes(path: str) -> bytes:
+    """A file system name as the OS spells it: a name os.scandir decoded with surrogates for bytes
+    that aren't UTF-8 goes back to those bytes."""
+    return os.fsencode(path)
+
+
+def _path_text(chars) -> str:
+    """A path sigil handed back, decoded as os.scandir decodes names, so it opens the same file."""
+    return os.fsdecode(ffi.string(chars))
+
+
 def _save_name(chars) -> str:
     """A name stored on a card or volume. Bytes that aren't UTF-8 decode as surrogates, so the
     name passed back in `claimed` is the same bytes."""
@@ -862,8 +1044,9 @@ def _save_name(chars) -> str:
 
 def _member(m) -> SigilSaveMember:
     return SigilSaveMember(
-        path=_text(m.path),
-        entry=_text(m.entry),
+        path=_path_text(m.path),
+        entry=_path_text(m.entry),
         role=_ROLE_NAMES.get(m.role, "sidecar"),
         present=bool(m.present),
+        area=_AREA_NAMES.get(m.area, "none"),
     )

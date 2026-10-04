@@ -1,0 +1,4 @@
+01007EF00011E000/option.sav	option
+01007EF00011E000/0/caption.sav	caption
+01007EF00011E000/.yuzu_save_size	size
+device/01007EF00011E000/island.dat	island

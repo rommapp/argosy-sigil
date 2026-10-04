@@ -1238,6 +1238,36 @@ static void check_raw_and_folder_cross(const sigil_sync_result *raw_unit, const 
 
 /* A save that reads back wrong fails the restore, on a raw card and in the
  * GCI folder. */
+/* A listed .gci the client can't open is an I/O error: collect would drop
+ * that save from the unit, and restore would take its name as free and
+ * write over it. */
+static void check_unopenable_gci(const sigil_sync_result *nfsu2) {
+    if (!nfsu2) return;
+    mem_root root = {0};
+    if (!put_fzero(&root, SA_FOLDER, NULL)) { root_free(&root); return; }
+    root_put(&root, NFSU2_FILE, nfsu2->data, nfsu2->len);
+    snprintf(root.unreadable, sizeof(root.unreadable), "%s", NFSU2_FILE);
+    game g;
+    make_game(&g, &root, "dolphin_standalone", NFSU2, "GUGE", NFSU2_ISO);
+    sigil_sync_result *r = NULL;
+    if (sigil_collect(&g.req, &r) != SIGIL_ERR_IO) fail("unopenable gci", "collect dropped an unopenable save");
+    sigil_sync_result_free(r);
+    g.req.overwrite_local = 1;
+    r = NULL;
+    if (sigil_restore(&g.req, nfsu2->data, nfsu2->len, &r) != SIGIL_ERR_IO) fail("unopenable gci", "restore went ahead");
+    if (root.writes || root.removes) fail("unopenable gci", "restore wrote over a file it couldn't read");
+    sigil_sync_result_free(r);
+
+    snprintf(root.unreadable, sizeof(root.unreadable), "%s%s", SA_FOLDER, FZERO_FILES[0]);
+    r = NULL;
+    if (sigil_restore(&g.req, nfsu2->data, nfsu2->len, &r) != SIGIL_ERR_IO) {
+        fail("unopenable gci", "restore placed a save beside another game's file it couldn't read");
+    }
+    if (root.writes || root.removes) fail("unopenable gci", "restore wrote");
+    sigil_sync_result_free(r);
+    root_free(&root);
+}
+
 static void check_faulty_writes(const sigil_sync_result *raw_unit) {
     if (!raw_unit) { fail("faulty writes", "setup failed"); return; }
     mem_root clean = {0}, faulty = {0};
@@ -1302,6 +1332,7 @@ int main(void) {
     check_raw_card_forms(raw_unit);
     check_save_bigger_than_card();
     check_directory_full(nfsu2);
+    check_unopenable_gci(nfsu2);
     check_card_size_option(raw_unit, folder_unit);
     check_folder_capacity(nfsu2, folder_unit);
     check_dolphin_folder_rules(nfsu2);

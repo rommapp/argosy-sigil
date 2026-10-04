@@ -27,22 +27,34 @@ int sigil_extract_psvita(const sigil_io *io, const char *filename_hint,
             if (buf) {
                 int got = io->read(io->ctx, 0, buf, want);
                 char title_id[32] = {0};
+                /* One byte over save_id, so a value too long to fit reads as too long
+                 * instead of coming back cut to a folder name the game never used. */
+                char save_dir[sizeof(out->save_id) + 1] = {0};
                 if (got > 0
                     && sigil_read_le32(buf) == VITA_SFO_MAGIC
                     && sigil_sfo_get_string(buf, (size_t)got, "TITLE_ID",
                                             title_id, sizeof(title_id)) == SIGIL_OK
                     && title_id[0] != '\0'
                     && strlen(title_id) < sizeof(out->title_id)) {
+                    /* A title that shares another title's saves (a sequel, another
+                     * region) names that folder in INSTALL_DIR_SAVEDATA; firmware
+                     * and Vita3K both save there instead of under TITLE_ID. */
+                    if (sigil_sfo_get_string(buf, (size_t)got, "INSTALL_DIR_SAVEDATA",
+                                             save_dir, sizeof(save_dir)) != SIGIL_OK
+                        || strlen(save_dir) >= sizeof(out->save_id)) {
+                        save_dir[0] = '\0';
+                    }
                     free(buf);
                     sigil_result_init(out);
                     out->platform = SIGIL_PLATFORM_PSVITA;
-                    /* Saves land in ux0:user/00/savedata/<TITLEID>, one exact
+                    /* Saves land in ux0:user/00/savedata/<SAVEDIR>, one exact
                      * directory per title rather than a prefixed family. */
                     out->usage    = SIGIL_USAGE_FOLDER_EXACT;
                     size_t n = strlen(title_id);
                     memcpy(out->title_id,   title_id, n + 1);
                     memcpy(out->raw_serial, title_id, n + 1);
-                    memcpy(out->save_id,    title_id, n + 1);
+                    const char *save = save_dir[0] != '\0' ? save_dir : title_id;
+                    memcpy(out->save_id, save, strlen(save) + 1);
                     out->source = SIGIL_SOURCE_BINARY;
                     return SIGIL_OK;
                 }

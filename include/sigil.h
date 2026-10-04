@@ -58,10 +58,15 @@ extern "C" {
                                                  corrupt save that may be the game's or a companion's, stays
                                                  refused, since reading on would take that save as deleted */
 #define SIGIL_ERR_REGION              -14  /* a save belongs to another region than the game, which can't read it */
-#define SIGIL_ERR_NO_TARGET           -15  /* the unit holds a volume the emulator's settings keep no file for;
+#define SIGIL_ERR_NO_TARGET           -15  /* the unit holds a volume or member with no file to go in: the
+                                                 emulator's settings keep none, no profile is there for an
+                                                 account save, or its folder lies outside the save root;
                                                  `problem` names it */
 #define SIGIL_ERR_AMBIGUOUS           -16  /* more than one file could be the card the emulator uses and the
-                                                 options don't say which; `problem` names them, one per line */
+                                                 options don't say which, more than one profile could take
+                                                 the saves and none is picked, or more than one emulator
+                                                 folder sits under the save root; `problem` names them, one
+                                                 per line */
 #define SIGIL_ERR_KEYS_INCOMPATIBLE   -17  /* the keys given don't open this content: the key file lacks the key
                                                  for its key generation, or its header key is wrong. Switch
                                                  NSP and XCI need prod.keys (SIGIL_ERR_NEEDS_KEY without) */
@@ -134,6 +139,8 @@ enum sigil_switch_content_type {
 
 typedef struct {
     uint32_t       struct_version;
+    /* The game's id. A Switch update or DLC gives the id of the game it belongs to, whose
+     * folder its saves live in; raw_serial keeps the content's own id. */
     char           title_id[32];
     char           raw_serial[32];
     /* Literal on-disk save folder/file name (e.g. PS2 BASLUS-217311). Empty when unknown.
@@ -231,7 +238,7 @@ SIGIL_API void      sigil_io_close(sigil_io *io);
 
 SIGIL_API int sigil_load_header_key_from_prod_keys(const char *path, uint8_t out[32]);
 
-/* ---- Save units (README, "Save units") ---------------------------------------
+/* ---- Save units (docs/save-units.md) -----------------------------------------
  * Sigil never touches the filesystem here: the caller lists the root and the
  * subfolders `sigil_save_layout_subdirs` names, and opens members on request. */
 
@@ -248,20 +255,52 @@ typedef enum {
     SIGIL_SAVE_ROLE_RTC          /* RETRO_MEMORY_RTC, expected only with SIGIL_FEATURE_RTC */
 } sigil_save_role;
 
+/* Where a save sits on an emulator that keeps saves per user profile
+ * (docs/save-units.md, "Profiles"). */
+typedef enum {
+    SIGIL_SAVE_AREA_NONE = 0,    /* the layout has no profiles */
+    SIGIL_SAVE_AREA_ACCOUNT,     /* one profile's saves */
+    SIGIL_SAVE_AREA_DEVICE       /* saves every profile on the device shares: a Switch device save,
+                                    Wii U user/common/ and meta/ */
+} sigil_save_area;
+
 #define SIGIL_SAVE_PATH_MAX  512
 #define SIGIL_SAVE_ENTRY_MAX 256
+#define SIGIL_PROFILE_ID_MAX   64
+#define SIGIL_PROFILE_NAME_MAX 64
 
 typedef struct {
     char path[SIGIL_SAVE_PATH_MAX];   /* relative to the save root, '/' separated */
     char entry[SIGIL_SAVE_ENTRY_MAX]; /* archive entry name */
     int  role;                        /* sigil_save_role */
     int  present;                     /* 1 when the listing held it */
+    int  area;                        /* sigil_save_area */
 } sigil_save_member;
+
+/* A user profile the emulator lists. */
+typedef struct {
+    char id[SIGIL_PROFILE_ID_MAX];       /* as the profile's save folder is named: Switch
+                                            125D2DBAEBDEB11000296E1E1ECBF401, Wii U 80000001,
+                                            Vita3K 00, RPCS3 00000001 */
+    char name[SIGIL_PROFILE_NAME_MAX];   /* the nickname, UTF-8; empty when the emulator keeps none */
+} sigil_save_profile;
 
 typedef struct {
     const char *key;   /* core option key, e.g. "genesis_plus_gx_system_bram" */
     const char *value;
 } sigil_save_option;
+
+/* A file in the save root that the layout would take under other option
+ * values: the game's own file, or a shared one, that the options the request
+ * sent leave out. A save kept under another mode or by an older build of the
+ * core (Beetle Saturn's `.bkr` before its save-method option existed) shows
+ * up here; sending `options` reads it. */
+typedef struct {
+    char              path[SIGIL_SAVE_PATH_MAX];
+    int               shared;        /* 1 for a file every game shares, as in `unkeyed` */
+    sigil_save_option options[2];    /* the values that select it; key and value are static strings */
+    size_t            option_count;
+} sigil_save_alternate;
 
 /* Returns a stream for one member of the save root, or NULL. */
 typedef sigil_io *(*sigil_save_open_fn)(void *ctx, const char *relative_path);
@@ -279,6 +318,13 @@ typedef struct {
     size_t                    listing_count;
     sigil_save_open_fn        open;             /* NULL resolves names only; see sigil_save_hash */
     void                     *open_ctx;
+    const char               *root_path;        /* the save root's own path, '/' or '\' separated, or NULL. On a
+                                                   layout with profiles it says where the root sits in the
+                                                   emulator's folders: a root inside a profile's folder picks
+                                                   that profile, and saves outside the root are out of reach */
+    const char               *profile;          /* layouts with profiles: the profile whose saves to take, by
+                                                   sigil_save_profile.id, or NULL to take the one the root path
+                                                   names, else the only one the emulator lists */
 } sigil_save_request;
 
 typedef struct {
@@ -294,6 +340,8 @@ typedef struct {
     char               artifact[SIGIL_SAVE_ENTRY_MAX]; /* file name the unit travels under */
     char               content_hash[33];    /* RomM content_hash of the artifact; empty when not hashed */
     char               identity_hash[33];   /* content_hash over the non-rtc members */
+    sigil_save_alternate *alternates;       /* files other option values would take; see sigil_save_alternate */
+    size_t             alternate_count;
 } sigil_save_unit;
 
 SIGIL_API int  sigil_save_resolve(const sigil_save_request *req, sigil_save_unit **out);
@@ -305,6 +353,32 @@ SIGIL_API int  sigil_save_hash(sigil_save_unit *unit, sigil_save_open_fn open, v
 /* Subfolders under the save root a layout writes into, so the caller knows
  * what to list. Returns the count written to `out` (at most `cap`). */
 SIGIL_API size_t sigil_save_layout_subdirs(const char *layout, const char **out, size_t cap);
+
+/* The emulator's base folder for `path` on a layout with profiles: `path`
+ * cut above the layout's top folder (Eden's nand/, Cemu's mlc01/, Vita3K's
+ * ux0/, RPCS3's dev_hdd0/) when `path` lies inside it, else `path` itself.
+ * `profile` gets the profile folder `path` lies in, or "". Separators are
+ * kept as given; a trailing one is dropped. On other layouts `base` is
+ * `path`. SIGIL_ERR_INVALID_ARG when either buffer is too small. */
+SIGIL_API int sigil_save_base(const char *layout, const char *path, char *base, size_t base_cap, char *profile,
+                              size_t profile_cap);
+
+/* The top folder of the emulator's base on a layout with profiles ("nand",
+ * "mlc01", "ux0", "dev_hdd0"), for a caller looking under a save root for the
+ * base; NULL on other layouts. */
+SIGIL_API const char *sigil_save_layout_top(const char *layout);
+
+/* The profiles the emulator lists under the request's root, for a client to
+ * show the user when it doesn't know which profile they play as (collect and
+ * restore return SIGIL_ERR_AMBIGUOUS when two or more could take a game's
+ * saves). The request needs `layout`, `listing`, `root_path` where the root
+ * lies inside the emulator's folders, and `open` for the yuzu forks, whose
+ * list is a file; the game fields are not read. `*out` is freed with
+ * sigil_save_profiles_free; with no profile it is NULL and `*count` 0.
+ * SIGIL_ERR_UNSUPPORTED_FORMAT on a layout without profiles;
+ * SIGIL_ERR_AMBIGUOUS when the listing shows two emulator folders. */
+SIGIL_API int  sigil_save_profiles(const sigil_save_request *req, sigil_save_profile **out, size_t *count);
+SIGIL_API void sigil_save_profiles_free(sigil_save_profile *profiles);
 
 /* The base name RetroArch derives for save files (runloop_path_set_basename):
  * the loaded path's file name without its extension, taking the member name
@@ -412,7 +486,8 @@ typedef struct {
                                                SIGIL_ERR_INVALID_ARG, writing nothing, when it must remove one and
                                                this is NULL. A path ending in '/' names a directory sigil emptied
                                                (a dropped PCSX2 save folder): remove the directory */
-    const sigil_sync_companion *companions; /* games whose saves this game reads, in the order they go on */
+    const sigil_sync_companion *companions; /* games whose saves this game reads, in the order they go on.
+                                               SIGIL_ERR_INVALID_ARG on a layout with profiles */
     size_t                companion_count;
     int                   repair;           /* 1 to rebuild the damaged structures that SIGIL_ERR_DAMAGED
                                                named, instead of refusing */
@@ -430,9 +505,10 @@ typedef struct {
     int       conflict;                        /* restore: 1 when it wrote nothing because local saves changed */
     uint8_t  *state;                           /* store it once every upload succeeded; pass it back next time */
     size_t    state_len;
-    uint8_t  *holding;                         /* collect, Saturn and Sega CD: a zip of the saves on a shared volume
-                                                  with no known owner, "backup.ram" and "cart.ram"; NULL when none.
-                                                  Keep it wherever the user can claim them from */
+    uint8_t  *holding;                         /* collect, Saturn, Sega CD and Dreamcast: a zip of the saves on a
+                                                  shared volume with no known owner, one member per volume named as
+                                                  in a unit ("backup.ram", "cart.ram", "vmu_A1.bin"); NULL when
+                                                  none. Keep it wherever the user can claim them from */
     size_t    holding_len;
     char    (*unowned)[SIGIL_CARD_NAME_MAX];   /* the names of the saves in `holding`, for the user to claim */
     size_t    unowned_count;
@@ -448,6 +524,12 @@ typedef struct {
                                                   size; 0 when there were enough free blocks but no
                                                   directory slot, or other saves hold the blocks a
                                                   Dreamcast game file must start at */
+    sigil_save_profile *profiles;              /* layouts with profiles: every profile the emulator lists */
+    size_t    profile_count;
+    char      profile[SIGIL_PROFILE_ID_MAX];   /* the profile whose saves collect took or restore wrote; empty
+                                                  when none is picked */
+    sigil_save_alternate *alternates;          /* files other option values would take; see sigil_save_alternate */
+    size_t    alternate_count;
 } sigil_sync_result;
 
 /* Gathers the game's saves into one unit. Returns SIGIL_ERR_DAMAGED as restore does, and
@@ -469,10 +551,19 @@ SIGIL_API int  sigil_collect(const sigil_sync_request *req, sigil_sync_result **
  *                          corrupt save, which a swap would drop. Only the first lifts with
  *                          repair. `problem` names the file.
  *   SIGIL_ERR_NO_TARGET    the unit holds a volume the emulator's settings keep no file for (a cart,
- *                          a VMU port); `problem` names the unit member.
+ *                          a VMU port), or on a layout with profiles a member no folder of the game
+ *                          takes, an account save with no profile there, or one whose folder lies
+ *                          outside the save root; `problem` names the unit member.
  *   SIGIL_ERR_AMBIGUOUS    more than one file could be the emulator's card (Dolphin raw cards of two
- *                          sizes) and the options don't say which; `problem` names them, one per line.
+ *                          sizes) and the options don't say which, or on a layout with profiles more
+ *                          than one profile could take the saves; `problem` names them, one per line.
+ *                          When the client doesn't know which profile the user plays as, it asks them
+ *                          (`profiles`, or sigil_save_profiles) and passes `profile`.
  *                          Collect refuses the same way.
+ *   SIGIL_ERR_UNSUPPORTED_FORMAT  on a layout with profiles, two unit members go to one file.
+ *   SIGIL_ERR_IO           a unit member's path would leave the save root, or a file the listing
+ *                          holds won't open through save.open. Collect refuses the same way, so a
+ *                          file it can't read never counts as no saves.
  *   SIGIL_ERR_EXISTS       Dolphin's GCI folder holds other games' files under every name Dolphin
  *                          would give a new save, so it would write over one; `problem` names the save.
  * With these, *out is set as well; free it as usual. */

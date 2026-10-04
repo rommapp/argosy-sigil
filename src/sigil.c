@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "sigil_internal.h"
-#include "sigil_compat.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/stat.h>
@@ -86,7 +85,7 @@ const char *sigil_strerror(int code) {
     case SIGIL_ERR_IO:                   return "I/O error";
     case SIGIL_ERR_UNKNOWN_PLATFORM:     return "unknown platform";
     case SIGIL_ERR_UNSUPPORTED_FORMAT:   return "unsupported format";
-    case SIGIL_ERR_NOT_FOUND:            return "title id not found";
+    case SIGIL_ERR_NOT_FOUND:            return "not found";
     case SIGIL_ERR_NEEDS_KEY:            return "decryption key required";
     case SIGIL_ERR_CRYPTO:               return "crypto failure";
     case SIGIL_ERR_OOM:                  return "out of memory";
@@ -96,8 +95,8 @@ const char *sigil_strerror(int code) {
     case SIGIL_ERR_UNCOLLECTED:          return "the volume holds saves not collected yet";
     case SIGIL_ERR_DAMAGED:              return "a save structure is damaged";
     case SIGIL_ERR_REGION:               return "the save is from another region";
-    case SIGIL_ERR_NO_TARGET:            return "the emulator's settings keep no file for a volume in the unit";
-    case SIGIL_ERR_AMBIGUOUS:            return "more than one file could be the emulator's card";
+    case SIGIL_ERR_NO_TARGET:            return "a save in the unit has no file to go in";
+    case SIGIL_ERR_AMBIGUOUS:            return "more than one card, profile or emulator folder could hold the saves";
     case SIGIL_ERR_KEYS_INCOMPATIBLE:    return "key file incompatible with this content";
     default:                             return "unknown error";
     }
@@ -224,73 +223,89 @@ static bool path_is_directory(const char *path) {
     return S_ISDIR(st.st_mode);
 }
 
+/* Calls `fn` for each entry of `dir` but . and .., with its full path. */
+typedef void (*dir_entry_fn)(void *ctx, const char *child, const char *name, bool is_dir);
+
+static bool is_dot_entry(const char *name) {
+    return name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'));
+}
+
 #ifdef _WIN32
-static int find_file_in_dir(const char *dir, const char *target_name,
-                            char *out, size_t out_cap, int depth) {
-    if (depth > SIGIL_DIR_SCAN_MAX_DEPTH) return SIGIL_ERR_NOT_FOUND;
+static int for_each_entry(const char *dir, dir_entry_fn fn, void *ctx) {
     char pattern[1024];
     int pn = snprintf(pattern, sizeof(pattern), "%s\\*", dir);
     if (pn <= 0 || (size_t)pn >= sizeof(pattern)) return SIGIL_ERR_IO;
     WIN32_FIND_DATAA fd;
     HANDLE h = FindFirstFileA(pattern, &fd);
     if (h == INVALID_HANDLE_VALUE) return SIGIL_ERR_IO;
-    int found = SIGIL_ERR_NOT_FOUND;
     do {
         const char *name = fd.cFileName;
-        if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) continue;
+        if (is_dot_entry(name)) continue;
         char child[1024];
         int n = snprintf(child, sizeof(child), "%s\\%s", dir, name);
         if (n <= 0 || (size_t)n >= sizeof(child)) continue;
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            if (find_file_in_dir(child, target_name, out, out_cap, depth + 1) == SIGIL_OK) {
-                found = SIGIL_OK;
-                break;
-            }
-        } else if (strcasecmp(name, target_name) == 0) {
-            size_t need = (size_t)n + 1;
-            if (need > out_cap) continue;
-            memcpy(out, child, need);
-            found = SIGIL_OK;
-            break;
-        }
+        fn(ctx, child, name, (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0);
     } while (FindNextFileA(h, &fd));
     FindClose(h);
-    return found;
+    return SIGIL_OK;
 }
 #else
-static int find_file_in_dir(const char *dir, const char *target_name,
-                            char *out, size_t out_cap, int depth) {
-    if (depth > SIGIL_DIR_SCAN_MAX_DEPTH) return SIGIL_ERR_NOT_FOUND;
+static int for_each_entry(const char *dir, dir_entry_fn fn, void *ctx) {
     DIR *dp = opendir(dir);
     if (!dp) return SIGIL_ERR_IO;
     struct dirent *e;
-    int found = SIGIL_ERR_NOT_FOUND;
     while ((e = readdir(dp)) != NULL) {
         const char *name = e->d_name;
-        if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) continue;
+        if (is_dot_entry(name)) continue;
         char child[1024];
         int n = snprintf(child, sizeof(child), "%s/%s", dir, name);
         if (n <= 0 || (size_t)n >= sizeof(child)) continue;
         struct stat st;
         if (stat(child, &st) != 0) continue;
-        if (S_ISREG(st.st_mode) && strcasecmp(name, target_name) == 0) {
-            size_t need = (size_t)n + 1;
-            if (need > out_cap) continue;
-            memcpy(out, child, need);
-            found = SIGIL_OK;
-            break;
-        }
-        if (S_ISDIR(st.st_mode)) {
-            if (find_file_in_dir(child, target_name, out, out_cap, depth + 1) == SIGIL_OK) {
-                found = SIGIL_OK;
-                break;
-            }
-        }
+        if (S_ISREG(st.st_mode) || S_ISDIR(st.st_mode)) fn(ctx, child, name, S_ISDIR(st.st_mode));
     }
     closedir(dp);
-    return found;
+    return SIGIL_OK;
 }
 #endif
+
+typedef struct {
+    const char *target;
+    int         depth_left;
+    char       *best;
+    size_t      cap;
+    bool       *found;
+} dir_scan;
+
+/* Keeps the matching file `depth_left` folders down with the smallest path,
+ * so the pick never depends on the order the file system lists entries in. */
+static void scan_entry(void *ctx, const char *child, const char *name, bool is_dir) {
+    dir_scan *s = (dir_scan *)ctx;
+    if (s->depth_left > 0) {
+        if (!is_dir) return;
+        dir_scan below = *s;
+        below.depth_left--;
+        for_each_entry(child, scan_entry, &below);
+        return;
+    }
+    if (is_dir || strcasecmp(name, s->target) != 0 || strlen(child) >= s->cap) return;
+    if (*s->found && strcmp(child, s->best) >= 0) return;
+    memcpy(s->best, child, strlen(child) + 1);
+    *s->found = true;
+}
+
+/* The shallowest file named `target_name` (any case) under `dir`, at most
+ * SIGIL_DIR_SCAN_MAX_DEPTH folders down: a title's own metadata sits above
+ * the saves, updates and trophies a dump carries beside it. */
+static int find_file_in_dir(const char *dir, const char *target_name, char *out, size_t out_cap) {
+    for (int depth = 0; depth <= SIGIL_DIR_SCAN_MAX_DEPTH; depth++) {
+        bool found = false;
+        dir_scan s = { target_name, depth, out, out_cap, &found };
+        if (for_each_entry(dir, scan_entry, &s) != SIGIL_OK) return SIGIL_ERR_IO;
+        if (found) return SIGIL_OK;
+    }
+    return SIGIL_ERR_NOT_FOUND;
+}
 
 static const char *directory_target_for_platform(sigil_platform p) {
     switch (p) {
@@ -435,7 +450,7 @@ int sigil_extract_from_path(const char *path, sigil_platform hint,
         } else if (resolved == SIGIL_PLATFORM_PSVITA) {
             char found[1024];
             if (path_is_directory(path)) {
-                if (find_file_in_dir(path, "param.sfo", found, sizeof(found), 0) == SIGIL_OK) {
+                if (find_file_in_dir(path, "param.sfo", found, sizeof(found)) == SIGIL_OK) {
                     vio = sigil_io_open_file(found);
                 }
             } else {
@@ -471,7 +486,7 @@ int sigil_extract_from_path(const char *path, sigil_platform hint,
     const char *effective_path = path;
     const char *dir_target = directory_target_for_platform(resolved);
     if (dir_target && path_is_directory(path)) {
-        if (find_file_in_dir(path, dir_target, resolved_path, sizeof(resolved_path), 0) != SIGIL_OK) {
+        if (find_file_in_dir(path, dir_target, resolved_path, sizeof(resolved_path)) != SIGIL_OK) {
             return SIGIL_ERR_NOT_FOUND;
         }
         effective_path = resolved_path;

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 /* Shared by the sync sources: sync.c (collect and restore), sync_state.c,
  * the card kinds in sync_kind_*.c, sync_units.c, and the placement paths in
- * sync_cards.c, sync_folder_cards.c, sync_volumes.c and sync_gci_folder.c. */
+ * sync_cards.c, sync_folder_cards.c, sync_volumes.c, sync_gci_folder.c and
+ * sync_profiles.c. */
 #ifndef SIGIL_SYNC_INTERNAL_H
 #define SIGIL_SYNC_INTERNAL_H
 
@@ -10,7 +11,7 @@
 #include "card_ps1.h"
 #include "card_ps2.h"
 #include "card_segacd.h"
-#include "save_layout.h"
+#include "save_profiles.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -141,10 +142,16 @@ bool sigil_sync_companion_restored(const sigil_sync_ctx *x, size_t c);
 bool sigil_sync_claimed(const sigil_sync_request *req, const char *name);
 /** `path` is in the request's listing. */
 bool sigil_sync_listed(const sigil_sync_request *req, const char *path);
-/** Reads all of `path` through the request's open callback, up to `cap` bytes. */
+/**
+ * Reads all of `path` through the request's open callback, up to `cap` bytes.
+ * SIGIL_ERR_NOT_FOUND when it won't open and isn't listed; SIGIL_ERR_IO when
+ * it is listed and won't open, since a file the listing shows is there.
+ */
 int sigil_sync_read_file(const sigil_sync_request *req, const char *path, size_t cap, uint8_t **out, size_t *len);
 /** `path` holds exactly `len` bytes of `data`. */
 bool sigil_sync_file_holds(const sigil_sync_request *req, const char *path, const uint8_t *data, size_t len);
+/** `path` lies under the save root: relative, with no ".." segment. */
+bool sigil_sync_path_inside(const char *path);
 /** Writes `path` through the request and reads it back; SIGIL_ERR_IO when
  *  either fails or `path` would leave the save root. */
 int sigil_sync_put(const sigil_sync_request *req, const char *path, const uint8_t *data, size_t len);
@@ -300,7 +307,26 @@ int sigil_sync_folder_saves(const sigil_sync_ctx *x, const char *folder, sigil_s
 int sigil_sync_place_in_folder(const sigil_sync_ctx *x, const char *folder, const sigil_sync_saves *local,
                                const sigil_sync_paths *stale, const sigil_sync_saves *incoming, sigil_sync_result *r);
 
+/* ---- folders per user profile (sync_profiles.c) ------------------------------- */
+
+/** Collect on a layout with profiles: the zip of the game's save folders, without the profile's id. */
+int sigil_sync_collect_profiles(sigil_sync_ctx *x, const sigil_layout_profiles *row, sigil_sync_result *r);
+/**
+ * Restore on a layout with profiles: each area the unit carries replaces the game's files in that area,
+ * the account area under the chosen profile. `local_identity` gets the identity of the files it found.
+ */
+int sigil_sync_restore_profiles(sigil_sync_ctx *x, const sigil_layout_profiles *row, const uint8_t *unit, size_t len,
+                                sigil_sync_result *r, char local_identity[33]);
+
 /* ---- collect and restore (sync.c) --------------------------------------------- */
+
+/**
+ * Saves on disk that changed since the last sync (`last`) stop a restore
+ * that would replace them, unless the user chose to overwrite them. `same`
+ * is true when they already are what the restore brings.
+ */
+bool sigil_sync_blocks_restore(const sigil_sync_ctx *x, const char *local, const char *incoming, const char *last,
+                               bool *same);
 
 /** The unit and its hashes from the game's saves, and the companions' units. */
 int sigil_sync_finish_collect(sigil_sync_ctx *x, const sigil_sync_saves *saves, const sigil_sync_sources *src,

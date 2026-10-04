@@ -42,7 +42,10 @@ static int gather_volumes(const sigil_sync_ctx *x, volume_set *s, sigil_sync_res
                  f->target.path);
         sigil_sync_escape(raw, f->key, sizeof(f->key));
         sigil_io *io = x->req->save.open(x->req->save.open_ctx, f->target.path);
-        if (!io) continue;
+        if (!io) {
+            if (sigil_sync_listed(x->req, f->target.path)) rc = SIGIL_ERR_IO;
+            continue;
+        }
         int64_t size = io->size ? io->size(io->ctx) : -1;
         if (size != 0) rc = x->kind->load(io, f->target.device, &f->card, &f->format);
         sigil_io_close(io);

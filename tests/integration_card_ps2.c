@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "save_corpus.h"
-#define _DEFAULT_SOURCE
-#define _DARWIN_C_SOURCE
 #include "card_ps2.h"
 #include <stdbool.h>
-#include <time.h>
 
 #define TEST_SKIP 77
 
@@ -453,16 +450,27 @@ static const folder_fact FOLDER_FACTS[] = {
       "list.ico", 1784865698LL, 1784865699LL },
 };
 
+/* Days from 1970-01-01 to a proleptic Gregorian date (Howard Hinnant's
+ * days_from_civil), so the test reads card dates as UTC on every system. */
+static long long days_from_civil(long long y, unsigned m, unsigned d) {
+    y -= m <= 2;
+    long long era = (y >= 0 ? y : y - 399) / 400;
+    unsigned yoe = (unsigned)(y - era * 400);
+    unsigned doy = (153 * (m + (m > 2 ? (unsigned)-3 : 9)) + 2) / 5 + d - 1;
+    unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + (long long)doe - 719468;
+}
+
 static long long entry_time(const uint8_t *tod) {
-    struct tm t;
-    memset(&t, 0, sizeof(t));
-    t.tm_sec = tod[1];
-    t.tm_min = tod[2];
-    t.tm_hour = tod[3];
-    t.tm_mday = tod[4];
-    t.tm_mon = tod[5] - 1;
-    t.tm_year = (tod[6] | (tod[7] << 8)) - 1900;
-    return (long long)timegm(&t);
+    long long days = days_from_civil(tod[6] | (tod[7] << 8), tod[5], tod[4]);
+    return days * 86400 + tod[3] * 3600 + tod[2] * 60 + tod[1];
+}
+
+static uint8_t *find_bytes(uint8_t *hay, size_t hay_len, const char *needle, size_t needle_len) {
+    for (size_t i = 0; i + needle_len <= hay_len; i++) {
+        if (memcmp(hay + i, needle, needle_len) == 0) return hay + i;
+    }
+    return NULL;
 }
 
 static const sigil_ps2_folder_file *find_path(const sigil_ps2_folder_file *files, size_t n, const char *path) {
@@ -492,8 +500,8 @@ static void check_folder(const corpus_table *manifest, const folder_fact *fact) 
         fail(fact->id, "pack failed");
     } else {
         for (size_t i = 0; i < 4 && fact->files[i]; i++) {
-            char name[33];
-            memcpy(name, i < save.file_count ? (const char *)save.files[i].entry + 0x40 : "", 32);
+            char name[33] = "";
+            if (i < save.file_count) memcpy(name, save.files[i].entry + 0x40, 32);
             name[32] = '\0';
             if (i >= save.file_count || strcmp(name, fact->files[i]) != 0) fail(fact->id, "files out of index order");
             if (i < save.file_count && strcmp(name, fact->checked) == 0 &&
@@ -693,7 +701,7 @@ static void check_root_times(const corpus_table *manifest) {
     for (size_t i = 0; i < n; i++) {
         if (strcmp(files[i].path, "_pcsx2_index") == 0) index = &files[i];
     }
-    uint8_t *root = index ? (uint8_t *)memmem(index->data, index->len, "$ROOT", 5) : NULL;
+    uint8_t *root = index ? find_bytes(index->data, index->len, "$ROOT", 5) : NULL;
     if (!root || entry_time(save.entry + 0x08) != 1784833824LL || entry_time(save.entry + 0x18) != 1784833829LL) {
         fail("ace-combat-04-aethersx2", "the folder's times didn't come from $ROOT");
     } else {

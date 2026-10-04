@@ -434,6 +434,8 @@ typedef struct {
     const char *members[X3_MAX];
     const char *unkeyed[X3_MAX];
     const char *title_id;   /* NULL for "T1" */
+    const char *raw_serial; /* NULL for empty */
+    const char *save_id;    /* NULL for empty */
 } option_case;
 
 static size_t count_of(const char *const *list) {
@@ -448,7 +450,11 @@ static size_t count_of(const char *const *list) {
 static void test_option_values(void) {
     static const char *const PSX[] = {
         "G.srm", "G.0.mcr", "G.1.mcr", "G.3.mcr", "mednafen_psx_libretro_shared.0.mcr",
-        "mednafen_psx_libretro_shared.1.mcr", "pcsx-card2.mcd",
+        "mednafen_psx_libretro_shared.1.mcr", "mednafen_psx_libretro_shared.3.mcr", "pcsx-card2.mcd",
+    };
+    static const char *const PCSX[] = {
+        "G.srm", "SLUS-00594_1.mcd", "SLUS-00594_2.mcd", "slus-00594_1.mcd", "SLUS-01206_1.mcd", "SLUSP-0120_1.mcd",
+        "pcsx-card1.mcd", "pcsx-card2.mcd",
     };
     static const char *const PS2[] = { "G.ps2", "Mcd001.ps2", "Mcd002.ps2" };
     static const char *const SATURN[] = {
@@ -490,10 +496,61 @@ static void test_option_values(void) {
           { { "beetle_psx_hw_enable_memcard1", "enabled" }, { "beetle_psx_hw_memcard_right_index", "3" } }, L(PSX),
           { "G.srm", "G.3.mcr" }, { 0 } },
         { "psx shared", "mednafen_psx_hw", "psx", "G.cue", { { "beetle_psx_hw_shared_memory_cards", "enabled" } }, L(PSX),
-          { "G.srm" }, { "mednafen_psx_libretro_shared.0.mcr", "mednafen_psx_libretro_shared.1.mcr" } },
-        { "pcsx_rearmed default", "pcsx_rearmed", "psx", "G.cue", { { 0 } }, L(PSX), { "G.srm" }, { "pcsx-card2.mcd" } },
-        { "pcsx_rearmed card 2 off", "pcsx_rearmed", "psx", "G.cue", { { "pcsx_rearmed_memcard2", "disabled" } }, L(PSX),
           { "G.srm" }, { 0 } },
+        { "psx shared card 2", "mednafen_psx_hw", "psx", "G.cue",
+          { { "beetle_psx_hw_shared_memory_cards", "enabled" }, { "beetle_psx_hw_enable_memcard1", "enabled" } }, L(PSX),
+          { "G.srm" }, { "mednafen_psx_libretro_shared.1.mcr" } },
+        { "psx shared card 2 index", "mednafen_psx_hw", "psx", "G.cue",
+          { { "beetle_psx_hw_shared_memory_cards", "enabled" }, { "beetle_psx_hw_enable_memcard1", "enabled" },
+            { "beetle_psx_hw_memcard_right_index", "3" } },
+          L(PSX), { "G.srm" }, { "mednafen_psx_libretro_shared.3.mcr" } },
+        { "psx shared mednafen", "mednafen_psx_hw", "psx", "G.cue",
+          { { "beetle_psx_hw_shared_memory_cards", "enabled" }, { "beetle_psx_hw_use_mednafen_memcard0_method", "mednafen" } },
+          L(PSX), { 0 }, { "mednafen_psx_libretro_shared.0.mcr" } },
+        { "psx shared mednafen index", "mednafen_psx_hw", "psx", "G.cue",
+          { { "beetle_psx_hw_shared_memory_cards", "enabled" }, { "beetle_psx_hw_use_mednafen_memcard0_method", "mednafen" },
+            { "beetle_psx_hw_memcard_left_index", "3" } },
+          L(PSX), { 0 }, { "mednafen_psx_libretro_shared.3.mcr" } },
+        { "psx shared mednafen both", "mednafen_psx_hw", "psx", "G.cue",
+          { { "beetle_psx_hw_shared_memory_cards", "enabled" }, { "beetle_psx_hw_use_mednafen_memcard0_method", "mednafen" },
+            { "beetle_psx_hw_enable_memcard1", "enabled" } },
+          L(PSX), { 0 }, { "mednafen_psx_libretro_shared.0.mcr", "mednafen_psx_libretro_shared.1.mcr" } },
+        { "psx software default", "mednafen_psx", "psx", "G.cue", { { 0 } }, L(PSX), { "G.srm" }, { 0 } },
+        { "psx software mednafen index", "mednafen_psx", "psx", "G.cue",
+          { { "beetle_psx_use_mednafen_memcard0_method", "mednafen" }, { "beetle_psx_memcard_left_index", "3" } },
+          L(PSX), { "G.3.mcr" }, { 0 } },
+        { "psx software card 2", "mednafen_psx", "psx", "G.cue", { { "beetle_psx_enable_memcard1", "enabled" } }, L(PSX),
+          { "G.srm", "G.1.mcr" }, { 0 } },
+        { "psx software shared mednafen", "mednafen_psx", "psx", "G.cue",
+          { { "beetle_psx_shared_memory_cards", "enabled" }, { "beetle_psx_use_mednafen_memcard0_method", "mednafen" },
+            { "beetle_psx_enable_memcard1", "enabled" } },
+          L(PSX), { 0 }, { "mednafen_psx_libretro_shared.0.mcr", "mednafen_psx_libretro_shared.1.mcr" } },
+        { "psx software ignores hw keys", "mednafen_psx", "psx", "G.cue",
+          { { "beetle_psx_hw_use_mednafen_memcard0_method", "mednafen" } }, L(PSX), { "G.srm" }, { 0 } },
+        { "psx software ignores hw index", "mednafen_psx", "psx", "G.cue",
+          { { "beetle_psx_use_mednafen_memcard0_method", "mednafen" }, { "beetle_psx_hw_memcard_left_index", "3" } },
+          L(PSX), { "G.0.mcr" }, { 0 } },
+        { "psx hw ignores software index", "mednafen_psx_hw", "psx", "G.cue",
+          { { "beetle_psx_hw_use_mednafen_memcard0_method", "mednafen" }, { "beetle_psx_memcard_left_index", "3" } },
+          L(PSX), { "G.0.mcr" }, { 0 } },
+        { "pcsx_rearmed default", "pcsx_rearmed", "psx", "G.cue", { { 0 } }, L(PCSX), { "G.srm" }, { "pcsx-card2.mcd" },
+          "SLUS-00594", "SLUS_005.94" },
+        { "pcsx_rearmed card 2 off", "pcsx_rearmed", "psx", "G.cue", { { "pcsx_rearmed_memcard2", "none" } }, L(PCSX),
+          { "G.srm" }, { 0 }, "SLUS-00594", "SLUS_005.94" },
+        { "pcsx_rearmed card 1 off", "pcsx_rearmed", "psx", "G.cue",
+          { { "pcsx_rearmed_memcard1", "none" }, { "pcsx_rearmed_memcard2", "none" } }, L(PCSX), { 0 }, { 0 },
+          "SLUS-00594", "SLUS_005.94" },
+        { "pcsx_rearmed serial", "pcsx_rearmed", "psx", "G.cue",
+          { { "pcsx_rearmed_memcard1", "serial" }, { "pcsx_rearmed_memcard2", "serial" } }, L(PCSX),
+          { "SLUS-00594_1.mcd", "SLUS-00594_2.mcd" }, { 0 }, "SLUS-00594", "SLUS_005.94" },
+        { "pcsx_rearmed shared", "pcsx_rearmed", "psx", "G.cue", { { "pcsx_rearmed_memcard1", "shared" } }, L(PCSX), { 0 },
+          { "pcsx-card1.mcd", "pcsx-card2.mcd" }, "SLUS-00594", "SLUS_005.94" },
+        { "pcsx_rearmed serial lowercase boot", "pcsx_rearmed", "psx", "G.cue", { { "pcsx_rearmed_memcard1", "serial" } },
+          L(PCSX), { "slus-00594_1.mcd" }, { "pcsx-card2.mcd" }, "SLUS-00594", "slus_005.94" },
+        { "pcsx_rearmed serial cut at 9", "pcsx_rearmed", "psx", "G.cue", { { "pcsx_rearmed_memcard1", "serial" } },
+          L(PCSX), { "SLUSP-0120_1.mcd" }, { "pcsx-card2.mcd" }, "SLUS-01206", "SLUSP012.06" },
+        { "pcsx_rearmed serial from title id", "pcsx_rearmed", "psx", "G.cue", { { "pcsx_rearmed_memcard1", "serial" } },
+          L(PCSX), { "SLUS-01206_1.mcd" }, { "pcsx-card2.mcd" }, "SLUS-01206", NULL },
         { "lrps2 default", "pcsx2", "ps2", "G.iso", { { 0 } }, L(PS2), { 0 }, { "Mcd001.ps2", "Mcd002.ps2" } },
         { "lrps2 per game", "pcsx2", "ps2", "G.iso", { { "pcsx2_shared_memory_cards", "disabled" } }, L(PS2), { "G.ps2" },
           { 0 } },
@@ -541,13 +598,18 @@ static void test_option_values(void) {
           { "mame2003-plus/nvram/mslug.nv", "mame2003-plus/hi/mslug.hi" }, { 0 } },
         { "mame2003+ no subfolder", "mame2003_plus", "arcade", "mslug.zip",
           { { "mame2003-plus_core_save_subfolder", "disabled" } }, L(MAME), { "nvram/mslug.nv", "hi/mslug.hi" }, { 0 } },
-        { "fds default", "nestopia", "fds", "G.fds", { { 0 } }, L(FDS), { "G.srm", "G.sav" }, { 0 } },
-        { "fds ups", "nestopia", "fds", "G.fds", { { "nestopia_fds_savefile_format", "ups" } }, L(FDS), { "G.srm", "G.ups" },
+        { "fds default", "nestopia", "fds", "G.fds", { { 0 } }, L(FDS), { "G.sav" }, { 0 } },
+        { "fds sav", "nestopia", "fds", "G.fds", { { "nestopia_fds_savefile_format", "sav_ups" } }, L(FDS), { "G.sav" },
           { 0 } },
-        { "fds ips", "nestopia", "fds", "G.fds", { { "nestopia_fds_savefile_format", "ips" } }, L(FDS), { "G.srm", "G.ips" },
+        { "fds ups", "nestopia", "fds", "G.fds", { { "nestopia_fds_savefile_format", "ups" } }, L(FDS), { "G.ups" },
+          { 0 } },
+        { "fds ips", "nestopia", "fds", "G.fds", { { "nestopia_fds_savefile_format", "ips" } }, L(FDS), { "G.ips" },
           { 0 } },
         { "vita pops", "vita_pops", "psx", "Vagrant Story (USA).cue", { { 0 } }, L(POPS),
           { "PSP/SAVEDATA/SLUS01040/SCEVMC0.VMP", "PSP/SAVEDATA/SLUS01040/SCEVMC1.VMP" }, { 0 }, "SLUS-01040" },
+        { "vita pops later disc", "vita_pops", "psx", "Vagrant Story (USA) (Disc 2).cue", { { 0 } }, L(POPS),
+          { "PSP/SAVEDATA/SLUS01040/SCEVMC0.VMP", "PSP/SAVEDATA/SLUS01040/SCEVMC1.VMP" }, { 0 }, "SLUS-01041", NULL,
+          "SLUS-01040" },
     };
 #undef L
     for (size_t i = 0; i < sizeof(CASES) / sizeof(CASES[0]); i++) {
@@ -558,6 +620,8 @@ static void test_option_values(void) {
         memset(&result, 0, sizeof(result));
         result.struct_version = SIGIL_RESULT_V3;
         snprintf(result.title_id, sizeof(result.title_id), "%s", c->title_id ? c->title_id : "T1");
+        snprintf(result.raw_serial, sizeof(result.raw_serial), "%s", c->raw_serial ? c->raw_serial : "");
+        snprintf(result.save_id, sizeof(result.save_id), "%s", c->save_id ? c->save_id : "");
         sigil_save_request req;
         memset(&req, 0, sizeof(req));
         req.struct_version = SIGIL_SAVE_REQUEST_V1;
@@ -604,8 +668,7 @@ static void test_psx_saturn(void) {
     u = resolve("beetle psx mednafen shared", "mednafen_psx_hw", "psx", "Final Fantasy VII (USA).m3u", 0,
                 mednafen, 2, listing, 4, NULL);
     if (!u) return;
-    const char *want2[] = { "Final Fantasy VII (USA).0.mcr" };
-    expect_members("beetle psx mednafen shared", u, SIGIL_SAVE_SHAPE_SINGLE, want2, 1);
+    if (u->member_count != 0) fail("beetle psx mednafen shared", "the game's own .0.mcr is unused with shared cards");
     if (u->unkeyed_count != 1 || strcmp(u->unkeyed[0], "mednafen_psx_libretro_shared.0.mcr") != 0) {
         fail("beetle psx mednafen shared", "shared card should be reported unkeyed");
     }
@@ -775,6 +838,12 @@ static void test_hashes(void) {
         sigil_save_unit_free(u);
     }
 
+    u = resolve("bsnes clock identity", "bsnes", "snes", "Crystal.sfc", 0, NULL, 0, multi, 2, &root);
+    if (u) {
+        expect_str("bsnes clock identity", u->identity_hash, "098890dde069e9abad63f19a0d9e1f32", "identity");
+        sigil_save_unit_free(u);
+    }
+
     const char *stored[] = { "Doom.pure.zip" };
     u = resolve("stored zip hash", "dosbox_pure", "dos", "Doom.zip", 0, NULL, 0, stored, 1, &root);
     if (u) {
@@ -831,6 +900,149 @@ static void test_hashes(void) {
     }
 }
 
+typedef struct {
+    const char       *path;
+    int               shared;
+    sigil_save_option options[2];
+} alternate_want;
+
+static void expect_alternates(const char *label, const sigil_save_unit *u, const alternate_want *want, size_t count) {
+    bool same = u->alternate_count == count;
+    for (size_t i = 0; same && i < count; i++) {
+        const sigil_save_alternate *a = &u->alternates[i];
+        size_t opts = want[i].options[1].key ? 2 : want[i].options[0].key ? 1 : 0;
+        same = strcmp(a->path, want[i].path) == 0 && a->shared == want[i].shared && a->option_count == opts;
+        for (size_t o = 0; same && o < opts; o++) {
+            same = strcmp(a->options[o].key, want[i].options[o].key) == 0 &&
+                   strcmp(a->options[o].value, want[i].options[o].value) == 0;
+        }
+    }
+    if (same) return;
+    for (size_t i = 0; i < u->alternate_count; i++) {
+        const sigil_save_alternate *a = &u->alternates[i];
+        fprintf(stderr, "  alternate %s shared=%d", a->path, a->shared);
+        for (size_t o = 0; o < a->option_count; o++) fprintf(stderr, " %s=%s", a->options[o].key, a->options[o].value);
+        fprintf(stderr, "\n");
+    }
+    fail(label, "alternates differ");
+}
+
+/* Files the sent options leave out are reported with the values that take
+ * them; files the options already take, and files no option selects, are not. */
+static void test_alternates(void) {
+    const char *era1[] = { "G.bkr", "G.bcr", "G.smpc" };
+    sigil_save_unit *u = resolve("saturn bkr only", "mednafen_saturn", "saturn", "G.cue", 0, NULL, 0, era1, 3, NULL);
+    if (u) {
+        const alternate_want want[] = { { "G.bkr", 0, { { "beetle_saturn_save_method", "mednafen" } } } };
+        expect_alternates("saturn bkr only", u, want, 1);
+        sigil_save_unit_free(u);
+    }
+
+    const char *both[] = { "G.srm", "G.bkr" };
+    sigil_save_option mednafen[] = { { "beetle_saturn_save_method", "mednafen" } };
+    u = resolve("saturn mednafen", "mednafen_saturn", "saturn", "G.cue", 0, mednafen, 1, both, 2, NULL);
+    if (u) {
+        const alternate_want want[] = { { "G.srm", 0, { { "beetle_saturn_save_method", "libretro" } } } };
+        expect_alternates("saturn mednafen", u, want, 1);
+        sigil_save_unit_free(u);
+    }
+
+    const char *psx[] = { "G.srm", "G.0.mcr", "mednafen_psx_libretro_shared.0.mcr" };
+    sigil_save_option shared[] = { { "beetle_psx_hw_shared_memory_cards", "enabled" } };
+    u = resolve("psx two options", "mednafen_psx_hw", "psx", "G.cue", 0, shared, 1, psx, 3, NULL);
+    if (u) {
+        const alternate_want want[] = {
+            { "G.0.mcr", 0,
+              { { "beetle_psx_hw_use_mednafen_memcard0_method", "mednafen" },
+                { "beetle_psx_hw_shared_memory_cards", "disabled" } } },
+            { "mednafen_psx_libretro_shared.0.mcr", 1, { { "beetle_psx_hw_use_mednafen_memcard0_method", "mednafen" } } },
+        };
+        expect_alternates("psx two options", u, want, 2);
+        sigil_save_unit_free(u);
+    }
+
+    const char *taken[] = { "G.srm", "pcsx-card2.mcd", "G.sav" };
+    u = resolve("nothing left out", "pcsx_rearmed", "psx", "G.cue", 0, NULL, 0, taken, 3, NULL);
+    if (u) {
+        expect_alternates("nothing left out", u, NULL, 0);
+        sigil_save_unit_free(u);
+    }
+
+    const char *same_file[] = { "G.0.mcr" };
+    sigil_save_option slot2[] = {
+        { "beetle_psx_hw_use_mednafen_memcard0_method", "mednafen" },
+        { "beetle_psx_hw_memcard_right_index", "0" },
+    };
+    u = resolve("taken by another member", "mednafen_psx_hw", "psx", "G.cue", 0, slot2, 2, same_file, 1, NULL);
+    if (u) {
+        expect_alternates("taken by another member", u, NULL, 0);
+        sigil_save_unit_free(u);
+    }
+
+    sigil_save_option same_index[] = { { "beetle_psx_hw_memcard_right_index", "0" } };
+    u = resolve("one file, two members", "mednafen_psx_hw", "psx", "G.cue", 0, same_index, 1, same_file, 1, NULL);
+    if (u) {
+        const alternate_want want[] = {
+            { "G.0.mcr", 0, { { "beetle_psx_hw_use_mednafen_memcard0_method", "mednafen" } } },
+        };
+        expect_alternates("one file, two members", u, want, 1);
+        sigil_save_unit_free(u);
+    }
+}
+
+/* bsnes writes a clock cart's time.rtc and the Satellaview cart's download
+ * RAM beside the .srm; both travel when present and neither is expected. */
+static void test_bsnes_files(void) {
+    const char *all[] = { "G.srm", "G.rtc", "G.psr" };
+    sigil_save_unit *u = resolve("bsnes all", "bsnes", "snes", "G.sfc", 0, NULL, 0, all, 3, NULL);
+    if (u) {
+        const char *want[] = { "G.srm", "G.rtc", "G.psr" };
+        expect_members("bsnes all", u, SIGIL_SAVE_SHAPE_MULTI, want, 3);
+        if (u->member_count == 3 && (u->members[0].role != SIGIL_SAVE_ROLE_PRIMARY ||
+                                     u->members[1].role != SIGIL_SAVE_ROLE_RTC ||
+                                     u->members[2].role != SIGIL_SAVE_ROLE_SIDECAR)) {
+            fail("bsnes all", "roles");
+        }
+        sigil_save_unit_free(u);
+    }
+    const char *srm[] = { "G.srm" };
+    u = resolve("bsnes srm alone", "bsnes", "snes", "G.sfc", 0, NULL, 0, srm, 1, NULL);
+    if (u) {
+        expect_members("bsnes srm alone", u, SIGIL_SAVE_SHAPE_SINGLE, srm, 1);
+        if (u->expected_count != 0) fail("bsnes srm alone", "expects a clock or download file");
+        sigil_save_unit_free(u);
+    }
+    u = resolve("bsnes clock cart", "bsnes", "snes", "G.sfc", SIGIL_FEATURE_RTC, NULL, 0, srm, 1, NULL);
+    if (u) {
+        if (u->expected_count != 1 || strcmp(u->expected[0].path, "G.rtc") != 0) {
+            fail("bsnes clock cart", "a clock cart doesn't expect its .rtc");
+        }
+        sigil_save_unit_free(u);
+    }
+}
+
+/* Nestopia keeps a disk's save as a patch the core writes, and no .srm: the
+ * patch is the primary, so locate expects it, and fceumm's .srm stays out. */
+static void test_fds_patch(void) {
+    const char *switched[] = { "G.srm", "G.sav" };
+    sigil_save_unit *u = resolve("fds nothing yet", "nestopia", "fds", "G.fds", 0, NULL, 0, switched, 0, NULL);
+    if (u) {
+        if (u->expected_count != 1 || strcmp(u->expected[0].path, "G.sav") != 0 ||
+            u->expected[0].role != SIGIL_SAVE_ROLE_PRIMARY) {
+            fail("fds nothing yet", "the patch isn't the expected primary");
+        }
+        sigil_save_unit_free(u);
+    }
+    u = resolve("fds after fceumm", "nestopia", "fds", "G.fds", 0, NULL, 0, switched, 2, NULL);
+    if (u) {
+        const char *want[] = { "G.sav" };
+        expect_members("fds after fceumm", u, SIGIL_SAVE_SHAPE_SINGLE, want, 1);
+        if (u->members[0].role != SIGIL_SAVE_ROLE_PRIMARY) fail("fds after fceumm", "the patch isn't primary");
+        expect_alternates("fds after fceumm", u, NULL, 0);
+        sigil_save_unit_free(u);
+    }
+}
+
 int main(void) {
     test_stem();
     test_default_layout();
@@ -844,6 +1056,9 @@ int main(void) {
     test_single_file_cores();
     test_arcade();
     test_hashes();
+    test_alternates();
+    test_fds_patch();
+    test_bsnes_files();
 
     if (g_fails) {
         fprintf(stderr, "%d failure(s)\n", g_fails);

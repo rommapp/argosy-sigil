@@ -33,15 +33,22 @@ static int sigil_go_hash(sigil_save_unit *unit, char *root) {
     return sigil_save_hash(unit, sigil_go_open_member, root);
 }
 
+// Creates the folders above path that aren't there. A folder that already
+// exists is left alone before mkdir runs, so a drive ("C:") or a parent the
+// caller can't write to doesn't fail the write.
 static int sigil_go_make_parents(char *path) {
     for (char *p = path + 1; *p; p++) {
         if (*p != '/') continue;
         *p = '\0';
+        struct stat st;
+        int rc = 0;
+        if (stat(path, &st) != 0 || !S_ISDIR(st.st_mode)) {
 #ifdef _WIN32
-        int rc = _mkdir(path);
+            rc = _mkdir(path);
 #else
-        int rc = mkdir(path, 0755);
+            rc = mkdir(path, 0755);
 #endif
+        }
         *p = '/';
         if (rc != 0 && errno != EEXIST) return -1;
     }
@@ -149,7 +156,7 @@ func (s Source) String() string {
 }
 
 // Usage classifies how the platform uses the save ID for save artifacts;
-// see README, "usage".
+// see docs/identification.md, "usage".
 type Usage int
 
 const (
@@ -220,6 +227,8 @@ func (r *Result) HasRTC() bool { return r.Features&FeatureRTC != 0 }
 
 // PersistedResult rebuilds a result from stored columns, or builds one for
 // a platform that has no title id. platformSlug selects the save layout.
+// Set RawSerial on the result as well where it was stored: pcsx_rearmed's
+// per-disc cards follow the boot file as written.
 func PersistedResult(platformSlug, titleID, saveID string, features uint32) *Result {
 	return &Result{
 		TitleID:      titleID,
@@ -239,24 +248,29 @@ type Options struct {
 	Allow3DSHomebrew        bool
 }
 
+// sigilError is the library's own message for code rc.
+func sigilError(rc C.int) error {
+	return errors.New("sigil: " + C.GoString(C.sigil_strerror(rc)))
+}
+
 var (
-	ErrInvalidArg        = errors.New("sigil: invalid argument")
-	ErrIO                = errors.New("sigil: I/O error")
-	ErrUnknownPlatform   = errors.New("sigil: unknown platform")
-	ErrUnsupportedFormat = errors.New("sigil: unsupported format")
-	ErrNotFound          = errors.New("sigil: title id not found")
-	ErrNeedsKey          = errors.New("sigil: decryption key required")
-	ErrCrypto            = errors.New("sigil: crypto failure")
-	ErrOOM               = errors.New("sigil: out of memory")
-	ErrConflict          = errors.New("sigil: the saves changed locally since the last sync")
-	ErrExists            = errors.New("sigil: a save with that name already exists")
-	ErrNoSpace           = errors.New("sigil: not enough free space")
-	ErrUncollected       = errors.New("sigil: the volume holds saves not collected yet")
-	ErrDamaged           = errors.New("sigil: a save structure is damaged")
-	ErrRegion            = errors.New("sigil: the save is from another region")
-	ErrNoTarget          = errors.New("sigil: the emulator's settings keep no file for a volume in the unit")
-	ErrAmbiguous         = errors.New("sigil: more than one file could be the emulator's card")
-	ErrKeysIncompatible  = errors.New("sigil: key file incompatible with this content")
+	ErrInvalidArg        = sigilError(C.SIGIL_ERR_INVALID_ARG)
+	ErrIO                = sigilError(C.SIGIL_ERR_IO)
+	ErrUnknownPlatform   = sigilError(C.SIGIL_ERR_UNKNOWN_PLATFORM)
+	ErrUnsupportedFormat = sigilError(C.SIGIL_ERR_UNSUPPORTED_FORMAT)
+	ErrNotFound          = sigilError(C.SIGIL_ERR_NOT_FOUND)
+	ErrNeedsKey          = sigilError(C.SIGIL_ERR_NEEDS_KEY)
+	ErrCrypto            = sigilError(C.SIGIL_ERR_CRYPTO)
+	ErrOOM               = sigilError(C.SIGIL_ERR_OOM)
+	ErrConflict          = sigilError(C.SIGIL_ERR_CONFLICT)
+	ErrExists            = sigilError(C.SIGIL_ERR_EXISTS)
+	ErrNoSpace           = sigilError(C.SIGIL_ERR_NO_SPACE)
+	ErrUncollected       = sigilError(C.SIGIL_ERR_UNCOLLECTED)
+	ErrDamaged           = sigilError(C.SIGIL_ERR_DAMAGED)
+	ErrRegion            = sigilError(C.SIGIL_ERR_REGION)
+	ErrNoTarget          = sigilError(C.SIGIL_ERR_NO_TARGET)
+	ErrAmbiguous         = sigilError(C.SIGIL_ERR_AMBIGUOUS)
+	ErrKeysIncompatible  = sigilError(C.SIGIL_ERR_KEYS_INCOMPATIBLE)
 )
 
 func errFromCode(rc C.int) error {
@@ -407,7 +421,7 @@ func Extract(path string, platform Platform, opts *Options) (*Result, error) {
 	}, nil
 }
 
-// SaveShape is the archive shape a save unit travels in; see README, "Save units".
+// SaveShape is the archive shape a save unit travels in; see docs/save-units.md.
 type SaveShape int
 
 const (
@@ -454,6 +468,28 @@ func (r SaveRole) String() string {
 	}
 }
 
+// SaveArea is whose a save is on an emulator that keeps saves per user profile.
+type SaveArea int
+
+const (
+	SaveAreaNone    SaveArea = C.SIGIL_SAVE_AREA_NONE
+	SaveAreaAccount SaveArea = C.SIGIL_SAVE_AREA_ACCOUNT
+	SaveAreaDevice  SaveArea = C.SIGIL_SAVE_AREA_DEVICE
+)
+
+func (a SaveArea) String() string {
+	switch a {
+	case SaveAreaNone:
+		return "none"
+	case SaveAreaAccount:
+		return "account"
+	case SaveAreaDevice:
+		return "device"
+	default:
+		return fmt.Sprintf("SaveArea(%d)", int(a))
+	}
+}
+
 // SaveMember is one file of a save unit. Path is relative to the save root;
 // Entry is its archive name.
 type SaveMember struct {
@@ -461,6 +497,14 @@ type SaveMember struct {
 	Entry   string
 	Role    SaveRole
 	Present bool
+	Area    SaveArea
+}
+
+// Profile is a user profile the emulator lists. ID is how its save folder is
+// named.
+type Profile struct {
+	ID   string
+	Name string
 }
 
 // SaveUnit is every file under a save root that belongs to one game, and the
@@ -474,20 +518,44 @@ type SaveUnit struct {
 	Artifact     string
 	ContentHash  string
 	IdentityHash string
+	Alternates   []SaveAlternate // Files other option values would take.
+}
+
+// SaveAlternate is a file under the save root the layout would take with
+// other option values: a save kept under another mode or by an older build
+// of the core. Passing Options takes it.
+type SaveAlternate struct {
+	Path    string
+	Shared  bool // A file every game shares, as in Unkeyed.
+	Options map[string]string
+}
+
+func goAlternates(list *C.sigil_save_alternate, count C.size_t) []SaveAlternate {
+	var out []SaveAlternate
+	for _, a := range unsafe.Slice(list, count) {
+		options := map[string]string{}
+		for _, o := range a.options[:a.option_count] {
+			options[C.GoString(o.key)] = C.GoString(o.value)
+		}
+		out = append(out, SaveAlternate{Path: C.GoString(&a.path[0]), Shared: a.shared != 0, Options: options})
+	}
+	return out
 }
 
 // LocateOptions are the optional inputs to LocateSaves. SaveRoot has the
 // root listed; Listing (root-relative paths) comes from your own filesystem
 // layer instead. Options are the core's current option values; only the
-// keys the layout names are read.
+// keys the layout names are read. Profile picks the profile on a layout with
+// profiles.
 type LocateOptions struct {
 	SaveRoot string
 	Listing  []string
 	Options  map[string]string
+	Profile  string
 }
 
 // ContentStem is the base name RetroArch names save files after; see
-// README, "Save units".
+// docs/save-units.md, "Stem".
 func ContentStem(contentPath string) string {
 	cname := C.CString(contentPath)
 	defer C.free(unsafe.Pointer(cname))
@@ -513,10 +581,78 @@ func LayoutSubdirs(layout string) []string {
 	return subdirs
 }
 
-const subdirListDepth = 4
+const (
+	subdirListDepth = 12
+	baseSearchDepth = 5
+	pathCap         = 4096
+)
+
+// SaveBase returns, on a layout with profiles, the emulator's base folder for
+// path and the profile folder path lies in ("" for none); Collect, Restore
+// and LocateSaves re-root there themselves. On other layouts it returns path
+// and "".
+func SaveBase(layout, path string) (base, profile string, err error) {
+	clayout := C.CString(layout)
+	defer C.free(unsafe.Pointer(clayout))
+	cpath := C.CString(path)
+	defer C.free(unsafe.Pointer(cpath))
+	cbase := (*C.char)(C.calloc(pathCap, 1))
+	defer C.free(unsafe.Pointer(cbase))
+	cprofile := (*C.char)(C.calloc(C.SIGIL_PROFILE_ID_MAX, 1))
+	defer C.free(unsafe.Pointer(cprofile))
+	rc := C.sigil_save_base(clayout, cpath, cbase, pathCap, cprofile, C.SIGIL_PROFILE_ID_MAX)
+	if err := errFromCode(rc); err != nil {
+		return "", "", err
+	}
+	return C.GoString(cbase), C.GoString(cprofile), nil
+}
+
+func layoutTop(layout string) string {
+	clayout := C.CString(layout)
+	defer C.free(unsafe.Pointer(clayout))
+	if top := C.sigil_save_layout_top(clayout); top != nil {
+		return C.GoString(top)
+	}
+	return ""
+}
+
+// basesBelow returns the root-relative folders under root that hold the
+// layout's top folder.
+func basesBelow(root, top string) []string {
+	var found []string
+	var walk func(dir, relative string, depth int)
+	walk = func(dir, relative string, depth int) {
+		if depth == 0 {
+			return
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			if e.Name() == top {
+				if relative != "" {
+					found = append(found, relative)
+				}
+				continue
+			}
+			next := e.Name()
+			if relative != "" {
+				next = relative + "/" + e.Name()
+			}
+			walk(filepath.Join(dir, e.Name()), next, depth-1)
+		}
+	}
+	walk(root, "", baseSearchDepth)
+	return found
+}
 
 // ListSaveRoot returns the root-relative paths of the files directly in root
-// plus those under the layout's subfolders.
+// plus those under the layout's subfolders. On a layout with profiles whose
+// base sits below root, it lists the subfolders under each such base.
 func ListSaveRoot(root, layout string) ([]string, error) {
 	var out []string
 	entries, err := os.ReadDir(root)
@@ -524,16 +660,78 @@ func ListSaveRoot(root, layout string) ([]string, error) {
 		return nil, err
 	}
 	for _, e := range entries {
-		if e.Type().IsRegular() {
+		if _, isFile := entryKind(root, e); isFile {
 			out = append(out, e.Name())
 		}
 	}
-	for _, subdir := range LayoutSubdirs(layout) {
-		if err := listRecursive(filepath.Join(root, subdir), subdir, subdirListDepth, &out); err != nil {
-			return nil, err
+	bases := []string{""}
+	if top := layoutTop(layout); top != "" {
+		if info, err := os.Stat(filepath.Join(root, top)); err != nil || !info.IsDir() {
+			if found := basesBelow(root, top); len(found) > 0 {
+				bases = found
+			}
+		}
+	}
+	for _, base := range bases {
+		for _, subdir := range LayoutSubdirs(layout) {
+			relative := subdir
+			if base != "" {
+				relative = base + "/" + subdir
+			}
+			if err := listRecursive(filepath.Join(root, relative), relative, subdirListDepth, &out); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return out, nil
+}
+
+// ListProfiles returns the profiles the emulator lists around saveRoot, for
+// asking the user which one they play as when Collect or Restore returned
+// ErrAmbiguous. ErrUnsupportedFormat for a core whose saves aren't kept per
+// profile.
+func ListProfiles(core, saveRoot string) ([]Profile, error) {
+	root, _, err := rooted(core, saveRoot, "")
+	if err != nil {
+		return nil, err
+	}
+	listing, err := ListSaveRoot(root, core)
+	if err != nil {
+		return nil, err
+	}
+	var a cAllocs
+	defer a.free()
+	creq := (*C.sigil_save_request)(a.alloc(C.sizeof_sigil_save_request))
+	creq.struct_version = C.SIGIL_SAVE_REQUEST_V1
+	creq.layout = a.str(core)
+	creq.listing = a.strings(listing)
+	creq.listing_count = C.size_t(len(listing))
+	creq.root_path = a.str(root)
+	C.sigil_go_set_open(creq, a.str(root))
+	var cprofiles *C.sigil_save_profile
+	var count C.size_t
+	if err := errFromCode(C.sigil_save_profiles(creq, &cprofiles, &count)); err != nil {
+		return nil, err
+	}
+	defer C.sigil_save_profiles_free(cprofiles)
+	var out []Profile
+	for _, p := range unsafe.Slice(cprofiles, int(count)) {
+		out = append(out, Profile{ID: C.GoString(&p.id[0]), Name: C.GoString(&p.name[0])})
+	}
+	return out, nil
+}
+
+// rooted returns the folder to list and write under for saveRoot, and the
+// profile: one given wins over the one saveRoot lies in.
+func rooted(core, saveRoot, profile string) (string, string, error) {
+	base, implied, err := SaveBase(core, saveRoot)
+	if err != nil {
+		return "", "", err
+	}
+	if profile == "" {
+		profile = implied
+	}
+	return base, profile, nil
 }
 
 func listRecursive(dir, relative string, depth int, out *[]string) error {
@@ -549,15 +747,30 @@ func listRecursive(dir, relative string, depth int, out *[]string) error {
 	}
 	for _, e := range entries {
 		rel := relative + "/" + e.Name()
-		if e.IsDir() {
+		isDir, isFile := entryKind(dir, e)
+		if isDir {
 			if err := listRecursive(filepath.Join(dir, e.Name()), rel, depth-1, out); err != nil {
 				return err
 			}
-		} else if e.Type().IsRegular() {
+		} else if isFile {
 			*out = append(*out, rel)
 		}
 	}
 	return nil
+}
+
+// entryKind says whether e is a folder or a regular file, following a
+// symbolic link to what it points at, as the Python and Kotlin listings do.
+// A link that points nowhere is neither.
+func entryKind(dir string, e os.DirEntry) (isDir, isFile bool) {
+	if e.Type()&os.ModeSymlink == 0 {
+		return e.IsDir(), e.Type().IsRegular()
+	}
+	info, err := os.Stat(filepath.Join(dir, e.Name()))
+	if err != nil {
+		return false, false
+	}
+	return info.IsDir(), info.Mode().IsRegular()
 }
 
 // cAllocs tracks C memory a call hands to sigil, freed together afterwards.
@@ -595,12 +808,19 @@ func (a *cAllocs) free() {
 // fillSaveRequest fills creq for game running under core; every buffer it
 // points at is owned by a.
 func fillSaveRequest(a *cAllocs, creq *C.sigil_save_request, game *Result, core, contentPath string,
-	listing []string, options map[string]string) {
+	listing []string, options map[string]string, root, profile string) {
+	if root != "" {
+		creq.root_path = a.str(root)
+	}
+	if profile != "" {
+		creq.profile = a.str(profile)
+	}
 	cresult := (*C.sigil_result)(a.alloc(C.sizeof_sigil_result))
 	cresult.struct_version = C.SIGIL_RESULT_V3
 	cresult.features = C.uint32_t(game.Features)
 	cresult.platform = C.sigil_platform(game.Platform)
 	copyChars(cresult.title_id[:], game.TitleID)
+	copyChars(cresult.raw_serial[:], game.RawSerial)
 	copyChars(cresult.save_id[:], game.SaveID)
 
 	creq.struct_version = C.SIGIL_SAVE_REQUEST_V1
@@ -630,8 +850,9 @@ func fillSaveRequest(a *cAllocs, creq *C.sigil_save_request, game *Result, core,
 }
 
 // LocateSaves returns the files under a save root that belong to game when
-// core runs contentPath. Names only; no file is read. opts may be nil.
-// docs/go.md defines every input.
+// core runs contentPath. No save is read; on a layout with profiles the
+// emulator's profile list is, when opts.SaveRoot is given, and the hashes are
+// filled. opts may be nil. docs/go.md defines every input.
 func LocateSaves(game *Result, core, contentPath string, opts *LocateOptions) (*SaveUnit, error) {
 	if game == nil {
 		return nil, ErrInvalidArg
@@ -639,10 +860,17 @@ func LocateSaves(game *Result, core, contentPath string, opts *LocateOptions) (*
 	if opts == nil {
 		opts = &LocateOptions{}
 	}
-	listing := opts.Listing
-	if listing == nil && opts.SaveRoot != "" {
+	root, profile := "", opts.Profile
+	if opts.SaveRoot != "" {
 		var err error
-		if listing, err = ListSaveRoot(opts.SaveRoot, core); err != nil {
+		if root, profile, err = rooted(core, opts.SaveRoot, profile); err != nil {
+			return nil, err
+		}
+	}
+	listing := opts.Listing
+	if listing == nil && root != "" {
+		var err error
+		if listing, err = ListSaveRoot(root, core); err != nil {
 			return nil, err
 		}
 	}
@@ -650,8 +878,12 @@ func LocateSaves(game *Result, core, contentPath string, opts *LocateOptions) (*
 	var a cAllocs
 	defer a.free()
 	creq := (*C.sigil_save_request)(a.alloc(C.sizeof_sigil_save_request))
-	fillSaveRequest(&a, creq, game, core, contentPath, listing, opts.Options)
-	C.sigil_go_set_open(creq, nil)
+	fillSaveRequest(&a, creq, game, core, contentPath, listing, opts.Options, root, profile)
+	if root != "" && layoutTop(core) != "" {
+		C.sigil_go_set_open(creq, a.str(root))
+	} else {
+		C.sigil_go_set_open(creq, nil)
+	}
 
 	var cunit *C.sigil_save_unit
 	rc := C.sigil_save_resolve(creq, &cunit)
@@ -661,11 +893,14 @@ func LocateSaves(game *Result, core, contentPath string, opts *LocateOptions) (*
 	defer C.sigil_save_unit_free(cunit)
 
 	unit := &SaveUnit{
-		Key:      C.GoString(&cunit.key[0]),
-		Shape:    SaveShape(cunit.shape),
-		Members:  goMembers(cunit.members, int(cunit.member_count)),
-		Expected: goMembers(cunit.expected, int(cunit.expected_count)),
-		Artifact: C.GoString(&cunit.artifact[0]),
+		Key:          C.GoString(&cunit.key[0]),
+		Shape:        SaveShape(cunit.shape),
+		Members:      goMembers(cunit.members, int(cunit.member_count)),
+		Expected:     goMembers(cunit.expected, int(cunit.expected_count)),
+		Artifact:     C.GoString(&cunit.artifact[0]),
+		ContentHash:  C.GoString(&cunit.content_hash[0]),
+		IdentityHash: C.GoString(&cunit.identity_hash[0]),
+		Alternates:   goAlternates(cunit.alternates, cunit.alternate_count),
 	}
 	for i := 0; i < int(cunit.unkeyed_count); i++ {
 		item := (*[C.SIGIL_SAVE_PATH_MAX]C.char)(unsafe.Add(unsafe.Pointer(cunit.unkeyed), uintptr(i)*C.SIGIL_SAVE_PATH_MAX))
@@ -734,6 +969,7 @@ func goMembers(members *C.sigil_save_member, count int) []SaveMember {
 			Entry:   C.GoString(&m.entry[0]),
 			Role:    SaveRole(m.role),
 			Present: m.present != 0,
+			Area:    SaveArea(m.area),
 		})
 	}
 	return out
@@ -851,9 +1087,10 @@ type SyncOptions struct {
 	State          []byte
 	Unmanaged      bool
 	OverwriteLocal bool
-	Claimed        []string    // Saturn, Sega CD: names from Unowned the user said belong to this game.
+	Claimed        []string    // Saturn, Sega CD, Dreamcast: names from Unowned the user said belong to this game.
 	Companions     []Companion // Games whose saves this game reads, in the order they go on.
 	Repair         bool        // Rebuild what ErrDamaged named, where sigil can.
+	Profile        string      // Layouts with profiles: the profile whose saves to take, by Profile.ID.
 }
 
 // Companion is a game whose saves this game reads, as a sequel reads its
@@ -877,14 +1114,18 @@ type CompanionResult struct {
 // the save that didn't fit (ErrNoSpace, with BlocksShort the blocks it lacked,
 // 0 when the free blocks were there but a directory slot or a Dreamcast game
 // file's starting blocks weren't), the companion's save from another region
-// (ErrRegion), the damaged file (ErrDamaged), the unit member the emulator's
-// settings keep no file for (ErrNoTarget), the files that could each be the
-// emulator's card, one per line (ErrAmbiguous), or the save Dolphin's GCI
-// folder has no free name for (ErrExists). It matches its error with errors.Is.
+// (ErrRegion), the damaged file (ErrDamaged), the unit member with no file to
+// go in (ErrNoTarget), the files that could each be the emulator's card or the
+// profiles that could each take the saves, one per line (ErrAmbiguous), or the
+// save Dolphin's GCI folder has no free name for (ErrExists). Profiles lists
+// every profile the emulator lists: when you don't know which one the user
+// plays as, ask them from it (or ListProfiles) and pass SyncOptions.Profile.
+// It matches its error with errors.Is.
 type ProblemError struct {
 	Err         error
 	Problem     string
 	BlocksShort uint32
+	Profiles    []Profile
 }
 
 func (e *ProblemError) Error() string {
@@ -905,12 +1146,22 @@ type SyncResult struct {
 	ContentHash  string
 	IdentityHash string
 	Changed      bool
-	Conflict     bool
 	State        []byte
-	Holding      []byte            // Saturn, Sega CD: zip of the saves on a shared volume with no known owner.
+	Holding      []byte            // Saturn, Sega CD, Dreamcast: zip of the saves on a shared volume with no known owner.
 	Unowned      []string          // The names of the saves in Holding.
 	RestoreAgain bool              // Unmanaged: the saves the last Restore wrote were overwritten.
 	Companions   []CompanionResult // Collect: one per SyncOptions.Companions, in order.
+	Profiles     []Profile         // Layouts with profiles: every profile the emulator lists.
+	Profile      string            // The profile whose saves were taken or written.
+	Alternates   []SaveAlternate   // Files other option values would take.
+}
+
+func goProfiles(cres *C.sigil_sync_result) []Profile {
+	var out []Profile
+	for _, p := range unsafe.Slice(cres.profiles, cres.profile_count) {
+		out = append(out, Profile{ID: C.GoString(&p.id[0]), Name: C.GoString(&p.name[0])})
+	}
+	return out
 }
 
 func runSync(unit []byte, game *Result, core, contentPath, saveRoot string, opts *SyncOptions) (*SyncResult, error) {
@@ -920,10 +1171,13 @@ func runSync(unit []byte, game *Result, core, contentPath, saveRoot string, opts
 	if opts == nil {
 		opts = &SyncOptions{}
 	}
+	root, profile, err := rooted(core, saveRoot, opts.Profile)
+	if err != nil {
+		return nil, err
+	}
 	listing := opts.Listing
 	if listing == nil {
-		var err error
-		if listing, err = ListSaveRoot(saveRoot, core); err != nil {
+		if listing, err = ListSaveRoot(root, core); err != nil {
 			return nil, err
 		}
 	}
@@ -932,7 +1186,7 @@ func runSync(unit []byte, game *Result, core, contentPath, saveRoot string, opts
 	defer a.free()
 	creq := (*C.sigil_sync_request)(a.alloc(C.sizeof_sigil_sync_request))
 	creq.struct_version = C.SIGIL_SYNC_REQUEST_V1
-	fillSaveRequest(&a, &creq.save, game, core, contentPath, listing, opts.Options)
+	fillSaveRequest(&a, &creq.save, game, core, contentPath, listing, opts.Options, root, profile)
 	creq.game_ids = a.strings(opts.GameIDs)
 	creq.game_id_count = C.size_t(len(opts.GameIDs))
 	creq.claimed = a.strings(opts.Claimed)
@@ -969,7 +1223,7 @@ func runSync(unit []byte, game *Result, core, contentPath, saveRoot string, opts
 		creq.state = (*C.uint8_t)(state)
 		creq.state_len = C.size_t(len(opts.State))
 	}
-	C.sigil_go_set_sync_io(creq, a.str(saveRoot))
+	C.sigil_go_set_sync_io(creq, a.str(root))
 
 	var cres *C.sigil_sync_result
 	var rc C.int
@@ -985,7 +1239,8 @@ func runSync(unit []byte, game *Result, core, contentPath, saveRoot string, opts
 	}
 	if err := errFromCode(rc); err != nil {
 		if cres != nil && cres.problem[0] != 0 {
-			return nil, &ProblemError{Err: err, Problem: C.GoString(&cres.problem[0]), BlocksShort: uint32(cres.blocks_short)}
+			return nil, &ProblemError{Err: err, Problem: C.GoString(&cres.problem[0]),
+				BlocksShort: uint32(cres.blocks_short), Profiles: goProfiles(cres)}
 		}
 		return nil, err
 	}
@@ -995,8 +1250,10 @@ func runSync(unit []byte, game *Result, core, contentPath, saveRoot string, opts
 		ContentHash:  C.GoString(&cres.content_hash[0]),
 		IdentityHash: C.GoString(&cres.identity_hash[0]),
 		Changed:      cres.changed != 0,
-		Conflict:     cres.conflict != 0,
 		RestoreAgain: cres.restore_again != 0,
+		Profiles:     goProfiles(cres),
+		Profile:      C.GoString(&cres.profile[0]),
+		Alternates:   goAlternates(cres.alternates, cres.alternate_count),
 	}
 	if cres.data != nil {
 		out.Data = C.GoBytes(unsafe.Pointer(cres.data), C.int(cres.len))

@@ -272,6 +272,7 @@ int sigil_filename_fallback(const char *filename_hint,
     case SIGIL_PLATFORM_SWITCH:
         out->usage = SIGIL_USAGE_FOLDER_EXACT;
         rc = try_hex16(stem, len, out, true);
+        if (rc == SIGIL_OK) sigil_switch_application_of_id(out->raw_serial, out->title_id);
         break;
     case SIGIL_PLATFORM_3DS:
         out->usage = SIGIL_USAGE_FOLDER_SPLIT;
@@ -296,7 +297,10 @@ int sigil_filename_fallback(const char *filename_hint,
     default:
         out->platform = SIGIL_PLATFORM_SWITCH;
         out->usage = SIGIL_USAGE_FOLDER_EXACT;
-        if ((rc = try_hex16(stem, len, out, true)) == SIGIL_OK) break;
+        if ((rc = try_hex16(stem, len, out, true)) == SIGIL_OK) {
+            sigil_switch_application_of_id(out->raw_serial, out->title_id);
+            break;
+        }
 
         out->platform = SIGIL_PLATFORM_WIIU;
         if ((rc = try_wiiu(stem, len, out)) == SIGIL_OK) break;

@@ -66,6 +66,33 @@ static int content_type_from_meta(uint8_t meta_type) {
     }
 }
 
+/* The game a content belongs to. An update's and a DLC's CNMT name it in the
+ * extended header's first field (switchbrew, "CNMT": PatchMetaExtendedHeader
+ * and AddOnContentMetaExtendedHeader); without one, an update is its game's
+ * id with 0x800 set and a DLC's id is its game's plus 0x1000 and an index. */
+static uint64_t application_of(uint64_t id, int content_type, uint64_t extended) {
+    if (content_type == SIGIL_SWITCH_CONTENT_PATCH) return extended ? extended : id & ~0xFFFull;
+    if (content_type == SIGIL_SWITCH_CONTENT_ADDON) return extended ? extended : (id & ~0xFFFull) - 0x1000;
+    return id;
+}
+
+void sigil_switch_application_of_id(const char id[17], char out[17]) {
+    uint64_t value = strtoull(id, NULL, 16);
+    unsigned low = (unsigned)(value & 0xFFF);
+    int type = low == 0 ? SIGIL_SWITCH_CONTENT_APPLICATION
+             : low == 0x800 ? SIGIL_SWITCH_CONTENT_PATCH : SIGIL_SWITCH_CONTENT_ADDON;
+    snprintf(out, 17, "%016llX", (unsigned long long)application_of(value, type, 0));
+}
+
+bool sigil_switch_title_keep(sigil_switch_title *best, bool *have, const sigil_switch_title *t) {
+    bool application = t->content_type == SIGIL_SWITCH_CONTENT_APPLICATION;
+    if (!*have || application) {
+        *best = *t;
+        *have = true;
+    }
+    return application;
+}
+
 /* Read the content-meta header from a .cnmt entry inside an in-memory PFS0. */
 static int parse_inner_pfs0(const uint8_t *buf, size_t len,
                             sigil_switch_title *out) {
@@ -98,6 +125,12 @@ static int parse_inner_pfs0(const uint8_t *buf, size_t len,
         out->version = sigil_read_le32(cnmt + 0x08);
         out->content_type = content_type_from_meta(cnmt[0x0C]);
         out->from_cnmt = true;
+        uint64_t extended = sigil_read_le16(cnmt + 0x0E) >= 8 && abs + 0x28 <= len && file_size >= 0x28
+                                ? sigil_read_le64(cnmt + 0x20) : 0;
+        uint8_t app[8];
+        uint64_t app_id = application_of(sigil_read_le64(cnmt), out->content_type, extended);
+        for (int b = 0; b < 8; b++) app[b] = (uint8_t)(app_id >> (8 * b));
+        sigil_hex_encode_8(app, out->application_id, true);
         return SIGIL_OK;
     }
     return SIGIL_ERR_NOT_FOUND;

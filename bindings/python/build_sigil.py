@@ -159,17 +159,40 @@ typedef enum {
     ...
 } sigil_save_role;
 
+typedef enum {
+    SIGIL_SAVE_AREA_NONE,
+    SIGIL_SAVE_AREA_ACCOUNT,
+    SIGIL_SAVE_AREA_DEVICE,
+    ...
+} sigil_save_area;
+
+#define SIGIL_PROFILE_ID_MAX ...
+#define SIGIL_PROFILE_NAME_MAX ...
+
 typedef struct {
     char path[...];
     char entry[...];
     int  role;
     int  present;
+    int  area;
 } sigil_save_member;
+
+typedef struct {
+    char id[...];
+    char name[...];
+} sigil_save_profile;
 
 typedef struct {
     const char *key;
     const char *value;
 } sigil_save_option;
+
+typedef struct {
+    char              path[512];
+    int               shared;
+    sigil_save_option options[2];
+    size_t            option_count;
+} sigil_save_alternate;
 
 typedef sigil_io *(*sigil_save_open_fn)(void *ctx, const char *relative_path);
 
@@ -186,6 +209,8 @@ typedef struct {
     size_t                    listing_count;
     sigil_save_open_fn        open;
     void                     *open_ctx;
+    const char               *root_path;
+    const char               *profile;
 } sigil_save_request;
 
 typedef struct {
@@ -201,12 +226,19 @@ typedef struct {
     char               artifact[...];
     char               content_hash[33];
     char               identity_hash[33];
+    sigil_save_alternate *alternates;
+    size_t             alternate_count;
 } sigil_save_unit;
 
 int  sigil_save_resolve(const sigil_save_request *req, sigil_save_unit **out);
 void sigil_save_unit_free(sigil_save_unit *unit);
 int  sigil_save_hash(sigil_save_unit *unit, sigil_save_open_fn open, void *open_ctx);
 size_t sigil_save_layout_subdirs(const char *layout, const char **out, size_t cap);
+int    sigil_save_base(const char *layout, const char *path, char *base, size_t base_cap, char *profile,
+                       size_t profile_cap);
+const char *sigil_save_layout_top(const char *layout);
+int    sigil_save_profiles(const sigil_save_request *req, sigil_save_profile **out, size_t *count);
+void   sigil_save_profiles_free(sigil_save_profile *profiles);
 const char *sigil_content_stem(const char *content_path, char *out, size_t cap);
 
 #define SIGIL_CARD_LISTING_V1 ...
@@ -314,6 +346,11 @@ typedef struct {
     size_t    companion_count;
     char      problem[...];
     uint32_t  blocks_short;
+    sigil_save_profile *profiles;
+    size_t    profile_count;
+    char      profile[...];
+    sigil_save_alternate *alternates;
+    size_t    alternate_count;
 } sigil_sync_result;
 
 int  sigil_collect(const sigil_sync_request *req, sigil_sync_result **out);

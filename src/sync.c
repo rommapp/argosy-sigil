@@ -160,17 +160,31 @@ static int finish(sigil_sync_ctx *x, sigil_sync_result *r, bool collecting) {
     return rc;
 }
 
+/* The kind for the request: a layout with profiles keeps its saves as plain
+ * folders, so it needs nothing from a card format but the platform. */
+static const sigil_sync_kind *kind_for(const sigil_sync_request *req, const sigil_layout *layout,
+                                       sigil_sync_kind *folders) {
+    if (!layout->profiles) return sigil_sync_kind_for(req);
+    memset(folders, 0, sizeof(*folders));
+    folders->platform = layout->platform;
+    folders->has_ids = true;
+    return req->companion_count ? NULL : folders;
+}
+
 int sigil_collect(const sigil_sync_request *req, sigil_sync_result **out) {
     if (!out) return SIGIL_ERR_INVALID_ARG;
     *out = NULL;
     if (!request_valid(req)) return SIGIL_ERR_INVALID_ARG;
-    const sigil_sync_kind *kind = sigil_sync_kind_for(req);
-    if (!kind) return SIGIL_ERR_UNSUPPORTED_FORMAT;
+    const sigil_layout *layout = sigil_layout_find(req->save.layout, req->save.platform);
+    sigil_sync_kind folders;
+    const sigil_sync_kind *kind = kind_for(req, layout, &folders);
+    if (!kind) return layout->profiles ? SIGIL_ERR_INVALID_ARG : SIGIL_ERR_UNSUPPORTED_FORMAT;
     sigil_sync_ctx x;
     int rc = sigil_sync_ctx_open(&x, req, kind);
     sigil_sync_result *r = rc == SIGIL_OK ? new_result() : NULL;
     if (rc == SIGIL_OK && !r) rc = SIGIL_ERR_OOM;
-    if (rc == SIGIL_OK) rc = collect_any(&x, r);
+    if (rc == SIGIL_OK) rc = sigil_save_alternates(&req->save, &r->alternates, &r->alternate_count);
+    if (rc == SIGIL_OK) rc = layout->profiles ? sigil_sync_collect_profiles(&x, layout->profiles, r) : collect_any(&x, r);
     if (rc == SIGIL_OK) rc = finish(&x, r, true);
     sigil_sync_ctx_close(&x);
     return hand_back(r, rc, out);
@@ -178,11 +192,8 @@ int sigil_collect(const sigil_sync_request *req, sigil_sync_result **out) {
 
 /* ---- restore ------------------------------------------------------------------ */
 
-/* Saves on disk that changed since the last sync (`last`) stop a restore
- * that would replace them, unless the user chose to overwrite them. `same`
- * is true when they already are what the restore brings. */
-static bool blocks_restore(const sigil_sync_ctx *x, const char *local, const char *incoming, const char *last,
-                           bool *same) {
+bool sigil_sync_blocks_restore(const sigil_sync_ctx *x, const char *local, const char *incoming, const char *last,
+                               bool *same) {
     *same = strcmp(local, incoming) == 0;
     bool changed = local[0] && strcmp(local, last ? last : "") != 0;
     return !*same && changed && !x->req->overwrite_local;
@@ -192,7 +203,7 @@ int sigil_sync_check_restore(const sigil_sync_ctx *x, const sigil_sync_saves *lo
                              sigil_sync_result *r, char local_identity[33], bool *already_there) {
     int rc = sigil_sync_identity_or_empty(local, SYNC_OWN_GAME, NULL, local_identity);
     bool blocked = rc == SIGIL_OK &&
-                   blocks_restore(x, local_identity, r->identity_hash,
+                   sigil_sync_blocks_restore(x, local_identity, r->identity_hash,
                                   sigil_sync_state_get(&x->state, "synced", x->game), already_there);
     for (size_t c = 0; c < x->req->companion_count && rc == SIGIL_OK; c++) {
         if (!sigil_sync_companion_restored(x, c)) continue;
@@ -202,7 +213,8 @@ int sigil_sync_check_restore(const sigil_sync_ctx *x, const sigil_sync_saves *lo
         if (rc == SIGIL_OK) rc = sigil_sync_identity_or_empty(incoming, SYNC_OWN_COMPANION, key, theirs);
         if (rc != SIGIL_OK) break;
         bool same = false;
-        blocked = blocks_restore(x, mine, theirs, sigil_sync_state_get(&x->state, "synced", key), &same) || blocked;
+        blocked = sigil_sync_blocks_restore(x, mine, theirs, sigil_sync_state_get(&x->state, "synced", key), &same) ||
+                  blocked;
         *already_there = *already_there && same;
     }
     if (rc == SIGIL_OK && blocked) {
@@ -277,33 +289,47 @@ static void restored_artifact(const sigil_sync_ctx *x, const sigil_sync_saves *i
     else snprintf(r->artifact, sizeof(r->artifact), "%s", sigil_sync_device_name(incoming->items[0].device));
 }
 
-int sigil_restore(const sigil_sync_request *req, const uint8_t *unit, size_t unit_len, sigil_sync_result **out) {
-    if (!out) return SIGIL_ERR_INVALID_ARG;
-    *out = NULL;
-    if (!request_valid(req) || !req->write || !unit) return SIGIL_ERR_INVALID_ARG;
-    const sigil_sync_kind *kind = sigil_sync_kind_for(req);
-    if (!kind) return SIGIL_ERR_UNSUPPORTED_FORMAT;
-    sigil_sync_ctx x;
-    int rc = sigil_sync_ctx_open(&x, req, kind);
-    sigil_sync_result *r = rc == SIGIL_OK ? new_result() : NULL;
-    if (rc == SIGIL_OK && !r) rc = SIGIL_ERR_OOM;
-
+/* Restore on a card or volume platform. */
+static int restore_units(sigil_sync_ctx *x, const uint8_t *unit, size_t unit_len, sigil_sync_result *r,
+                         char local_identity[33]) {
+    const sigil_sync_kind *kind = x->kind;
     sigil_sync_saves incoming;
     sigil_sync_saves_init(&incoming, kind);
     size_t sizes[SIGIL_DEVICE_COUNT];
-    char local_identity[33] = "";
-    if (rc == SIGIL_OK) rc = sigil_sync_request_saves(&x, unit, unit_len, &incoming, sizes, r);
+    int rc = sigil_sync_request_saves(x, unit, unit_len, &incoming, sizes, r);
     if (rc == SIGIL_OK) rc = sigil_sync_identity_of(&incoming, r->identity_hash);
     if (rc == SIGIL_OK) {
         sigil_md5_of(unit, unit_len, r->content_hash);
         bool zip = (!kind->has_ids || kind->save_files) && sigil_read_le32(unit) == 0x04034b50u;
         r->shape = zip ? SIGIL_SAVE_SHAPE_MULTI : SIGIL_SAVE_SHAPE_SINGLE;
-        rc = kind->has_ids ? restore_with_ids(&x, &incoming, r, local_identity)
-                           : sigil_sync_restore_volumes(&x, &incoming, sizes, r, local_identity);
-        restored_artifact(&x, &incoming, zip, r);
+        rc = kind->has_ids ? restore_with_ids(x, &incoming, r, local_identity)
+                           : sigil_sync_restore_volumes(x, &incoming, sizes, r, local_identity);
+        restored_artifact(x, &incoming, zip, r);
     }
-    if (rc == SIGIL_OK) rc = note_companions(&x, &incoming);
+    if (rc == SIGIL_OK) rc = note_companions(x, &incoming);
     sigil_sync_saves_free(&incoming);
+    return rc;
+}
+
+int sigil_restore(const sigil_sync_request *req, const uint8_t *unit, size_t unit_len, sigil_sync_result **out) {
+    if (!out) return SIGIL_ERR_INVALID_ARG;
+    *out = NULL;
+    if (!request_valid(req) || !req->write || !unit) return SIGIL_ERR_INVALID_ARG;
+    const sigil_layout *layout = sigil_layout_find(req->save.layout, req->save.platform);
+    sigil_sync_kind folders;
+    const sigil_sync_kind *kind = kind_for(req, layout, &folders);
+    if (!kind) return layout->profiles ? SIGIL_ERR_INVALID_ARG : SIGIL_ERR_UNSUPPORTED_FORMAT;
+    sigil_sync_ctx x;
+    int rc = sigil_sync_ctx_open(&x, req, kind);
+    sigil_sync_result *r = rc == SIGIL_OK ? new_result() : NULL;
+    if (rc == SIGIL_OK && !r) rc = SIGIL_ERR_OOM;
+    if (rc == SIGIL_OK) rc = sigil_save_alternates(&req->save, &r->alternates, &r->alternate_count);
+
+    char local_identity[33] = "";
+    if (rc == SIGIL_OK) {
+        rc = layout->profiles ? sigil_sync_restore_profiles(&x, layout->profiles, unit, unit_len, r, local_identity)
+                              : restore_units(&x, unit, unit_len, r, local_identity);
+    }
     if (rc == SIGIL_OK && req->mode == SIGIL_SYNC_UNMANAGED) {
         char both[80];
         snprintf(both, sizeof(both), "%s\t%s", r->identity_hash, local_identity);
@@ -323,5 +349,7 @@ void sigil_sync_result_free(sigil_sync_result *result) {
     free(result->unowned);
     for (size_t c = 0; result->companions && c < result->companion_count; c++) free(result->companions[c].data);
     free(result->companions);
+    free(result->profiles);
+    free(result->alternates);
     free(result);
 }

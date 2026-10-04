@@ -42,6 +42,7 @@ _JNI_CLASSES = {
     "SigilCardListing": "g_card_listing_class",
     "SigilSyncResult": "g_sync_result_class",
     "SigilCompanionResult": "g_companion_result_class",
+    "SigilSaveAlternate": "g_alternate_class",
     "SigilException": "g_exception_class",
 }
 
@@ -97,6 +98,8 @@ _UNIT_FIELDS = {
     "artifact": ("artifact", "artifact", "Artifact"),
     "content hash": ("contentHash", "content_hash", "ContentHash"),
     "identity hash": ("identityHash", "identity_hash", "IdentityHash"),
+    "alternates": ("alternates", "alternates", "Alternates"),
+    "alternate options": ("val options: Map", "options: Mapping", "Options map[string]string"),
 }
 
 _SYNC_FIELDS = {
@@ -106,7 +109,7 @@ _SYNC_FIELDS = {
     "unowned": ("unowned", "unowned", "Unowned"),
     "restore again": ("restoreAgain", "restore_again", "RestoreAgain"),
     "state": ("state", "state", "State"),
-    "conflict": ("conflict", "conflict", "Conflict"),
+    "conflict": ("CONFLICT = -9", "SigilConflictError", "ErrConflict "),
     "companions": ("companions", "companions", "Companions"),
     "companion game ids": ("gameIds", "game_ids", "GameIDs"),
     "problem": ("problem", "problem", "Problem:"),
@@ -248,6 +251,63 @@ def _c_card_formats() -> list[str]:
     return names
 
 
+_JNI_PARAM_TYPES = {
+    "String": "jstring",
+    "Int": "jint",
+    "Long": "jlong",
+    "Boolean": "jboolean",
+    "ByteArray": "jbyteArray",
+    "IntArray": "jintArray",
+}
+
+
+def _kotlin_native_params(body: str) -> list[str]:
+    types = []
+    for param in _split_top_level(body):
+        kind = param.split(":", 1)[1].strip().rstrip("?")
+        types.append("jobjectArray" if kind.startswith("Array<") else _JNI_PARAM_TYPES[kind])
+    return types
+
+
+def _split_top_level(text: str) -> list[str]:
+    parts, depth, current = [], 0, ""
+    for ch in text:
+        depth += ch == "<"
+        depth -= ch == ">"
+        if ch == "," and depth == 0:
+            parts.append(current)
+            current = ""
+        else:
+            current += ch
+    if current.strip():
+        parts.append(current)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def test_jni_strings_cross_as_standard_utf8():
+    """GetStringUTFChars and NewStringUTF use modified UTF-8: a character outside the BMP reaches
+    sigil as surrogate bytes no file system name holds, and four-byte UTF-8 from sigil aborts
+    NewStringUTF under CheckJNI. Strings go through jni_utf8 and jni_string instead."""
+    jni = JNI.read_text()
+    for call in ("GetStringUTFChars", "ReleaseStringUTFChars", "NewStringUTF"):
+        assert call not in jni, f"sigil_jni.c calls {call}"
+
+
+def test_jni_natives_take_the_kotlin_parameters():
+    """Kotlin binds `external fun` by name alone, so a parameter one side has
+    and the other lacks reads the wrong argument at run time rather than
+    failing to link."""
+    kotlin = KOTLIN.read_text()
+    jni = JNI.read_text()
+    natives = re.findall(r"external fun (native\w+)\(([^)]*)\)", kotlin)
+    assert natives, "no Kotlin natives parsed"
+    for name, body in natives:
+        m = re.search(rf"Java_com_nendo_sigil_Sigil_{name}\(JNIEnv \*env, jclass clazz,?([^)]*)\)", jni)
+        assert m, f"{name} has no JNI function"
+        jni_types = [p.split()[0] for p in _split_top_level(m.group(1))]
+        assert jni_types == _kotlin_native_params(body), f"{name}: JNI {jni_types} vs Kotlin {_kotlin_native_params(body)}"
+
+
 def test_card_format_names_match_across_bindings():
     """Each binding names a card format by its position in the C enum; a
     format added in C and missed in a binding reads back as unknown."""
@@ -325,8 +385,8 @@ def test_every_binding_carries_every_sync_field():
 
 
 def test_every_binding_lists_the_save_root_to_the_same_depth():
-    """A PCSX2 folder card's _pcsx2_meta files sit four levels under memcards/;
-    a binding that lists less deep loses them."""
+    """A Switch save sits under nand/user/save/0000000000000000/<profile>/<title>/ and keeps its
+    own folders below that, Hades three deep; a binding that lists less deep loses them."""
     sources = {
         "kotlin": (r"SUBDIR_LIST_DEPTH\s*=\s*(\d+)", KOTLIN),
         "python": (r"_SUBDIR_LIST_DEPTH\s*=\s*(\d+)", PY_INIT),
@@ -335,7 +395,7 @@ def test_every_binding_lists_the_save_root_to_the_same_depth():
     for language, (pattern, path) in sources.items():
         match = re.search(pattern, path.read_text())
         assert match, f"{language} listing depth not found"
-        assert int(match.group(1)) == 4, f"{language} lists {match.group(1)} levels deep"
+        assert int(match.group(1)) == 12, f"{language} lists {match.group(1)} levels deep"
 
 
 def _keep_rule_patterns() -> list[re.Pattern[str]]:
@@ -380,7 +440,7 @@ def test_jni_never_stacks_a_lookup_on_a_pending_exception():
 
 def test_every_binding_reports_the_c_error_code():
     sources = _binding_sources()
-    assert "class SigilException(val code: Int" in sources["kotlin"]
+    assert re.search(r"class SigilException\(\s*val code: Int", sources["kotlin"])
     assert _jni_exception_thrown_on_failure()
     assert "self.code = code" in sources["python"]
     assert "func errFromCode(rc C.int) error" in sources["go"]

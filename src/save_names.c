@@ -4,7 +4,8 @@
 /* Each row pairs a product code read from the disc header in a dump with a
  * save name that a real save of that disc carries (tests/fixtures/saves) or
  * that our own scan of the disc's code found it writing
- * (docs/save-research/sega.md sections 3.2.1, 3.2.2). A name two products
+ * (docs/platforms/saturn.md, "Mapping Saturn and Sega CD saves to games" and
+ * "Finding the names a disc writes"). A name two products
  * write (the Japanese and US Virtua Fighter 2 both write VFIGHTER2_X) needs
  * both rows, so it matches neither. */
 const sigil_save_name_row sigil_save_name_table[] = {

@@ -256,15 +256,15 @@ static void superblock_path(const char *dir, char out[SIGIL_SAVE_PATH_MAX]) {
 
 /* PCSX2 reads the card's _pcsx2_superblock as formatted; it hides every save
  * on a card whose superblock is missing, empty or short. */
-static bool superblock_usable(const sigil_sync_ctx *x, const char *dir) {
+static int read_superblock(const sigil_sync_ctx *x, const char *dir, bool *usable) {
     char path[SIGIL_SAVE_PATH_MAX];
     superblock_path(dir, path);
     uint8_t *have = NULL;
     size_t have_len = 0;
-    sigil_sync_read_file(x->req, path, PS2_FOLDER_SUPERBLOCK_SIZE + 1, &have, &have_len);
-    bool usable = have && sigil_ps2_folder_superblock_usable(have, have_len);
+    int rc = sigil_sync_read_file(x->req, path, PS2_FOLDER_SUPERBLOCK_SIZE + 1, &have, &have_len);
+    *usable = rc == SIGIL_OK && sigil_ps2_folder_superblock_usable(have, have_len);
     free(have);
-    return usable;
+    return rc == SIGIL_ERR_IO || rc == SIGIL_ERR_OOM ? rc : SIGIL_OK;
 }
 
 /* The listing holds a save folder on folder card `dir`. */
@@ -279,7 +279,9 @@ static bool holds_saves(const sigil_sync_request *req, const char *dir) {
 /* Writes a full formatted _pcsx2_superblock to folder card `dir` when the one
  * there isn't usable. */
 static int ensure_superblock(const sigil_sync_ctx *x, const char *dir) {
-    if (superblock_usable(x, dir)) return SIGIL_OK;
+    bool usable = false;
+    int rc = read_superblock(x, dir, &usable);
+    if (rc != SIGIL_OK || usable) return rc;
     char path[SIGIL_SAVE_PATH_MAX];
     superblock_path(dir, path);
     uint8_t sb[PS2_FOLDER_SUPERBLOCK_SIZE];
@@ -292,7 +294,10 @@ static int ensure_superblock(const sigil_sync_ctx *x, const char *dir) {
 int sigil_sync_check_folder_card(const sigil_sync_ctx *x, const sigil_sync_card_file *f, size_t *removes,
                                  sigil_sync_result *r) {
     *removes = 0;
-    if (!x->req->repair && holds_saves(x->req, f->path) && !superblock_usable(x, f->path)) {
+    bool usable = false;
+    int rc = read_superblock(x, f->path, &usable);
+    if (rc != SIGIL_OK) return rc;
+    if (!x->req->repair && holds_saves(x->req, f->path) && !usable) {
         superblock_path(f->path, r->problem);
         return SIGIL_ERR_DAMAGED;
     }

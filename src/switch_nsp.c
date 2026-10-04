@@ -34,7 +34,9 @@ static bool name_has_nca_ext(const char *name, size_t name_len) {
         && (name[name_len - 1] | 0x20) == 'a';
 }
 
-/* Iterate PFS0 NCA entries and, for the Meta NCA, run the CNMT path.
+/* Iterate PFS0 NCA entries and, for each Meta NCA, run the CNMT path. A dump
+ * holding the game beside its update or DLC reads as the game: an
+ * application's CNMT wins over the others, whatever their order.
  * SIGIL_ERR_NOT_FOUND when no Meta NCA reads, so callers fall through to the
  * program_id path; SIGIL_ERR_KEYS_INCOMPATIBLE when one does but prod.keys
  * lacks its key-area key. */
@@ -43,6 +45,7 @@ static int pfs0_try_cnmt(const sigil_io *io, uint64_t data_start,
                          const uint8_t *string_table, uint32_t string_table_size,
                          const uint8_t *header_key, const sigil_support *sup,
                          sigil_switch_title *out) {
+    bool have = false;
     for (uint32_t i = 0; i < file_count; i++) {
         const uint8_t *e = entries + i * 24;
         uint64_t file_offset = sigil_read_le64(e);
@@ -65,10 +68,13 @@ static int pfs0_try_cnmt(const sigil_io *io, uint64_t data_start,
         if (sigil_nca_decrypt_header(raw, header_key, dec) != SIGIL_OK) continue;
         if (dec[0x205] != 1) continue; /* not a Meta NCA */
 
-        int rc = sigil_cnmt_from_meta_nca(io, data_start + file_offset, dec, sup, out);
-        if (rc == SIGIL_OK || rc == SIGIL_ERR_KEYS_INCOMPATIBLE) return rc;
+        sigil_switch_title t;
+        memset(&t, 0, sizeof(t));
+        int rc = sigil_cnmt_from_meta_nca(io, data_start + file_offset, dec, sup, &t);
+        if (rc == SIGIL_ERR_KEYS_INCOMPATIBLE) return rc;
+        if (rc == SIGIL_OK && sigil_switch_title_keep(out, &have, &t)) break;
     }
-    return SIGIL_ERR_NOT_FOUND;
+    return have ? SIGIL_OK : SIGIL_ERR_NOT_FOUND;
 }
 
 int sigil_pfs0_extract_title(const sigil_io *io, uint64_t partition_off,
@@ -151,7 +157,7 @@ int sigil_pfs0_extract_title(const sigil_io *io, uint64_t partition_off,
 }
 
 void sigil_apply_switch_title(sigil_result *out, const sigil_switch_title *t) {
-    memcpy(out->title_id, t->title_id, 17);
+    memcpy(out->title_id, t->application_id[0] ? t->application_id : t->title_id, 17);
     memcpy(out->raw_serial, t->title_id, 17);
     out->switch_content_type = t->content_type;
     out->title_version = t->version;

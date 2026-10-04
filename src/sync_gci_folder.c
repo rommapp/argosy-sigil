@@ -86,9 +86,9 @@ int sigil_sync_folder_saves(const sigil_sync_ctx *x, const char *folder, sigil_s
     for (size_t i = 0; i < n && rc == SIGIL_OK; i++) {
         uint8_t *data = NULL;
         size_t len = 0;
-        if (sigil_sync_read_file(x->req, files[i], GC_MAX_CARD_SIZE + GC_DENTRY_SIZE, &data, &len) == SIGIL_OK) {
-            rc = add_gci(x, files[i], data, len, out, stale);
-        }
+        rc = sigil_sync_read_file(x->req, files[i], GC_MAX_CARD_SIZE + GC_DENTRY_SIZE, &data, &len);
+        if (rc == SIGIL_OK) rc = add_gci(x, files[i], data, len, out, stale);
+        else if (rc == SIGIL_ERR_NOT_FOUND || rc == SIGIL_ERR_UNSUPPORTED_FORMAT) rc = SIGIL_OK;
         free(data);
     }
     free(files);
@@ -211,7 +211,10 @@ static int check_dolphin_loads(const sigil_sync_ctx *x, const char *folder, cons
         }
         uint8_t *data = NULL;
         size_t len = 0;
-        if (goes || sigil_sync_read_file(req, p, GC_MAX_CARD_SIZE + GC_DENTRY_SIZE, &data, &len) != SIGIL_OK) continue;
+        if (goes) continue;
+        int read = sigil_sync_read_file(req, p, GC_MAX_CARD_SIZE + GC_DENTRY_SIZE, &data, &len);
+        if (read == SIGIL_ERR_IO || read == SIGIL_ERR_OOM) rc = read;
+        if (read != SIGIL_OK) continue;
         if (len >= GC_DENTRY_SIZE) {
             files[n].path = p;
             gci_facts(x, data, len, &files[n]);
