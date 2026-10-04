@@ -42,13 +42,18 @@ sectors happen to land on 2048-byte boundaries.
 
 ## Save layouts
 
-| Layout | Files (role, option) | Shared | Source |
+| Layout | Files (role, option) | Shared | Verified |
 |---|---|---|---|
-| `flycast` | `{dc_vmu_id}.A1.bin` primary when `reicast_per_content_vmus` = `VMU A1` or `All VMUs`, else the legacy `{stem}.A1.bin` when only that exists; `{dc_vmu_id}.{A2..D2}.bin` (or legacy `{stem}.{port}.bin`) sidecars when `All VMUs` | `vmu_save_{A1..D2}.bin` when `disabled` (default). The core keeps them in `<system>/dc/`, so pass that folder as the save root. Under `VMU A1` the other ports stay there too and don't sync | flyinghead/flycast `shell/libretro/oslib.cpp` `getVmuPath` |
-| `flycast_standalone` | `{dc_vmu_id}_vmu_save_A1.bin` primary, or the legacy `{stem}_vmu_save_A1.bin`, when `PerGameVmu` = `yes` (default) | `vmu_save_A1.bin` when `PerGameVmu` = `no`; `vmu_save_{A2..D2}.bin` | flycast `core/oslib/oslib.cpp`; the save root is the VMU folder |
+| `flycast` | `{dc_vmu_id}.A1.bin` primary when `reicast_per_content_vmus` = `VMU A1` or `All VMUs`, else the legacy `{stem}.A1.bin` when only that exists; `{dc_vmu_id}.{A2..D2}.bin` (or legacy `{stem}.{port}.bin`) sidecars when `All VMUs` | `vmu_save_{A1..D2}.bin` when `disabled` (default). The core keeps them in `<system>/dc/`, so pass that folder as the save root. Under `VMU A1` the other ports stay there too and don't sync | emulator source |
+| `flycast_standalone` | `{dc_vmu_id}_vmu_save_A1.bin` primary, or the legacy `{stem}_vmu_save_A1.bin`, when `PerGameVmu` = `yes` (default) | `vmu_save_A1.bin` when `PerGameVmu` = `no`; `vmu_save_{A2..D2}.bin` | emulator source |
 
 `{dc_vmu_id}` is the Dreamcast product number (`title_id`) with each of
-` /\:*?|<>` replaced by `_`, as flycast names a per-game VMU.
+` /\:*?|<>` replaced by `_`, as flycast names a per-game VMU. For
+`flycast_standalone` the save root is the VMU folder.
+
+The flycast core copies a legacy `{stem}.A1.bin` to the product-number
+name and deletes the old file, so a client watching the old name sees it
+disappear.
 
 ## Sync
 
@@ -96,82 +101,6 @@ corrupt save, which the swap would drop; unmanaged keeps it in place.
 Restore returns `SIGIL_ERR_NO_TARGET` for a VMU port flycast doesn't keep
 per game. On `SIGIL_ERR_NO_SPACE`, `blocks_short` is 0 when other saves
 hold the blocks a Dreamcast game file must start at.
-
-## Emulator research
-
-Research date 2026-09-26. Sources are shallow clones read locally unless marked otherwise.
-
-Commits read:
-
-- libretro/Genesis-Plus-GX `c2838c7`
-- libretro/picodrive `ab02114`
-- libretro/beetle-saturn-libretro `1382b85`
-- libretro/yabause master `8926b0c` (yabause core), branch `kronos` `3791ffb2`, branch `yabasanshiro` `09ed8e5b`
-- FCare/Kronos `d451a55` (same libretro save code as the libretro/yabause `kronos` branch, which is what the buildbot builds)
-- flyinghead/flycast `869038f` (the buildbot builds the libretro core from this repo; libretro/flycast is a deprecated fork per its repo description)
-- mednafen 1.32.1 source tarball (mednafen.github.io/releases)
-- ares-emulator/ares `4cb8d92` (sparse)
-- euan-forrester/save-file-converter `0a9786f` (format reference implementation)
-
-The buildbot repo mapping comes from `libretro-super/recipes/linux/cores-linux-x64-generic`.
-
-GH links below use `blob/master` plus the line numbers at the commits above.
-
-### Per (platform, emulator) rows
-
-Legend for Format:
-
-- raw = memory dump with no header
-- expanded = each data byte sits on an odd address with a filler byte (0xFF or 0x00) before it (2x size)
-- container = a filesystem holding many games' saves
-
-| Platform | Emulator | Files + naming | Format | Scope + switching options | Per-game extraction / neutral form | Source |
-|---|---|---|---|---|---|---|
-| Dreamcast | flycast (libretro, from flyinghead/flycast) | `reicast_per_content_vmus` = disabled (default): `{system}/dc/vmu_save_{A1..D2}.bin`, shared. "VMU A1": `{savedir}/{gameId}.A1.bin` for port A1 only. "All VMUs": `{savedir}/{gameId}.{A1..D2}.bin`. `gameId` is the IP.BIN product number with trailing whitespace trimmed and ` /\:*?\|<>` replaced by `_`. Legacy per-content name `{stem}.{port}.bin`: when found, the core **copies it to the gameId name and deletes the old file** (since commit `5fc84acd`, 2024-11-03). No `.srm` (no SAVE_RAM) | Raw VMU flash image, exactly 131072 B (`u8 flash_data[128_KB]`). An all-zero file is reformatted on load | Shared by default. Per-game via the option. Multi-disc games share one VMU through the product number | Feasible and lossless (section 3.3). Neutral form: VMS+VMI pair, or DCI | `shell/libretro/oslib.cpp:40-68`; `shell/libretro/libretro.cpp:843-860, 2242-2262`; `shell/libretro/libretro_core_options.h:1165-1178`; `core/emulator.cpp:858`; `core/hw/maple/maple_devs.cpp:353, 437-475` |
-| Dreamcast | flycast (standalone) | `PerGameVmu` (default **true**) gives A1 = `{gameId}_vmu_save_A1.bin`. Others (and A1 when the option is off) are `vmu_save_{port}.bin`. Looked up in `VMUPath` if set, otherwise the writable data dir. Legacy fallback `{content fileName}_vmu_save_A1.bin` | Raw 128 KiB | A1 per-game by default. Other ports shared | As above | `core/oslib/oslib.cpp:50-100`; `core/cfg/option.cpp:234`; `core/stdclass.cpp:140-143` |
-| Dreamcast | redream (standalone, closed source; the libretro core is abandoned) | `vmu0.bin` to `vmu3.bin` (ports A to D) in the redream data dir (libretro docs: in the save dir) | Raw 128 KiB VMU image (UNVERIFIED from source) | Shared across all games. No per-game option (LaunchBox plugins swap `vmu0.bin`) | Feasible via the VMU filesystem | docs.libretro.com/library/redream; forums.launchbox-app.com/files/file/5337-redream-per-game-vmus. Source UNVERIFIED |
-
-### 3.3 Dreamcast VMU
-
-- The image is 128 KiB, 256 blocks of 512 B, little-endian. A standard VMU has this layout, but the root block records it, and readers must take it from there:
-  - Blocks 0-199: user area. Real images also record 240 and 241 user blocks (root offset 0x50).
-  - Blocks 200-240: unused on a standard VMU
-  - Blocks 241-253: directory (13 blocks, 32-byte entries, 208 slots). The root records the directory's top block and it runs down from there; some tools record the lowest block and write upwards (the jsr-forward-dir-vmu sample).
-  - Block 254: FAT (u16 per block; 0xFFFC free, 0xFFFA end of chain)
-  - Block 255: system/root block, starting with sixteen 0x55 bytes
-- Directory entry layout:
-  - `0x00` type (0x33 data, 0xCC game, 0x00 empty)
-  - `0x01` copy-protect (0xFF protected)
-  - `0x02` u16 first block
-  - `0x04` filename, 12 B Shift-JIS
-  - `0x10` BCD timestamp, 8 B
-  - `0x18` u16 size in blocks
-  - `0x1A` u16 header block offset
-  - `0x1C` 4 B unused
-- The VMS file header inside the data holds: description (16 B + 32 B), creator, icon count, animation speed, eyecatch type, CRC, data size, palette and icons.
-- Sources: mc.pp.se/dc/vms/flashmem.html; save-file-converter `Dreamcast/Components/*.js`.
-- Per-save formats:
-  - **VMS** is the raw file bytes (chain concatenated). It is paired with **VMI**, 108 B of metadata: checksum = first 4 bytes of the resource name AND "SEGA" (confirmed against real VMI files, 2026-09-28), description 32, copyright 32, timestamp 8, version, file number, resource name 8 (= the VMS base name), VMU filename 12, file mode (bit 1 game, bit 0 copy-protect), size.
-  - **DCI** (Nexus) is the 32-byte directory entry followed by data, with every 4-byte word byte-swapped.
-- Tools:
-  - save-file-converter (`Dreamcast/IndividualSaves/VmiVms.js`, `Dci.js`)
-  - bucanero/dc-save-converter (C, `vmufs.h`)
-  - gyrovorbis/libevmu
-  - DreamShell `vmu_manager`
-  - VMU Explorer (Windows)
-- Lossless: yes for data files. The directory entry fields round-trip through DCI exactly, and through VMI+VMS apart from the header-block offset, which VMI encodes as the game/data flag.
-- Game-type files (VMU minigames, 0xCC) must start at block 0 and be contiguous, and only one can exist per VMU.
-- The VMU filename (12 chars) is game-chosen, often matching the product code prefix (for example `SONICADV_SYS`). It is not guaranteed.
-
-### Notes for save sync
-
-- Per-game raw files, safe to sync as opaque blobs:
-  - Flycast per-content VMU
-  - Standalone Flycast A1
-- Shared containers that need filesystem-level extraction/injection to sync per game:
-  - Flycast default `vmu_save_*.bin`
-  - Redream `vmu0-3.bin`
-- Flycast libretro renames and deletes legacy `{stem}.A1.bin` in favour of `{gameId}.A1.bin`. A sync client watching the old name will see it disappear.
 
 ## Open items
 

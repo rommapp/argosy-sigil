@@ -55,10 +55,11 @@ platform=psvita title_id=PCSE00695 raw_serial=PCSE00695 save_id=PCSE00695 usage=
 
 ## Save layouts
 
-| Layout | Files (role, option) | Shared | Source |
+| Layout | Files (role, option) | Shared | Verified |
 |---|---|---|---|
-| `vita3k` | folders per profile: `ux0/user/{profile}/savedata/{save_id}/` | | Vita3K `vita3k/io/src/io.cpp`; subdir `ux0/user` |
+| `vita3k` | folders per profile: `ux0/user/{profile}/savedata/{save_id}/` | | emulator source |
 
+The layout lists `ux0/user`, which `sigil_save_layout_subdirs()` names.
 The row matches `psvita` only. Vita3K keeps a game's saves per user
 profile, with no device area:
 
@@ -70,10 +71,14 @@ The base folder is the one holding `ux0/`, and a profile id is the user
 folder's name (`00`). How sigil picks the profile is in
 [profiles](../save-units.md#profiles).
 
+Vita3K writes save files decrypted, so copying a folder moves a save
+between Vita3K installs without loss. A real Vita encrypts its saves,
+and moving one to or from hardware needs a modded console's tools.
+
 **PS Vita on Vita3K** (`org.vita3k.emulator`).
 `vita/ux0/user/00/savedata/<save_id>/`, one directory per title, matching
-`folder-exact`. The user id is fixed at `00`. `io.cpp` redirects
-`savedata0:` to `ux0:user/00/savedata/<SAVEDIR>`, where `SAVEDIR` is
+`folder-exact`. Vita3K's default user is `00`, and it maps the game's
+save device to `ux0:user/<user>/savedata/<SAVEDIR>`, where `SAVEDIR` is
 `INSTALL_DIR_SAVEDATA` or `TITLE_ID`.
 The root sits under `/storage/emulated/0/Android/data/<package>/files/`;
 see [saves on Android](../saves-on-android.md).
@@ -84,34 +89,8 @@ On a layout with profiles the unit is a zip of the game's save folders,
 and `companions` is `SIGIL_ERR_INVALID_ARG`. The general rules for profile
 layouts are in [sync](../sync.md).
 
-## Emulator research
-
-Research date 2026-09-26. Source links are permalinks to the commit that was HEAD on that date unless marked otherwise.
-
-Pinned commits used below:
-
-- Vita3K `bbd5c3624a06572fe4f16f67564f53a7540e1f42` (V3)
-
-Anything without a source link is marked UNVERIFIED.
-
-| Emulator | Files written, template, default location | Format | Scope | Per-game extraction | Source |
-|---|---|---|---|---|---|
-| Vita3K | `<pref-path>/ux0/user/<user_id>/savedata/<SAVEDIR>/`. `SAVEDIR` = `INSTALL_DIR_SAVEDATA` from the app's `param.sfo`, falling back to `TITLE_ID` (for example `PCSE00123`). `savedata0:`/`savedata1:` are redirected there. `sceAppUtil` slot metadata is stored as `SlotParam_<n>.bin` inside the save folder. User id default `00` | Plain decrypted files as the game wrote them. No `sce_pfs/` encryption layer, and `SlotParam_N.bin` is Vita3K-specific (real firmware uses `sce_sys/` + PFS) | Per title. Titles that share `INSTALL_DIR_SAVEDATA` share a folder (the Vita mechanism for sequels and cross-region sharing) | Folder is the unit; lossless between Vita3K instances. Moving to or from a real Vita needs PFS re-encryption on a modded console (VitaShell / Apollo, UNVERIFIED) | V3 `vita3k/io/src/io.cpp` L159-173, L232-234; V3 `vita3k/packages/src/sfo.cpp` L87-88; V3 `vita3k/app/src/apps_list.cpp` L325-344, L584; V3 `vita3k/modules/SceAppUtil/SceAppUtil.cpp` L245-246 |
-
-Default pref-path: Windows `%APPDATA%/Vita3K/Vita3K`, Linux `~/.local/share/Vita3K/Vita3K`, Android app storage. All UNVERIFIED.
-
-### Container split summary
-
-| Container | Lossless per-game split? | How | Identity key |
-|---|---|---|---|
-| Vita `ux0/user/00/savedata/` | Yes | Copy folder | `INSTALL_DIR_SAVEDATA` or `TITLE_ID` |
-
-### User profiles
-
-- **verified**: Vita3K keeps saves under `ux0/user/<user_id>/savedata/<SAVEDIR>/`, `SAVEDIR` from the app's `param.sfo`. See [sony.md](#emulator-research). The real console has one user. Nothing to split beyond picking the user folder.
-
 ## Open items
 
-- Vita3K and PPSSPP default roots per OS are UNVERIFIED.
+- Vita3K's default root per OS is unconfirmed.
 - Real-hardware interop for Vita and PS3 needs encryption tooling outside RomM's reach. Emulator-to-emulator folder copies are lossless.
 - A dump identified by filename alone keeps `save_id = TITLE_ID`, which misses titles that share another title's save folder through `INSTALL_DIR_SAVEDATA`. See [identification](#identification).

@@ -429,7 +429,7 @@ typedef struct {
 SIGIL_API int  sigil_card_list(const sigil_io *io, sigil_card_listing **out);
 SIGIL_API void sigil_card_listing_free(sigil_card_listing *listing);
 
-/* ---- Sync (docs/save-roadmap.md, "Client interface") -------------------------
+/* ---- Sync (docs/sync.md) ------------------------------------------------------
  * collect gathers one game's saves off the emulator's files into the unit that
  * travels to RomM; restore puts a unit back. sigil keeps what it must remember
  * between calls in an opaque state blob the caller stores and passes back. */
