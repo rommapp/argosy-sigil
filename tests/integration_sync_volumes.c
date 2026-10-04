@@ -1103,7 +1103,7 @@ static void check_kronos_beetle_cross(void) {
      * Beetle-compatible saves, which write Beetle's file names. */
     static const char *const BEETLE_KEY = "beetle_saturn_save_method", *const BEETLE_VALUE = "mednafen";
     static const char *const KRONOS_KEY = "kronos_use_beetle_saves", *const KRONOS_VALUE = "enabled";
-    static const struct {
+    const struct {
         const char *from, *from_key, *from_value, *to, *to_key, *to_value, *id, *int_path, *cart_path, *want_cart;
     } CROSS[] = {
         { "kronos", NULL, NULL, "mednafen_saturn", BEETLE_KEY, BEETLE_VALUE, "sega-rally-kronos", KRONOS_INT, KRONOS_CART,
