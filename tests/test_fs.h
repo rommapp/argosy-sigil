@@ -36,11 +36,18 @@ static int test_make_dir(const char *path) {
     return CreateDirectoryA(path, NULL) || GetLastError() == ERROR_ALREADY_EXISTS ? 0 : -1;
 }
 
+/* The system's folder for temporary files, with no trailing separator. */
+static const char *test_temp_root(void) {
+    static char base[MAX_PATH];
+    DWORD n = GetTempPathA(sizeof(base), base);
+    if (n == 0 || n >= sizeof(base)) return ".";
+    if (base[n - 1] == '\\' || base[n - 1] == '/') base[n - 1] = '\0';
+    return base;
+}
+
 static int test_temp_dir(char *out, size_t cap) {
-    char base[MAX_PATH];
-    if (!GetTempPathA(sizeof(base), base)) return -1;
     for (unsigned tries = 0; tries < 100; tries++) {
-        snprintf(out, cap, "%ssigil-test-%lu-%u", base, (unsigned long)GetCurrentProcessId(), tries);
+        snprintf(out, cap, "%s\\sigil-test-%lu-%u", test_temp_root(), (unsigned long)GetCurrentProcessId(), tries);
         if (CreateDirectoryA(out, NULL)) return 0;
     }
     return -1;
@@ -75,9 +82,14 @@ static int test_make_dir(const char *path) {
     return mkdir(path, 0755) == 0 || (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) ? 0 : -1;
 }
 
-static int test_temp_dir(char *out, size_t cap) {
+/* The system's folder for temporary files. */
+static const char *test_temp_root(void) {
     const char *base = getenv("TMPDIR");
-    snprintf(out, cap, "%s/sigil-test-XXXXXX", base && *base ? base : "/tmp");
+    return base && *base ? base : "/tmp";
+}
+
+static int test_temp_dir(char *out, size_t cap) {
+    snprintf(out, cap, "%s/sigil-test-XXXXXX", test_temp_root());
     return mkdtemp(out) ? 0 : -1;
 }
 
