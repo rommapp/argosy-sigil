@@ -97,7 +97,9 @@ target_include_directories(unit_jni_utf16 PRIVATE ${CMAKE_SOURCE_DIR}/bindings/a
 # static: a sanitized archive needs its runtime in the host process.
 if(NOT SIGIL_BUILD_SHARED AND NOT CMAKE_C_FLAGS MATCHES "-fsanitize")
     find_program(SIGIL_GO go)
-    if(SIGIL_GO)
+    # cgo links with gcc, which can't take MSVC's .lib archives; on Windows the
+    # Go binding needs sigil built with MinGW.
+    if(SIGIL_GO AND NOT MSVC)
         # -a: cgo doesn't track include/sigil.h, which sits outside the package,
         # so a cached build keeps the old struct layout after the header changes.
         add_test(NAME binding_go COMMAND ${SIGIL_GO} test -count=1 -a ./...

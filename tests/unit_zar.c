@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "sigil.h"
+#include "test_fs.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,7 +48,7 @@ static void build_xex(uint8_t *p) {
 int main(void) {
     char path[512];
     snprintf(path, sizeof(path), "%s/sigil_test.zar",
-             getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
+             test_temp_root());
 
     /* --- uncompressed content space -------------------------------------- */
     size_t raw_len = (size_t)TOTAL_BLOCKS * ZAR_BLOCK;

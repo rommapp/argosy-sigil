@@ -1,9 +1,11 @@
 # Go
 
 `import sigil "github.com/rommforge/argosy-sigil/bindings/go"` (cgo;
-`make build` compiles the static libs it links). Failures return a
-sentinel per C code (`sigil.ErrNotFound`, `sigil.ErrNeedsKey`,
-`sigil.ErrIO`, ...) for `errors.Is`.
+`make build` compiles the static libs it links). On Windows cgo links
+with MinGW gcc, so build sigil with MinGW too; it can't link the `.lib`
+archives MSVC makes. Failures return a sentinel per C code
+(`sigil.ErrNotFound`, `sigil.ErrNeedsKey`, `sigil.ErrIO`, ...) for
+`errors.Is`.
 
 ## 1. Identify the game
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "sigil.h"
+#include "test_fs.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -212,7 +213,7 @@ static int write_zip(const char *path, const uint8_t *data, size_t data_len,
 static int run_case(const char *label, int method, const uint8_t *img) {
     char path[512];
     snprintf(path, sizeof(path), "%s/sigil_zip_%d.zip",
-             getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp", method);
+             test_temp_root(), method);
 
     if (write_zip(path, img, IMAGE_BYTES, method) != 0) {
         fprintf(stderr, "FAIL %s: could not write fixture\n", label);
@@ -246,7 +247,7 @@ static int run_case(const char *label, int method, const uint8_t *img) {
 static int test_backward_seek(const uint8_t *img) {
     char path[512];
     snprintf(path, sizeof(path), "%s/sigil_zip_seek.zip",
-             getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
+             test_temp_root());
     if (write_zip(path, img, IMAGE_BYTES, 8) != 0) return 1;
 
     char inner[512];
@@ -286,7 +287,7 @@ static int test_backward_seek(const uint8_t *img) {
  * when the filename scanner is in the build. */
 static int test_vita_zip_still_resolves_by_name(const uint8_t *img) {
     char dir[400], path[512];
-    snprintf(dir, sizeof(dir), "%s", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
+    snprintf(dir, sizeof(dir), "%s", test_temp_root());
     snprintf(path, sizeof(path), "%s/Some Game [PCSE12345].zip", dir);
     if (write_zip_named(path, "app/eboot.bin", img, IMAGE_BYTES, 8) != 0) return 1;
 
@@ -323,7 +324,7 @@ static int test_vita_zip_still_resolves_by_name(const uint8_t *img) {
 static int test_member_by_suffix(void) {
     char path[512];
     snprintf(path, sizeof(path), "%s/sigil_zip_member.zip",
-             getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
+             test_temp_root());
 
     static const char payload[] = "small-metadata-file";
     if (write_zip_named(path, "app/PCSE00695/sce_sys/param.sfo",
@@ -366,7 +367,7 @@ static int test_member_by_suffix(void) {
 static int test_shallowest_match_wins(void) {
     char path[512];
     snprintf(path, sizeof(path), "%s/sigil_zip_depth.zip",
-             getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
+             test_temp_root());
 
     static const char deep[]    = "savedata-copy-no-title-id";
     static const char shallow[] = "the-real-app-metadata";
