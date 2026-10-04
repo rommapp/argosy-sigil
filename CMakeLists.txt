@@ -138,6 +138,7 @@ set(SIGIL_SOURCES
     src/zip_entries.c
     src/save_layout.c
     src/save_unit.c
+    src/save_profiles.c
     src/card.c
     src/card_ps1.c
     src/card_ps2.c
@@ -157,6 +158,7 @@ set(SIGIL_SOURCES
     src/sync_folder_cards.c
     src/sync_volumes.c
     src/sync_gci_folder.c
+    src/sync_profiles.c
     src/zip_mem.c
     src/save_names.c
 )
@@ -174,6 +176,10 @@ else()
     add_library(sigil STATIC ${SIGIL_SOURCES})
 endif()
 target_include_directories(sigil PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# Every source sees the MSVC shims for the POSIX names it uses, without each
+# file having to remember the include.
+target_compile_options(sigil PRIVATE
+    $<$<C_COMPILER_ID:MSVC>:/FI${CMAKE_CURRENT_SOURCE_DIR}/src/sigil_compat.h>)
 
 target_link_libraries(sigil PRIVATE sigil_chdr sigil_zlib sigil_zstd sigil_aes)
 
@@ -198,7 +204,7 @@ endif()
 set(SIGIL_FUZZ_ENGINE "mutate" CACHE STRING "libfuzzer or mutate")
 if(SIGIL_BUILD_FUZZERS)
     foreach(target fuzz_card fuzz_card_ps2 fuzz_card_gamecube fuzz_card_dreamcast
-                   fuzz_card_saturn fuzz_card_segacd fuzz_sync fuzz_sync_volumes)
+                   fuzz_card_saturn fuzz_card_segacd fuzz_sync fuzz_sync_volumes fuzz_sync_profiles)
         if(SIGIL_FUZZ_ENGINE STREQUAL "libfuzzer")
             add_executable(${target} fuzz/${target}.c)
             set(sanitizers -fsanitize=fuzzer,address,undefined)

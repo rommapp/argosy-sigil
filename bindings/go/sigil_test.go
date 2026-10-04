@@ -15,6 +15,41 @@ import (
 	"testing"
 )
 
+func TestListSaveRootFollowsLinks(t *testing.T) {
+	elsewhere := t.TempDir()
+	if err := os.WriteFile(filepath.Join(elsewhere, "mslug.fs"), []byte("fs"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(elsewhere, "game.srm"), []byte("srm"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deeper := t.TempDir()
+	if err := os.WriteFile(filepath.Join(deeper, "kof98.fs"), []byte("fs"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	links := map[string]string{
+		filepath.Join(root, "fbneo"):      elsewhere,
+		filepath.Join(root, "linked.srm"): filepath.Join(elsewhere, "game.srm"),
+		filepath.Join(root, "gone.srm"):   filepath.Join(elsewhere, "missing.srm"),
+		filepath.Join(elsewhere, "more"):  deeper,
+	}
+	for link, target := range links {
+		if err := os.Symlink(target, link); err != nil {
+			t.Skipf("no symlinks here: %v", err)
+		}
+	}
+	listed, err := ListSaveRoot(root, "fbneo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(listed)
+	want := []string{"fbneo/game.srm", "fbneo/more/kof98.fs", "fbneo/mslug.fs", "linked.srm"}
+	if !reflect.DeepEqual(listed, want) {
+		t.Errorf("listed = %v, want %v", listed, want)
+	}
+}
+
 func TestVersion(t *testing.T) {
 	if Version() == "" {
 		t.Fatal("Version() returned empty string")
@@ -325,6 +360,32 @@ func TestASaveNameWithRawBytesCanBeClaimed(t *testing.T) {
 	}
 }
 
+func TestASaveUnderAnotherModeIsReportedWithTheOptionsThatTakeIt(t *testing.T) {
+	volume, err := os.ReadFile(filepath.Join("..", "..", "tests", "fixtures", "saves", "saturn", "files", "hyper-duel-bkr", "Hyper Duel (Japan).bkr"))
+	if err != nil {
+		t.Skip("Saturn save samples missing")
+	}
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Hyper Duel (Japan).bkr"), volume, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	game := PersistedResult("saturn", "", "", 0)
+	want := []SaveAlternate{{Path: "Hyper Duel (Japan).bkr", Options: map[string]string{"beetle_saturn_save_method": "mednafen"}}}
+
+	modern, err := Collect(game, "mednafen_saturn", "Hyper Duel (Japan).cue", root, nil)
+	if err != nil || modern.Data != nil || !reflect.DeepEqual(modern.Alternates, want) {
+		t.Fatalf("modern collect = %+v, %v", modern, err)
+	}
+	located, err := LocateSaves(game, "mednafen_saturn", "Hyper Duel (Japan).cue", &LocateOptions{SaveRoot: root})
+	if err != nil || !reflect.DeepEqual(located.Alternates, want) {
+		t.Fatalf("locate = %+v, %v", located, err)
+	}
+	legacy, err := Collect(game, "mednafen_saturn", "Hyper Duel (Japan).cue", root, &SyncOptions{Options: modern.Alternates[0].Options})
+	if err != nil || legacy.Data == nil || len(legacy.Alternates) != 0 {
+		t.Fatalf("legacy collect = %+v, %v", legacy, err)
+	}
+}
+
 func TestGameCubeFolderRestoreRemovesSavesTheUnitLacks(t *testing.T) {
 	samples := filepath.Join("..", "..", "tests", "fixtures", "saves", "ngc", "files", "fzero-gx-dolphin-gci-set")
 	files, err := filepath.Glob(filepath.Join(samples, "*.gci"))
@@ -599,6 +660,21 @@ func TestPersistedResultCarriesWhatLocateNeeds(t *testing.T) {
 	}
 }
 
+func TestRawSerialNamesPcsxSerialCards(t *testing.T) {
+	mgs := PersistedResult("psx", "SLUS-00594", "SLUS-00594", 0)
+	mgs.RawSerial = "slus_005.94"
+	located, err := LocateSaves(mgs, "pcsx_rearmed", "Metal Gear Solid (USA) (Disc 1).cue", &LocateOptions{
+		Listing: []string{"slus-00594_1.mcd", "SLUS-00594_1.mcd"},
+		Options: map[string]string{"pcsx_rearmed_memcard1": "serial"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(located.Members) != 1 || located.Members[0].Path != "slus-00594_1.mcd" {
+		t.Errorf("members = %+v", located.Members)
+	}
+}
+
 func TestLocateReadsNoFilesAndHashFillsTheHashes(t *testing.T) {
 	root := t.TempDir()
 	srm := bytes.Repeat([]byte{1, 2, 3}, 64)
@@ -866,5 +942,146 @@ func TestSwitchWithKeys(t *testing.T) {
 	}
 	if seen == 0 {
 		t.Skip("no Switch .xci samples")
+	}
+}
+
+const (
+	edenUser    = "125D2DBAEBDEB11000296E1E1ECBF401"
+	citronUser  = "735DA01FA7EAE565C8FAA61E710195E5"
+	avatorsDir  = "nand/system/save/8000000000000010/su/avators"
+	switchSaves = "nand/user/save/0000000000000000"
+)
+
+var botw = PersistedResult("switch", "01007EF00011E000", "01007EF00011E000", 0)
+
+func switchSamples() string {
+	return filepath.Join("..", "..", "tests", "fixtures", "saves", "switch", "files")
+}
+
+// emulator lays out an emulator folder: the sample's profile list, and Breath
+// of the Wild under botwUser when it isn't "".
+func emulator(t *testing.T, base, profiles, botwUser string) {
+	t.Helper()
+	list, err := os.ReadFile(filepath.Join(switchSamples(), profiles, "profiles.dat"))
+	if err != nil {
+		t.Skip("Switch profile samples missing")
+	}
+	if os.MkdirAll(filepath.Join(base, avatorsDir), 0o755) != nil ||
+		os.WriteFile(filepath.Join(base, avatorsDir, "profiles.dat"), list, 0o644) != nil {
+		t.Fatal("setup failed")
+	}
+	if botwUser == "" {
+		return
+	}
+	source := filepath.Join(switchSamples(), "botw-eden")
+	err = filepath.WalkDir(source, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, _ := filepath.Rel(source, path)
+		target := filepath.Join(base, switchSaves, botwUser, rel)
+		data, err := os.ReadFile(path)
+		if err == nil {
+			err = os.MkdirAll(filepath.Dir(target), 0o755)
+		}
+		if err == nil {
+			err = os.WriteFile(target, data, 0o644)
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestARootAtAnyDepthCollectsTheSameSaveWithoutTheProfile(t *testing.T) {
+	top := t.TempDir()
+	files := filepath.Join(top, "Android", "data", "dev.eden.eden_emulator", "files")
+	emulator(t, files, "eden-profile", edenUser)
+
+	var results []*SyncResult
+	for _, root := range []string{files, top, filepath.Join(files, switchSaves, edenUser)} {
+		r, err := Collect(botw, "eden", "botw.nsp", root, nil)
+		if err != nil {
+			t.Fatalf("%s: %v", root, err)
+		}
+		results = append(results, r)
+	}
+	for _, r := range results {
+		if r.Profile != edenUser || r.IdentityHash != results[0].IdentityHash {
+			t.Fatalf("profile %q identity %s, want %s and %s", r.Profile, r.IdentityHash, edenUser, results[0].IdentityHash)
+		}
+	}
+	if !reflect.DeepEqual(results[0].Profiles, []Profile{{edenUser, "Eden"}}) || results[0].Artifact != "01007EF00011E000.zip" {
+		t.Fatalf("profiles %v artifact %s", results[0].Profiles, results[0].Artifact)
+	}
+	if base, profile, err := SaveBase("eden", filepath.Join(files, switchSaves, edenUser)); err != nil || base != files ||
+		profile != edenUser {
+		t.Fatalf("SaveBase = %q, %q, %v", base, profile, err)
+	}
+
+	located, err := LocateSaves(botw, "eden", "botw.nsp", &LocateOptions{SaveRoot: top})
+	if err != nil || located.Shape != SaveShapeFolder || located.ContentHash != results[0].ContentHash {
+		t.Fatalf("LocateSaves = %+v, %v", located, err)
+	}
+	for _, m := range located.Members {
+		if m.Area != SaveAreaAccount || !strings.HasPrefix(m.Entry, "01007EF00011E000/") {
+			t.Fatalf("member %+v", m)
+		}
+	}
+}
+
+func TestRestorePutsTheSaveUnderTheTargetsProfile(t *testing.T) {
+	eden, citron := t.TempDir(), t.TempDir()
+	emulator(t, eden, "eden-profile", edenUser)
+	emulator(t, citron, "citron-profile", "")
+	unit, err := Collect(botw, "eden", "botw.nsp", eden, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	written, err := Restore(unit.Data, botw, "citron", "botw.nsp", citron, nil)
+	if err != nil || written.Profile != citronUser {
+		t.Fatalf("Restore = %+v, %v", written, err)
+	}
+	want, _ := os.ReadFile(filepath.Join(eden, switchSaves, edenUser, "01007EF00011E000", "option.sav"))
+	got, err := os.ReadFile(filepath.Join(citron, switchSaves, citronUser, "01007EF00011E000", "option.sav"))
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("option.sav not under the target's profile: %v", err)
+	}
+}
+
+func TestTwoProfilesAndNonePickedIsAmbiguousListingThem(t *testing.T) {
+	root := t.TempDir()
+	emulator(t, root, "eden-profile", edenUser)
+	data, _ := os.ReadFile(filepath.Join(root, avatorsDir, "profiles.dat"))
+	citron, err := os.ReadFile(filepath.Join(switchSamples(), "citron-profile", "profiles.dat"))
+	if err != nil {
+		t.Skip("Switch profile samples missing")
+	}
+	copy(data[0x10+0xC8:0x10+2*0xC8], citron[0x10:0x10+0xC8])
+	if os.WriteFile(filepath.Join(root, avatorsDir, "profiles.dat"), data, 0o644) != nil {
+		t.Fatal("setup failed")
+	}
+
+	_, err = Collect(botw, "eden", "botw.nsp", root, nil)
+	var problem *ProblemError
+	if !errors.Is(err, ErrAmbiguous) || !errors.As(err, &problem) ||
+		problem.Problem != edenUser+" Eden\n"+citronUser+" citron" || len(problem.Profiles) != 2 {
+		t.Fatalf("err = %v", err)
+	}
+	picked, err := Collect(botw, "eden", "botw.nsp", root, &SyncOptions{Profile: strings.ToLower(edenUser)})
+	if err != nil || picked.Profile != edenUser {
+		t.Fatalf("picked = %+v, %v", picked, err)
+	}
+	inside, err := Collect(botw, "eden", "botw.nsp", filepath.Join(root, switchSaves, edenUser), nil)
+	if err != nil || inside.Profile != edenUser || inside.IdentityHash != picked.IdentityHash {
+		t.Fatalf("inside = %+v, %v", inside, err)
+	}
+	listed, err := ListProfiles("eden", root)
+	if err != nil || !reflect.DeepEqual(listed, []Profile{{edenUser, "Eden"}, {citronUser, "citron"}}) {
+		t.Fatalf("ListProfiles = %v, %v", listed, err)
+	}
+	if _, err := ListProfiles("pcsx_rearmed", root); !errors.Is(err, ErrUnsupportedFormat) {
+		t.Fatalf("ListProfiles without profiles = %v", err)
 	}
 }

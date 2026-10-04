@@ -27,6 +27,7 @@ typedef struct {
     int         corrupt_write;   /* the write (1-based) stored with one byte flipped; 0 for none */
     size_t      corrupt_at;      /* the byte it flips; 0 for the last */
     char        first_write[SIGIL_SAVE_PATH_MAX];   /* the path the first write went to */
+    char        unreadable[SIGIL_SAVE_PATH_MAX];    /* a listed path open refuses, as a client's can */
     const char *listing[MEM_ROOT_FILES];
 } mem_root;
 
@@ -86,7 +87,9 @@ static sigil_io *mem_root_io(const uint8_t *data, size_t len) {
 }
 
 static sigil_io *root_open(void *ctx, const char *path) {
-    mem_file *f = root_find((mem_root *)ctx, path);
+    mem_root *r = (mem_root *)ctx;
+    if (r->unreadable[0] && strcmp(r->unreadable, path) == 0) return NULL;
+    mem_file *f = root_find(r, path);
     return f ? mem_root_io(f->data, f->len) : NULL;
 }
 

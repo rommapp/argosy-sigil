@@ -57,9 +57,10 @@ data class SigilResult(
         /**
          * A result rebuilt from stored columns, or built for a platform that has no title id.
          * [platformSlug] selects the save layout; the rest is what [Sigil.extract] returned.
+         * [rawSerial] names pcsx_rearmed's per-disc cards, which follow the boot file as written.
          */
-        fun persisted(platformSlug: String, titleId: String, saveId: String, features: Int) =
-            SigilResult(titleId, "", saveId, platformSlug, Source.Binary.code, Usage.FolderExact.code, false, features)
+        fun persisted(platformSlug: String, titleId: String, saveId: String, features: Int, rawSerial: String = "") =
+            SigilResult(titleId, rawSerial, saveId, platformSlug, Source.Binary.code, Usage.FolderExact.code, false, features)
     }
 }
 
@@ -69,12 +70,19 @@ data class SigilResult(
  * that didn't fit ([NO_SPACE], with [blocksShort] the blocks it lacked, 0 when the free blocks
  * were there but a directory slot or a Dreamcast game file's starting blocks weren't), the
  * companion's save from another region ([REGION]), the damaged file ([DAMAGED]), the unit member
- * the emulator's settings keep no file for ([NO_TARGET]), the files that could each be the
- * emulator's card, one per line ([AMBIGUOUS]), or the save Dolphin's GCI folder has no free name
- * for ([EXISTS]). Each line is escaped as [SigilCardEntry.name] is.
+ * with no file to go in ([NO_TARGET]), the files that could each be the emulator's card or the
+ * profiles that could each take the saves, one per line ([AMBIGUOUS]), or the save Dolphin's GCI
+ * folder has no free name for ([EXISTS]). Each line is escaped as [SigilCardEntry.name] is.
+ * [profiles] lists every profile the emulator lists, on a layout with profiles: when you don't
+ * know which one the user plays as, ask them from it (or [Sigil.listProfiles]) and pass `profile`.
  */
-class SigilException(val code: Int, message: String, val problem: String = "", val blocksShort: Int = 0) :
-    Exception(message) {
+class SigilException(
+    val code: Int,
+    message: String,
+    val problem: String = "",
+    val blocksShort: Int = 0,
+    val profiles: List<SigilProfile> = emptyList()
+) : Exception(message) {
     companion object {
         const val INVALID_ARG = -1
         const val IO = -2
@@ -96,23 +104,34 @@ class SigilException(val code: Int, message: String, val problem: String = "", v
         const val DAMAGED = -13
         /** A companion's save belongs to another region than the game; restore wrote nothing. */
         const val REGION = -14
-        /** The unit holds a volume the emulator's settings keep no file for; restore wrote nothing. */
+        /**
+         * The unit holds a volume or member with no file to go in: the emulator's settings keep
+         * none, no profile is there for an account save, or the folder lies outside the save root.
+         */
         const val NO_TARGET = -15
-        /** More than one file could be the emulator's card and the options don't say which. */
+        /**
+         * More than one file could be the emulator's card, more than one profile and none picked,
+         * or more than one emulator folder under the save root.
+         */
         const val AMBIGUOUS = -16
         /** The key file doesn't open this content: it lacks the key for its generation, or its header key is wrong. */
         const val KEYS_INCOMPATIBLE = -17
     }
 }
 
-/** One file of a save unit. [path] is relative to the save root; [entry] is its archive name. */
+/**
+ * One file of a save unit. [path] is relative to the save root; [entry] is its archive name.
+ * [area] says whose it is on an emulator that keeps saves per user profile.
+ */
 data class SigilSaveMember(
     val path: String,
     val entry: String,
     private val roleCode: Int,
-    val present: Boolean
+    val present: Boolean,
+    private val areaCode: Int = 0
 ) {
     val role: Role get() = Role.fromCode(roleCode)
+    val area: Area get() = Area.fromCode(areaCode)
 
     enum class Role(val code: Int) {
         Primary(0),
@@ -122,6 +141,32 @@ data class SigilSaveMember(
             fun fromCode(c: Int): Role = values().firstOrNull { it.code == c } ?: Sidecar
         }
     }
+
+    enum class Area(val code: Int) {
+        None(0),
+        Account(1),
+        Device(2);
+        companion object {
+            fun fromCode(c: Int): Area = values().firstOrNull { it.code == c } ?: None
+        }
+    }
+}
+
+/** A user profile the emulator lists. [id] is how its save folder is named. */
+data class SigilProfile(val id: String, val name: String)
+
+/**
+ * A file under the save root the layout would take with other option values: a save kept under
+ * another mode or by an older build of the core. Passing [options] takes it. [shared] marks a
+ * file every game shares, as in [SigilSaveUnit.unkeyed].
+ */
+data class SigilSaveAlternate(
+    val path: String,
+    val shared: Boolean,
+    private val optionKeys: List<String>,
+    private val optionValues: List<String>
+) {
+    val options: Map<String, String> get() = optionKeys.zip(optionValues).toMap()
 }
 
 /**
@@ -136,7 +181,8 @@ data class SigilSaveUnit(
     val unkeyed: List<String>,
     val artifact: String,
     val contentHash: String,
-    val identityHash: String
+    val identityHash: String,
+    val alternates: List<SigilSaveAlternate> = emptyList()
 ) {
     val shape: Shape get() = Shape.fromCode(shapeCode)
 
@@ -197,12 +243,14 @@ data class SigilCardListing(
  * What [Sigil.collect] or [Sigil.restore] produced. Store [state] and pass it to the next call
  * for this game.
  *
- * [holding] is, for Saturn and Sega CD, a zip of the saves on a shared volume with no known
+ * [holding] is, for Saturn, Sega CD and Dreamcast, a zip of the saves on a shared volume with no known
  * owner, and [unowned] their names, with bytes outside printable ASCII, and '%', written as
  * %XX. Pass a name back in `claimed` as it is.
  * [restoreAgain] is true in unmanaged mode when the saves the last restore wrote were
  * overwritten: restore again instead of uploading.
  * [companions] has one entry per request companion, in request order.
+ * [profiles] lists every profile the emulator lists on a layout with profiles, and [profile] is
+ * the one whose saves were taken or written.
  */
 class SigilSyncResult(
     val artifact: String,
@@ -211,12 +259,14 @@ class SigilSyncResult(
     val contentHash: String,
     val identityHash: String,
     val changed: Boolean,
-    val conflict: Boolean,
     val state: ByteArray,
     val holding: ByteArray?,
     val unowned: List<String>,
     val restoreAgain: Boolean,
-    val companions: List<SigilCompanionResult>
+    val companions: List<SigilCompanionResult>,
+    val profiles: List<SigilProfile>,
+    val profile: String,
+    val alternates: List<SigilSaveAlternate>
 ) {
     val shape: SigilSaveUnit.Shape get() = SigilSaveUnit.Shape.fromCode(shapeCode)
 }
@@ -266,11 +316,14 @@ object Sigil {
         platformSlug: String?,
         contentPath: String,
         titleId: String?,
+        rawSerial: String?,
         saveId: String?,
         features: Int,
         optionKeys: Array<String>,
         optionValues: Array<String>,
-        listing: Array<String>
+        listing: Array<String>,
+        rootPath: String?,
+        profile: String?
     ): SigilSaveUnit
 
     @JvmStatic private external fun nativeHashSaves(
@@ -291,6 +344,7 @@ object Sigil {
         platformSlug: String?,
         contentPath: String,
         titleId: String?,
+        rawSerial: String?,
         saveId: String?,
         features: Int,
         optionKeys: Array<String>,
@@ -303,9 +357,17 @@ object Sigil {
         claimed: Array<String>,
         companionIds: Array<Array<String>>,
         companionUnits: Array<ByteArray?>,
-        repair: Boolean
+        repair: Boolean,
+        profile: String?
     ): SigilSyncResult
     @JvmStatic private external fun nativeLayoutSubdirs(layout: String): Array<String>
+    @JvmStatic private external fun nativeSaveBase(layout: String, path: String): Array<String>
+    @JvmStatic private external fun nativeLayoutTop(layout: String): String?
+    @JvmStatic private external fun nativeListProfiles(
+        layout: String,
+        rootPath: String,
+        listing: Array<String>
+    ): List<SigilProfile>
     @JvmStatic private external fun nativeContentStem(contentPath: String): String
     @JvmStatic private external fun nativePlatformSlug(slug: String?): String
     @JvmStatic private external fun nativeLoadHeaderKey(prodKeysPath: String): ByteArray
@@ -315,7 +377,7 @@ object Sigil {
     /** The canonical slug for [slug], or `auto` when sigil does not know it. */
     fun platformSlug(slug: String?): String = nativePlatformSlug(slug)
 
-    /** The base name RetroArch names save files after; see README, "Save units". */
+    /** The base name RetroArch names save files after; see docs/save-units.md, "Stem". */
     fun contentStem(contentPath: String): String = nativeContentStem(contentPath)
 
     /** The 32-byte Switch header key read from a prod.keys file. */
@@ -356,8 +418,9 @@ object Sigil {
     }
 
     /**
-     * The files under a save root that belong to [game] when [core] runs [contentPath]. Names
-     * only, no file is read; docs/kotlin.md defines every input.
+     * The files under a save root that belong to [game] when [core] runs [contentPath]. No save
+     * is read; on a layout with profiles the emulator's profile list is, when [saveRoot] is
+     * given, and the hashes are filled. docs/kotlin.md defines every input.
      */
     fun locateSaves(
         game: SigilResult,
@@ -365,20 +428,51 @@ object Sigil {
         contentPath: String,
         saveRoot: String? = null,
         listing: List<String>? = null,
-        options: Map<String, String> = emptyMap()
+        options: Map<String, String> = emptyMap(),
+        profile: String? = null
     ): SigilSaveUnit {
-        val paths = listing ?: saveRoot?.let { listSaveRoot(java.io.File(it), core) } ?: emptyList()
+        val root = saveRoot?.let { rooted(core, it, profile) }
+        val paths = listing ?: root?.let { listSaveRoot(java.io.File(it.first), core) } ?: emptyList()
         return nativeLocateSaves(
             core,
             game.platformSlug,
             contentPath,
             game.titleId.ifEmpty { null },
+            game.rawSerial.ifEmpty { null },
             game.saveId.ifEmpty { null },
             game.features,
             options.keys.toTypedArray(),
             options.values.toTypedArray(),
-            paths.toTypedArray()
+            paths.toTypedArray(),
+            root?.first,
+            root?.second ?: profile
         )
+    }
+
+    /**
+     * On a layout with profiles, the emulator's base folder for [path] and the profile folder
+     * [path] lies in ("" for none); collect and restore re-root there themselves. On other
+     * layouts, [path] itself and "".
+     */
+    fun saveBase(layout: String, path: String): Pair<String, String> {
+        val out = nativeSaveBase(layout, path)
+        return out[0] to out[1]
+    }
+
+    /**
+     * The profiles the emulator lists around [saveRoot], for asking the user which one they play
+     * as when collect or restore raised [SigilException.AMBIGUOUS]. Raises [SigilException] with
+     * [SigilException.UNSUPPORTED_FORMAT] for a core whose saves aren't kept per profile.
+     */
+    fun listProfiles(core: String, saveRoot: String): List<SigilProfile> {
+        val (root, _) = rooted(core, saveRoot, null)
+        return nativeListProfiles(core, root, listSaveRoot(java.io.File(root), core).toTypedArray())
+    }
+
+    /** The folder to list and write under for [saveRoot], and the profile: one given wins. */
+    private fun rooted(core: String, saveRoot: String, profile: String?): Pair<String, String?> {
+        val (base, implied) = saveBase(core, saveRoot)
+        return base to (profile?.ifEmpty { null } ?: implied.ifEmpty { null })
     }
 
     /** [saves] with [SigilSaveUnit.contentHash] and [SigilSaveUnit.identityHash] computed from the files under [saveRoot]. */
@@ -413,10 +507,11 @@ object Sigil {
         unmanaged: Boolean = false,
         claimed: List<String> = emptyList(),
         companions: List<SigilCompanion> = emptyList(),
-        repair: Boolean = false
+        repair: Boolean = false,
+        profile: String? = null
     ): SigilSyncResult =
         sync(null, game, core, contentPath, saveRoot, listing, options, gameIds, state, unmanaged, false, claimed,
-            companions, repair)
+            companions, repair, profile)
 
     /**
      * Puts [unit], and each companion's unit given, back under [saveRoot] and reads them back.
@@ -425,8 +520,9 @@ object Sigil {
      * [SigilException.UNCOLLECTED] when a shared Saturn or Sega CD volume holds saves no collect
      * has passed on yet; [SigilException.NO_SPACE] when the saves don't fit;
      * [SigilException.REGION] for a companion's save from another region;
-     * [SigilException.NO_TARGET] when the unit holds a volume the emulator's settings keep no
-     * file for; [SigilException.AMBIGUOUS] when more than one file could be the emulator's card;
+     * [SigilException.NO_TARGET] when the unit holds a volume or member with no file to go in;
+     * [SigilException.AMBIGUOUS] when more than one file could be the emulator's card, or more
+     * than one profile could take the saves;
      * and [SigilException.DAMAGED] when a file the saves go in is damaged and [repair]
      * is false, isn't a card sigil can read at all, or holds a corrupt save of the game or a
      * companion (repair changes neither of the last two); [SigilException.EXISTS] when Dolphin's
@@ -447,10 +543,11 @@ object Sigil {
         overwriteLocal: Boolean = false,
         claimed: List<String> = emptyList(),
         companions: List<SigilCompanion> = emptyList(),
-        repair: Boolean = false
+        repair: Boolean = false,
+        profile: String? = null
     ): SigilSyncResult =
         sync(unit, game, core, contentPath, saveRoot, listing, options, gameIds, state, unmanaged, overwriteLocal,
-            claimed, companions, repair)
+            claimed, companions, repair, profile)
 
     private fun sync(
         unit: ByteArray?,
@@ -466,16 +563,19 @@ object Sigil {
         overwriteLocal: Boolean,
         claimed: List<String>,
         companions: List<SigilCompanion>,
-        repair: Boolean
+        repair: Boolean,
+        profile: String?
     ): SigilSyncResult {
-        val paths = listing ?: listSaveRoot(java.io.File(saveRoot), core)
+        val (root, picked) = rooted(core, saveRoot, profile)
+        val paths = listing ?: listSaveRoot(java.io.File(root), core)
         return nativeSync(
             unit,
-            saveRoot,
+            root,
             core,
             game.platformSlug,
             contentPath,
             game.titleId.ifEmpty { null },
+            game.rawSerial.ifEmpty { null },
             game.saveId.ifEmpty { null },
             game.features,
             options.keys.toTypedArray(),
@@ -488,7 +588,8 @@ object Sigil {
             claimed.toTypedArray(),
             companions.map { it.gameIds.toTypedArray() }.toTypedArray(),
             companions.map { it.unit }.toTypedArray(),
-            repair
+            repair,
+            picked
         )
     }
 
@@ -500,15 +601,42 @@ object Sigil {
 
     /**
      * Root-relative paths of the files directly in [root] plus those under the layout's
-     * subfolders, the listing [locateSaves] expects.
+     * subfolders, the listing [locateSaves] expects. On a layout with profiles whose base sits
+     * below [root], the subfolders under each such base.
      */
     fun listSaveRoot(root: java.io.File, layout: String): List<String> {
         val out = ArrayList<String>()
         root.listFiles()?.forEach { if (it.isFile) out.add(it.name) }
-        layoutSubdirs(layout).forEach { subdir ->
-            listRecursive(java.io.File(root, subdir), subdir, SUBDIR_LIST_DEPTH, out)
+        val top = nativeLayoutTop(layout)
+        val bases = if (top != null && !java.io.File(root, top).isDirectory) {
+            basesBelow(root, top).ifEmpty { listOf("") }
+        } else {
+            listOf("")
+        }
+        for (base in bases) {
+            layoutSubdirs(layout).forEach { subdir ->
+                val relative = if (base.isEmpty()) subdir else "$base/$subdir"
+                listRecursive(java.io.File(root, relative), relative, SUBDIR_LIST_DEPTH, out)
+            }
         }
         return out
+    }
+
+    /** Root-relative folders under [root] that hold the layout's [top] folder. */
+    private fun basesBelow(root: java.io.File, top: String): List<String> {
+        val found = ArrayList<String>()
+        fun walk(dir: java.io.File, relative: String, depth: Int) {
+            if (depth == 0) return
+            dir.listFiles()?.filter { it.isDirectory }?.forEach { child ->
+                if (child.name == top) {
+                    if (relative.isNotEmpty()) found.add(relative)
+                } else {
+                    walk(child, if (relative.isEmpty()) child.name else "$relative/${child.name}", depth - 1)
+                }
+            }
+        }
+        walk(root, "", BASE_SEARCH_DEPTH)
+        return found
     }
 
     private fun listRecursive(dir: java.io.File, relative: String, depth: Int, out: MutableList<String>) {
@@ -520,5 +648,6 @@ object Sigil {
         }
     }
 
-    private const val SUBDIR_LIST_DEPTH = 4
+    private const val SUBDIR_LIST_DEPTH = 12
+    private const val BASE_SEARCH_DEPTH = 5
 }

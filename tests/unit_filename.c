@@ -56,6 +56,25 @@ int main(void) {
                "SLES-50760", "BESLES-50760", SIGIL_USAGE_FOLDER_PREFIX, "ps2 pal")) {
         return 1;
     }
+    /* A Switch update or DLC named by its own id saves under its game's:
+     * an update's id is the game's with 0x800 set, a DLC's the game's plus
+     * 0x1000 and an index. */
+    if (expect("Mario Kart 8 Deluxe [0100152000023001][v65536][DLC].nsp", SIGIL_PLATFORM_SWITCH,
+               "0100152000022000", "0100152000022000", SIGIL_USAGE_FOLDER_EXACT, "switch dlc")) {
+        return 1;
+    }
+    if (expect("Mario Kart 8 Deluxe [0100152000022800][v1179648][UPD].nsp", SIGIL_PLATFORM_SWITCH,
+               "0100152000022000", "0100152000022000", SIGIL_USAGE_FOLDER_EXACT, "switch update")) {
+        return 1;
+    }
+    if (expect("Mario Kart 8 Deluxe [0100152000022000][v0].nsp", SIGIL_PLATFORM_AUTO,
+               "0100152000022000", "0100152000022000", SIGIL_USAGE_FOLDER_EXACT, "switch base")) {
+        return 1;
+    }
+    if (expect("Mario Kart 8 Deluxe [0100152000023001].nsp", SIGIL_PLATFORM_AUTO,
+               "0100152000022000", "0100152000022000", SIGIL_USAGE_FOLDER_EXACT, "switch dlc without a hint")) {
+        return 1;
+    }
     printf("ok unit_filename\n");
     return 0;
 }

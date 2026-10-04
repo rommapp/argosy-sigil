@@ -2,6 +2,7 @@
 """Tests for the Python binding. Requires the compiled extension (make build)."""
 
 import hashlib
+import os
 import struct
 from pathlib import Path
 
@@ -247,6 +248,25 @@ def test_a_save_name_with_raw_bytes_can_be_claimed(tmp_path):
     assert tuple(e.name for e in sigil.list_card(unit).entries) == held.unowned
 
 
+@pytest.mark.skipif(not _HYPER_DUEL.exists(), reason="Saturn save samples missing")
+def test_a_save_under_another_mode_is_reported_with_the_options_that_take_it(tmp_path):
+    (tmp_path / "Hyper Duel (Japan).bkr").write_bytes(_HYPER_DUEL.read_bytes())
+    game = sigil.SigilResult.persisted("saturn", "", "", 0)
+
+    modern = sigil.collect(game, "mednafen_saturn", "Hyper Duel (Japan).cue", tmp_path)
+    assert modern.data is None
+    assert modern.alternates == (
+        sigil.SigilSaveAlternate("Hyper Duel (Japan).bkr", False, {"beetle_saturn_save_method": "mednafen"}),
+    )
+    located = sigil.locate_saves(game, "mednafen_saturn", "Hyper Duel (Japan).cue", save_root=tmp_path)
+    assert located.alternates == modern.alternates
+
+    legacy = sigil.collect(game, "mednafen_saturn", "Hyper Duel (Japan).cue", tmp_path,
+                           options=dict(modern.alternates[0].options))
+    assert legacy.data is not None
+    assert legacy.alternates == ()
+
+
 _FZERO_DIR = Path(__file__).resolve().parents[2] / "tests/fixtures/saves/ngc/files/fzero-gx-dolphin-gci-set"
 _FZERO = sigil.SigilResult.persisted("gamecube", "47465A45", "GFZE", 0)
 
@@ -395,11 +415,30 @@ GB = sigil.SigilResult.persisted("gb", "", "", 0)
 GB_RTC = sigil.SigilResult.persisted("gbc", "", "", sigil.FEATURE_RTC)
 
 
+def test_names_that_are_not_utf8_pass_through_unchanged():
+    # os.scandir hands a name holding byte 0xFF back with a surrogate in its place.
+    odd = "G\udcff"
+    located = sigil.locate_saves(GB, "gambatte", f"{odd}.gb", listing=["stray\udcfe.bin", f"{odd}.srm"])
+    assert [m.path for m in located.members] == [f"{odd}.srm"]
+    assert located.key == odd
+    assert located.artifact == f"{odd}.srm"
+    assert os.fsencode(located.members[0].path) == b"G\xff.srm"
+    assert sigil.content_stem(f"roms/{odd}.gb") == odd
+
+
 def test_persisted_result_carries_what_locate_needs():
     stored = sigil.SigilResult.persisted("psp", title_id="ULUS10064", save_id="ULUS10064", features=0)
     assert (stored.platform, stored.title_id, stored.save_id) == ("psp", "ULUS10064", "ULUS10064")
     assert stored.has_rtc is False
     assert GB_RTC.has_rtc is True
+
+
+def test_raw_serial_names_pcsx_serial_cards():
+    mgs = sigil.SigilResult.persisted("psx", "SLUS-00594", "SLUS-00594", 0, raw_serial="slus_005.94")
+    located = sigil.locate_saves(mgs, "pcsx_rearmed", "Metal Gear Solid (USA) (Disc 1).cue",
+                                 listing=["slus-00594_1.mcd", "SLUS-00594_1.mcd"],
+                                 options={"pcsx_rearmed_memcard1": "serial"})
+    assert [m.path for m in located.members] == ["slus-00594_1.mcd"]
 
 
 def test_locate_reads_no_files_and_hash_fills_the_hashes(tmp_path):
@@ -494,3 +533,89 @@ def test_folder_layout_lists_and_hashes_the_subfolder(tmp_path):
     assert saves.content_hash == _romm_zip_hash(
         {"ULUS10064DATA00/DATA.BIN": b"data", "ULUS10064DATA00/PARAM.SFO": b"sfo"}
     )
+
+
+_SWITCH_DIR = Path(__file__).resolve().parents[2] / "tests/fixtures/saves/switch/files"
+_BOTW = sigil.SigilResult.persisted("switch", "01007EF00011E000", "01007EF00011E000", 0)
+_EDEN_USER = "125D2DBAEBDEB11000296E1E1ECBF401"
+_CITRON_USER = "735DA01FA7EAE565C8FAA61E710195E5"
+_AVATORS = "nand/system/save/8000000000000010/su/avators"
+_SAVES = "nand/user/save/0000000000000000"
+
+
+def _emulator(base: Path, profiles: str, botw_user: str | None) -> None:
+    """An emulator folder: the fixture's profile list, and Breath of the Wild under `botw_user`."""
+    (base / _AVATORS).mkdir(parents=True)
+    (base / _AVATORS / "profiles.dat").write_bytes((_SWITCH_DIR / profiles / "profiles.dat").read_bytes())
+    if botw_user:
+        source = _SWITCH_DIR / "botw-eden"
+        for path in source.rglob("*"):
+            if path.is_file():
+                target = base / _SAVES / botw_user / path.relative_to(source)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(path.read_bytes())
+
+
+@pytest.mark.skipif(not (_SWITCH_DIR / "eden-profile").exists(), reason="Switch profile samples missing")
+def test_a_root_at_any_depth_collects_the_same_save_without_the_profile(tmp_path):
+    files = tmp_path / "Android/data/dev.eden.eden_emulator/files"
+    _emulator(files, "eden-profile", _EDEN_USER)
+
+    at_base = sigil.collect(_BOTW, "eden", "botw.nsp", files)
+    above = sigil.collect(_BOTW, "eden", "botw.nsp", tmp_path)
+    inside = sigil.collect(_BOTW, "eden", "botw.nsp", files / _SAVES / _EDEN_USER)
+
+    assert at_base.profile == above.profile == inside.profile == _EDEN_USER
+    assert at_base.profiles == (sigil.SigilProfile(_EDEN_USER, "Eden"),)
+    assert at_base.identity_hash == above.identity_hash == inside.identity_hash
+    assert at_base.artifact == "01007EF00011E000.zip"
+    assert sigil.save_base("eden", files / _SAVES / _EDEN_USER) == (str(files), _EDEN_USER)
+
+    located = sigil.locate_saves(_BOTW, "eden", "botw.nsp", save_root=tmp_path)
+    assert located.shape == "folder"
+    assert {m.area for m in located.members} == {"account"}
+    assert all(m.entry.startswith("01007EF00011E000/") for m in located.members)
+    assert located.content_hash == at_base.content_hash
+
+
+@pytest.mark.skipif(not (_SWITCH_DIR / "citron-profile").exists(), reason="Switch profile samples missing")
+def test_restore_puts_the_save_under_the_targets_profile(tmp_path):
+    eden, citron = tmp_path / "eden", tmp_path / "citron"
+    _emulator(eden, "eden-profile", _EDEN_USER)
+    _emulator(citron, "citron-profile", None)
+    unit = sigil.collect(_BOTW, "eden", "botw.nsp", eden)
+
+    written = sigil.restore(unit.data, _BOTW, "citron", "botw.nsp", citron)
+
+    assert written.profile == _CITRON_USER
+    option = Path(_SAVES) / "01007EF00011E000/option.sav"
+    assert (citron / _SAVES / _CITRON_USER / "01007EF00011E000/option.sav").read_bytes() == (
+        eden / _SAVES / _EDEN_USER / "01007EF00011E000/option.sav"
+    ).read_bytes()
+    assert not (citron / option).exists()
+
+
+@pytest.mark.skipif(not (_SWITCH_DIR / "citron-profile").exists(), reason="Switch profile samples missing")
+def test_two_profiles_and_none_picked_is_ambiguous_listing_them(tmp_path):
+    _emulator(tmp_path, "eden-profile", _EDEN_USER)
+    data = bytearray((tmp_path / _AVATORS / "profiles.dat").read_bytes())
+    citron = (_SWITCH_DIR / "citron-profile/profiles.dat").read_bytes()
+    data[0x10 + 0xC8 : 0x10 + 2 * 0xC8] = citron[0x10 : 0x10 + 0xC8]
+    (tmp_path / _AVATORS / "profiles.dat").write_bytes(bytes(data))
+
+    with pytest.raises(sigil.SigilAmbiguousError) as excinfo:
+        sigil.collect(_BOTW, "eden", "botw.nsp", tmp_path)
+    assert excinfo.value.problem.splitlines() == [f"{_EDEN_USER} Eden", f"{_CITRON_USER} citron"]
+    assert [p.id for p in excinfo.value.profiles] == [_EDEN_USER, _CITRON_USER]
+
+    picked = sigil.collect(_BOTW, "eden", "botw.nsp", tmp_path, profile=_EDEN_USER.lower())
+    assert picked.profile == _EDEN_USER
+    inside = sigil.collect(_BOTW, "eden", "botw.nsp", tmp_path / _SAVES / _EDEN_USER)
+    assert inside.profile == _EDEN_USER
+    assert inside.identity_hash == picked.identity_hash
+    assert sigil.list_profiles("eden", tmp_path) == (
+        sigil.SigilProfile(_EDEN_USER, "Eden"),
+        sigil.SigilProfile(_CITRON_USER, "citron"),
+    )
+    with pytest.raises(sigil.SigilUnsupportedFormatError):
+        sigil.list_profiles("pcsx_rearmed", tmp_path)

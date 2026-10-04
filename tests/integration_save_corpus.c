@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "save_corpus.h"
 #include "sigil_internal.h"
-#include <dirent.h>
+#include "test_fs.h"
 #include <stdbool.h>
-#include <sys/stat.h>
 
 #define TEST_SKIP 77
 
@@ -184,22 +183,17 @@ static void check_platform(const char *platform) {
     corpus_free(&manifest);
 }
 
+static bool check_platform_entry(void *ctx, const char *name, bool is_dir) {
+    (void)ctx;
+    if (name[0] != '.' && is_dir) check_platform(name);
+    return true;
+}
+
 int main(void) {
-    DIR *dp = opendir(SIGIL_SAVE_FIXTURES);
-    if (!dp) {
+    if (test_dir_each(SIGIL_SAVE_FIXTURES, check_platform_entry, NULL) != 0) {
         fprintf(stderr, "SKIP: no %s\n", SIGIL_SAVE_FIXTURES);
         return TEST_SKIP;
     }
-    struct dirent *e;
-    while ((e = readdir(dp)) != NULL) {
-        if (e->d_name[0] == '.') continue;
-        char dir[1024];
-        struct stat sb;
-        snprintf(dir, sizeof(dir), "%s/%s", SIGIL_SAVE_FIXTURES, e->d_name);
-        if (stat(dir, &sb) != 0 || !S_ISDIR(sb.st_mode)) continue;
-        check_platform(e->d_name);
-    }
-    closedir(dp);
 
     printf("save corpus: %d present, %d missing, %d failures\n", g_present, g_missing, g_fails);
     if (g_fails) return 1;

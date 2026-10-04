@@ -33,7 +33,7 @@ typedef enum {
     SIGIL_FORM_VMP           /* a PS1 card signed as the PSP and Vita keep one */
 } sigil_volume_form;
 
-/* Template variables and option semantics: README, "Save units". */
+/* Template variables and option semantics: docs/save-units.md, "Layout rows". */
 typedef struct {
     const char *template_;
     int         role;        /* sigil_save_role */
@@ -63,6 +63,41 @@ typedef struct {
     uint32_t    new_size;    /* collapsed bytes of a file the core creates; 0 for the format's default */
 } sigil_layout_shared;
 
+/* How an emulator lists its user profiles. */
+typedef enum {
+    SIGIL_PROFILES_YUZU = 1,   /* profiles.dat: 0x10-byte header, then 0xC8-byte entries, UUID at +0 and
+                                  nickname at +0x28; the save folder is the UUID's bytes reversed, in hex */
+    SIGIL_PROFILES_CEMU,       /* act/<id>/account.dat: PersistentId= and MiiName= (UTF-16BE in hex) lines */
+    SIGIL_PROFILES_VITA3K,     /* user/<id>/user.xml: the name attribute of <user> */
+    SIGIL_PROFILES_RPCS3       /* home/<id>/localusername: the name alone */
+} sigil_profiles_format;
+
+/* One folder of a game's saves on a layout with profiles. Templates are
+ * relative to the emulator's base folder and end in '/'; {profile} and
+ * {save_id} each stand for one whole path segment. */
+typedef struct {
+    const char *template_;   /* the folder on disk */
+    const char *entry;       /* the same folder in the unit */
+    int         area;        /* sigil_save_area */
+    bool        rebuilt;     /* the emulator writes it again by itself: restore skips it when it is out of
+                                the root's reach instead of refusing */
+    const char *legacy;      /* an older unit's name for the folder, {profile} standing for any id, or NULL */
+} sigil_layout_area;
+
+/* A layout whose saves are folders kept per user profile. */
+typedef struct {
+    const char              *top;           /* the folder of the emulator's base every template starts in */
+    int                      format;        /* sigil_profiles_format */
+    const char              *list;          /* the profile list file, or the template naming one file per
+                                               profile, relative to the base */
+    const sigil_layout_area *areas;
+    size_t                   area_count;
+    const char *const       *ignored;       /* files the emulator keeps in a save folder for itself: never
+                                               collected, never removed */
+    size_t                   ignored_count;
+    bool                     prefix;        /* {save_id} takes every folder whose name starts with it */
+} sigil_layout_profiles;
+
 typedef struct {
     const char                *layout;    /* core or emulator id */
     const char                *platform;  /* slug this row is limited to, or NULL */
@@ -73,6 +108,7 @@ typedef struct {
     const char *const         *subdirs;
     size_t                     subdir_count;
     const char                *region_option; /* option forcing the region shared files are picked by */
+    const sigil_layout_profiles *profiles;    /* saves are folders per user profile; NULL otherwise */
 } sigil_layout;
 
 /* The slug layout rows use for `slug`: "scd" and "mega_cd" give "segacd",

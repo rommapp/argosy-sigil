@@ -1,4 +1,101 @@
-# Sega platforms: emulator game-save storage (not save states)
+# Saturn
+
+Status: synced
+sigil collects and restores the backup RAM volumes of Beetle Saturn, Kronos, yabause and Yaba Sanshiro, internal memory and cart, per game and shared.
+
+## Identification
+
+sigil has no Saturn extractor. Build the result from the stored `title_id`
+and `features` as for Sega CD (see [Identification](../identification.md)).
+Layout rows take `saturn` as the platform slug.
+
+## Save layouts
+
+| Layout | Files (role, option) | Shared | Source |
+|---|---|---|---|
+| `mednafen_saturn` | `{stem}.srm` primary when `beetle_saturn_save_method` = `libretro` (default); `{stem}.bkr` primary when `mednafen` and `beetle_saturn_shared_int` = `disabled` (default); `{stem}.bcr` sidecar when `beetle_saturn_shared_ext` = `disabled` (default); `{stem}.smpc` sidecar when `shared_int` = `disabled` | `mednafen_saturn_libretro_shared.bkr` when `shared_int` = `enabled` and `save_method` = `mednafen`; `.smpc` when `shared_int` = `enabled`; `.bcr` when `shared_ext` = `enabled`. A new `.bkr` is 32 KiB and a new `.bcr` a 512 KiB cart; restore refuses with `SIGIL_ERR_NO_SPACE` saves that don't fit | `mednafen/ss/ss.c`, `libretro.c`; sega.md section 1 |
+| `kronos` | `kronos/saturn/{stem}.ram` primary when `kronos_use_beetle_saves` = `disabled` (default); `{stem}.bkr` primary when `enabled`; `kronos/saturn/{stem}-ext512K.ram`, `-ext1M.ram`, `-ext2M.ram` or `-ext4M.ram` sidecar by `kronos_addon_cartridge` (`512K_backup_ram` default, `1M_`, `2M_`, `4M_backup_ram`); `{stem}.bcr` sidecar when `kronos_use_beetle_saves` = `enabled`, always a 512 KiB cart. Mode follows the content, not an option: a disc or `.m3u` is Saturn; an ST-V romset writes `kronos/stv/`, which has no row yet | | libretro/yabause `kronos` `libretro.c` `configure_saturn_addon_cart`; subdir `kronos/saturn` |
+| `yabause` | `{stem}.srm` primary, 64 KiB byte-expanded | | `libretro.c` (master); the core writes the file itself |
+| `yabasanshiro` | | `yabasanshiro/backup.bin`, one 8 MiB byte-expanded volume for every game | libretro/yabause `yabasanshiro` `libretro.c`; subdir `yabasanshiro` |
+
+A cart file restore creates is that size (16 KiB for `128k` to
+512 KiB for `4meg`), as is a Kronos cart for `kronos_addon_cartridge`,
+whatever size the unit's cart was; saves that don't fit return
+`SIGIL_ERR_NO_SPACE`.
+
+The internal save's file depends on the Beetle Saturn build, and with no
+option sent, `mednafen_saturn` takes the current one:
+
+| Build | Internal save | Send |
+|---|---|---|
+| 2026-05-26 on | `{stem}.srm`, or `{stem}.bkr` with `beetle_saturn_save_method` = `mednafen` | nothing, or the user's value |
+| 2026-05-25 | `{stem}.bkr` unless the option says `libretro` | `beetle_saturn_save_method` = `mednafen` |
+| 2026-05-11 to 05-24 | both, the same bytes; RetroArch loads `.srm` over `.bkr` | nothing |
+| before 2026-05-11 | `{stem}.bkr` alone; the option doesn't exist | `beetle_saturn_save_method` = `mednafen` |
+
+sigil reads only the request, never the core, so the value works on
+builds that predate the option. A collect or restore with no options on
+a root holding `{stem}.bkr` and no `{stem}.srm` reports the `.bkr` in
+`alternates` with that value ([alternates](../save-units.md#alternates)).
+The four builds are from beetle-saturn-libretro `a29a316f` (save RAM first
+given to the frontend), `a0c1c52f` (the option, default `mednafen`) and
+`0977d2c4` (default `libretro`).
+
+## Sync
+
+The generic collect and restore rules, holding units, claims and state
+are in [Sync](../sync.md).
+
+`sigil_card_list` reads Saturn backup RAM (`SIGIL_CARD_FORMAT_SATURN_BACKUP`,
+`.bkr`, `.bcr`, `.srm` or `backup.bin`, internal or cart).
+
+On Saturn and Sega CD it is the game's internal
+volume (`backup.ram`) when it has internal saves alone, else a zip named
+`<stem>.zip` holding `backup.ram` and `cart.ram` as present. The member name, not the
+size, says which device a volume is, since a 4 MiB Saturn volume can be
+Yaba Sanshiro's internal memory or a 32 Mbit cart. Every
+volume in a unit is raw, whatever form the emulator stores it in; restore
+writes each file back in the emulator's form (gzip, byte expansion), and a
+file the emulator hasn't created yet in the form and size its layout row
+names. Every Saturn core but Yaba Sanshiro keeps 32 KiB of internal memory,
+so a unit whose internal saves need more returns `SIGIL_ERR_NO_SPACE` there
+with the blocks they lack.
+
+Saturn, Sega CD and Dreamcast saves carry no game id. Every save on a
+per-game volume (Beetle Saturn's `<stem>.srm` and `.bcr`, genesis_plus_gx
+with `system_bram` = `per game`, flycast's per-game VMUs) is the game's. On
+a shared volume (genesis_plus_gx's default `scd_U.brm`, Beetle's shared
+volumes, Yaba Sanshiro's `backup.bin`, flycast's `vmu_save_A1.bin`) a save
+belongs to the game the user claimed it for, else to the game the state
+learned it belongs to, else, in managed mode, to the game the volume was
+last swapped in for, else to the game the save-name table gives it by one
+of the ids in `title_id` or `game_ids` (`src/save_names.c`; Saturn and
+Sega CD product codes as the disc header spells them, Dreamcast product
+numbers). The rest come back in `holding`, which the client
+keeps where the user can claim them; `holding` and the unit both go up
+before the state is stored.
+
+`holding` (collect, Saturn and Sega CD) is a zip of the saves on a shared
+volume with no known owner, and `unowned` names them. `claimed` takes the
+names from `unowned` the user gave this game.
+
+In managed mode, restore swaps each shared volume for one holding only the
+game's saves, keeping the file's form (gzip, byte expansion). It refuses
+with `SIGIL_ERR_UNCOLLECTED` while the volume holds a save that isn't in
+the last holding unit or doesn't match its game's last collect: call
+collect for the game that ran last, upload, then restore again. In
+unmanaged mode, restore never swaps. It replaces only the game's saves,
+and only when the volume is as the last collect saw it; a collect that
+then finds the old saves back sets `restore_again`.
+
+A managed restore also refuses a shared volume holding any
+corrupt save, which the swap would drop; unmanaged keeps it in place.
+A volume file sigil can't read as what its path holds (no card magic, cut
+short, an internal volume where a cart goes) is damaged. Restore returns
+`SIGIL_ERR_NO_TARGET` for a `cart.ram` when the core's settings keep no
+cart file.
+
+## Emulator research
 
 Research date 2026-09-26. Sources are shallow clones read locally unless marked otherwise.
 
@@ -18,25 +115,6 @@ The buildbot repo mapping comes from `libretro-super/recipes/linux/cores-linux-x
 
 GH links below use `blob/master` plus the line numbers at the commits above.
 
----
-
-## 1. Direct answers
-
-### genesis_plus_gx and Sega CD `.srm`
-
-Genesis Plus GX writes no `{stem}.srm` for a normal (CD-boot, "Mode 2") Sega CD game. The core does all CD saving itself, in `.brm` files, from `bram_load()` / `bram_save()`.
-
-- `retro_get_memory_data/size(RETRO_MEMORY_SAVE_RAM)` returns `sram.sram` / size only when `sram.on` is set (`libretro/libretro.c:3750-3783`).
-- In CD mode `genesis.c:161-173` calls `scd_init()` instead of `md_cart_init()`, so `sram_init()` never runs.
-- When the backup RAM cart is enabled, `cd_cart_init()` also runs `memset(&sram, 0, sizeof(T_SRAM))` (`core/cd_hw/cd_cart.c:183-199`). So `sram.on == 0`, the reported size is 0, and RetroArch writes no `.srm`.
-- The exception is a real MD cartridge booted alongside the CD (Mode 1, `scd.cartridge.boot`). Then `md_cart_init()` runs (`cd_cart.c:249`), and that cartridge's SRAM goes through `.srm`.
-- The CD saves live in:
-  - Internal BRAM (8 KiB). The `genesis_plus_gx_system_bram` option picks the file. "per bios" (the default) gives `{savedir}/scd_U.brm`, `scd_E.brm` or `scd_J.brm`, chosen by the disc's region byte. `bram_load` switches on `region_code` (Japan, Europe, USA; any other region loads nothing), and `genesis_plus_gx_region_detect` = `ntsc-u`, `pal` or `ntsc-j` forces it; `auto`, the default, reads the disc (`libretro.c` L1043-1060, L1574-1585, master read 2026-09-29). "per game" gives `{savedir}/{content stem}.brm` (`libretro.c:1385-1403`).
-  - Backup RAM cart. `genesis_plus_gx_cart_size` sets the size (default `4meg`, i.e. 512 KiB). `genesis_plus_gx_cart_bram` picks the file. "per cart" (the default) gives `{savedir}/{N}Kbit_cart.brm` / `{N}Mbit_cart.brm`, for example `4Mbit_cart.brm`. "per game" gives `{savedir}/{stem}_{N}Kbit_cart.brm` / `{stem}_{N}Mbit_cart.brm` (`libretro.c:1430-1502`).
-- The core reads `.brm` files only in `retro_load_game` (`libretro.c:3674`) and writes them only in `retro_unload_game` (`libretro.c:3729`). A save happens only if the CRC changed and the "SEGA_CD_ROM/RAM_CARTRIDGE" signature is intact (`bram_save`, `libretro.c:1140-1180`). A crash loses the session's BRAM writes.
-- The frontend never sees `.brm` files, so RetroArch cloud sync and save-protect do not cover them.
-- Oddity (UNVERIFIED at runtime): `cart_size = "disabled"` stores `0xff` (`libretro.c:1411-1412`). `cd_cart_init` then sets `scd.cartridge.id = 0xff`, which is truthy, and computes `1 << (0xff+13)`. "Disabled" may not actually disable the cart.
-
 ### Beetle Saturn (mednafen_saturn)
 
 - **Is `.srm` byte-identical to `.bkr`? Yes.**
@@ -48,7 +126,7 @@ Genesis Plus GX writes no `{stem}.srm` for a normal (CD-boot, "Mode 2") Sega CD 
 - **`beetle_saturn_save_method`**, values `libretro` (default) or `mednafen`.
   - Added 2026-05-25 in commit `a0c1c52f` ("memcards: add Save Method core option (.bkr vs .srm), default Mednafen"). Commit `0977d2c4` flipped the default to Libretro on 2026-05-26.
   - Before `a0c1c52f`, the core exposed `RETRO_MEMORY_SAVE_RAM` and also wrote `.bkr`. So both files existed in parallel with the same content, and the frontend `.srm` load landed on top of the `.bkr` read.
-  - The exact commit that first exposed SAVE_RAM is UNVERIFIED. It was probably the 2026-05-11 "audit: omnibus fix pass" (`a29a316f`).
+  - SAVE_RAM was first exposed by the 2026-05-11 "audit: omnibus fix pass" (`a29a316f`): `libretro.cpp` names `RETRO_MEMORY_SAVE_RAM` there and not in its parent.
   - Before that exposure, only `.bkr` was written.
   - The two modes are now mutually exclusive. In libretro mode `SS_LoadBackupRAM` / `SS_SaveBackupRAM` return early (`ss.c:2168, 2240`).
 - **`.smpc` contents.** 12 bytes (`SMPC_SaveNV`, `mednafen/ss/smpc.c:413-431`, identical in standalone `smpc.cpp:377-382`):
@@ -62,9 +140,7 @@ Genesis Plus GX writes no `{stem}.srm` for a normal (CD-boot, "Mode 2") Sega CD 
   - Shared name is `mednafen_saturn_libretro_shared.{bkr,smpc,bcr}`. Per-game name is `{content basename}.{ext}`, all in the libretro save dir.
   - Consequence: in libretro save mode `shared_int` no longer affects the internal BRAM, because the frontend names `.srm` after the content. It then affects only `.smpc`.
 
----
-
-## 2. Per (platform, emulator) rows
+### Per (platform, emulator) rows
 
 Legend for Format:
 
@@ -74,20 +150,6 @@ Legend for Format:
 
 | Platform | Emulator | Files + naming | Format | Scope + switching options | Per-game extraction / neutral form | Source |
 |---|---|---|---|---|---|---|
-| SMS / Game Gear | genesis_plus_gx (libretro) | `{stem}.srm` (frontend) | Raw `sram.sram` buffer, max 64 KiB. Size reported at save time = up to the last non-0xFF byte, so the length varies and trailing 0xFF is trimmed. Empty (all 0xFF) gives size 0 and no file. Initial fill 0xFF. | Per-game | Trivial. The neutral form is the raw bytes, right-padded with 0xFF to 64 KiB (or to cart RAM size) | `libretro/libretro.c:3750-3783`; `core/cart_hw/sms_cart.c:604-607` (always `sram.on=1`), `:1411,1438,1482` (mapper into `sram.sram`) |
-| SMS / Game Gear | picodrive (libretro) | `{stem}.srm` | Raw, fixed 0x8000 (32 KiB, "2 banks of 16 KB") zero-filled. Reported only if any byte is nonzero | Per-game | Trivial. PicoDrive pads with 0x00 where GPGX pads with 0xFF. Converting means pad or trim; leading bytes match | `pico/cart.c:1390-1402`; `platform/libretro/libretro.c:1745-1762` |
-| Genesis / MD | genesis_plus_gx (libretro) | `{stem}.srm` | Raw 64 KiB address image `sram.sram[addr & 0xffff]` (`sram.c:260-273`). 8-bit odd-byte SRAM is stored expanded (unused even bytes stay 0xFF). EEPROM games (I2C/SPI/93C) also live in `sram.sram`. Trailing 0xFF trimmed as above. Init 0xFF (0x00 for "Sonic 1 Remastered") | Per-game | Trivial. Neutral form is the 64 KiB address image, 0xFF padded | `core/cart_hw/sram.c:63-125, 260-273`; `libretro.c:3750-3783` |
-| Genesis / MD | picodrive (libretro) | `{stem}.srm` | Raw `Pico.sv.data`. Size = `sv.end - sv.start + 1`, where the header start is aligned down to even and the end is forced odd, so odd-byte SRAM is expanded. EEPROM carts = 0x2000. calloc 0x00 fill. Reported only if nonzero | Per-game | Trivial. Byte layout matches GPGX from offset 0 when SRAM starts at 0x200000. Differences are pad value and length. UNVERIFIED for carts whose SRAM does not start at a 64 KiB boundary | `pico/cart.c:1300-1336`; `pico/memory.c:825-860` |
-| Genesis / MD | ares | `save.ram` / `save.eeprom` in the game pak, persisted under ares's `Saves/` (`desktop-ui/emulator/emulator.cpp:24`: `{userData}/ares/Saves/{system}/`). The exact file name there is UNVERIFIED | Raw. Interleaving of word/upper/lower RAM (`Interface::save(wram, uram, lram)`) is UNVERIFIED | Per-game | Probably trivial. Layout UNVERIFIED | `ares/md/cartridge/board/standard.cpp:12-26` |
-| Genesis / MD | Kega Fusion, BlastEm, standalone Mednafen MD | Mednafen MD: `sav/{stem}.srm`-style per `filesys.fname_sav` (`%f.%M%x`, default dir `sav`). Kega and BlastEm are UNVERIFIED | UNVERIFIED | Per-game | UNVERIFIED | mednafen.github.io/documentation (fname_sav) |
-| Sega CD / Mega CD | genesis_plus_gx (libretro) | Internal: `scd_{U,E,J}.brm` (per bios, default) or `{stem}.brm` (per game). Cart: `{N}{K,M}bit_cart.brm` (per cart, default) or `{stem}_{N}{K,M}bit_cart.brm`. No `.srm` in CD-boot mode (section 1) | Raw BRAM filesystem. Internal is 8 KiB (0x2000). Cart is 8 KiB << id (128 Kbit to 4 Mbit, default 512 KiB), stored collapsed (odd bytes only). The format block sits in the last 0x40 bytes | Shared by default for both (per region, per cart size). `genesis_plus_gx_system_bram`, `genesis_plus_gx_cart_bram`, `genesis_plus_gx_cart_size`, all restart-required. The core owns the files, not the frontend | Feasible and lossless at the entry level (section 3.1). Neutral form: a freshly formatted 8 KiB BRAM holding only that game's entries, or the entry tuple (11-char name, protect flag, data blocks) | `libretro/libretro.c:1043-1180, 1385-1502, 3674, 3729`; `core/cd_hw/cd_cart.c:180-200`; option text `libretro/libretro_core_options.h:165-210` |
-| Sega CD / Mega CD | picodrive (libretro) | `{stem}.srm` (frontend) | Default: raw internal BRAM, 0x2000 (8 KiB). With `picodrive_ramcart` = enabled: 0x12000 bytes, where [0,0x2000) is internal BRAM and [0x2000,0x12000) is a 64 KiB cart, collapsed. The libretro path does not sync `Pico_mcd->bram` into the first 8 KiB ("TODO" at `libretro.c:1715`). The option text warns that enabling it discards internal BRAM | Per-game (the frontend names it by content). No shared mode | Feasible (same BRAM filesystem). Converting to GPGX is a straight rename of the 8 KiB file | `platform/libretro/libretro.c:1710-1752`; `pico/cd/mcd.c:111-121`; `pico/cd/memory.c:677-712`; `platform/libretro/libretro_core_options.h:163-173` |
-| Sega CD / Mega CD | picodrive (standalone) | `.brm` via `emu_save_load_game` (naming UNVERIFIED) | 8 KiB internal, or 0x12000 with the RAM cart (bram copied into the first 8 KiB). The non-cart file is not truncated because it "may contain RAM cart data after normal brm" | UNVERIFIED | As above | `platform/common/emu.c:965-1010` |
-| Sega CD / Mega CD | ares | `backup.ram` in the **system** pak, so one BRAM for all Mega CD games | Raw 8 KiB (`bram.allocate(8_KiB)`) | Shared (per system/BIOS). No option found | Feasible (BRAM filesystem). Disk path UNVERIFIED | `ares/md/mcd/mcd.cpp:41, 79-80, 114` |
-| Sega CD / Mega CD | Kega Fusion, Gens, BlastEm | UNVERIFIED | UNVERIFIED. Whether any of these write byte-expanded Sega CD files is unknown | UNVERIFIED | Same filesystem | `save-file-converter/frontend/src/util/SegaCd.js` |
-| 32X | picodrive (libretro) | `{stem}.srm` | Same cart SRAM path as MD (`Pico.sv`) | Per-game | Trivial | `platform/libretro/libretro.c:1745-1762` (32X support for this path is UNVERIFIED line-by-line) |
-| 32X | ares | `save.ram` / `save.eeprom` (game pak) | Raw | Per-game | Trivial | `mia/medium/mega-32x.cpp:55-63` |
-| 32X | genesis_plus_gx | Not supported (no 32X emulation) | n/a | n/a | n/a | n/a |
 | Saturn | Beetle Saturn (libretro), save_method=libretro (default since 2026-05-26) | Internal: `{stem}.srm` (frontend). RTC/SMEM: `{stem}.smpc` (core). Cart: `{stem}.bcr` (core) | `.srm` is raw 32768 B collapsed BRAM (64-byte blocks, 512 blocks). `.smpc` is 12 B. `.bcr` is raw 0x80000 (512 KiB) collapsed, 512-byte blocks, uncompressed | `.srm` is always per-game. `.smpc` is shared iff `beetle_saturn_shared_int`. `.bcr` is shared iff `beetle_saturn_shared_ext`. Cart presence comes from the internal DB (`ss.cart` auto, default "backup") | Feasible and lossless (section 3.2). Neutral form: `.BUP` (Vmem header + data) per save | `libretro.c:407-437, 1891-1910, 2197-2215`; `mednafen/ss/ss.c:158, 2159-2270, 2289-2440`; `mednafen/ss/cart/backup.c:36, 69-76`; `mednafen/ss/smpc.c:413-467`; git `a0c1c52f`, `0977d2c4` |
 | Saturn | Beetle Saturn (libretro), save_method=mednafen | Internal: `{stem}.bkr` or `mednafen_saturn_libretro_shared.bkr`. `.smpc` and `.bcr` as above | `.bkr` is byte-identical to the `.srm` above | `.bkr` and `.smpc` follow `shared_int`. `.bcr` follows `shared_ext`. No `.srm` is exposed | As above | same |
 | Saturn | Mednafen (standalone) | `{path_sav}/{stem}.bkr`, `.smpc`, `.bcr`. `filesys.fname_sav` defaults to `%f.%M%x`, where `%M` is empty first and becomes `{md5}.` only on a collision. Rotating backups via `MDFN_BackupSavFile(10, "bkr")` | `.bkr` is raw 32 KiB (same as Beetle). `.smpc` is 12 B (same). **`.bcr` is gzip-compressed** (`GZFileStream` WRITE, `ss.cpp:1952`). Its read goes through GZFileStream, which (via zlib) presumably also accepts raw input (UNVERIFIED) | Per-game. There is no shared mode | As Beetle. Moving `.bcr` from standalone to Beetle needs a gunzip: Beetle reads raw (`filestream_read`, `ss.c:2250-2310`) | `mednafen-1.32.1/src/ss/ss.cpp:1878-1996`; `src/ss/smpc.cpp:377-382`; mednafen.github.io/documentation/fname_format.txt |
@@ -96,35 +158,6 @@ Legend for Format:
 | Saturn | yabause (libretro, master) | `{savedir}/{stem}.srm`, but **the core writes it**. `retro_get_memory_*` returns NULL/0 | 0x10000 (64 KiB) expanded: data on odd bytes, 0xFF on even bytes (`FormatBackupRam` writes the `0xFF,'B',0xFF,'a'...` header) | Per-game | Feasible. Collapse by taking odd bytes, which gives the Beetle/Kronos 32 KiB format, lossless both ways. No backup cart option (only 1M/4M RAM carts) | `yabause/src/libretro/libretro.c:698-708, 1059, 1116, 1176-1184`; `yabause/src/yabause.c:200-208, 446-477`; `yabause/src/memory.c:331-357, 1274-1296` |
 | Saturn | Yaba Sanshiro (libretro, branch `yabasanshiro`) | `{savedir}/yabasanshiro/backup.bin`, **one file for every game** | Extended internal backup, memory-mapped. save-file-converter reports 0x800000 B expanded (0x400000 collapsed) with 64-byte blocks. `tweak_backup_file_size` value UNVERIFIED | Shared container, no option | Feasible via the BRAM filesystem (same directory structure, larger volume). This is the only way to get per-game data | `libretro/yabause@yabasanshiro: yabause/src/libretro/libretro.c:1000-1004, 1077`; `yabause/src/yabause.c:220-258`; `save-file-converter/.../SegaSaturn/Emulators/yabasanshiro.js` |
 | Saturn | Yaba Sanshiro (standalone Android) | UNVERIFIED | Same expanded extended format (per save-file-converter) | Shared | As above | UNVERIFIED |
-| Dreamcast | flycast (libretro, from flyinghead/flycast) | `reicast_per_content_vmus` = disabled (default): `{system}/dc/vmu_save_{A1..D2}.bin`, shared. "VMU A1": `{savedir}/{gameId}.A1.bin` for port A1 only. "All VMUs": `{savedir}/{gameId}.{A1..D2}.bin`. `gameId` is the IP.BIN product number with trailing whitespace trimmed and ` /\:*?\|<>` replaced by `_`. Legacy per-content name `{stem}.{port}.bin`: when found, the core **copies it to the gameId name and deletes the old file** (since commit `5fc84acd`, 2024-11-03). No `.srm` (no SAVE_RAM) | Raw VMU flash image, exactly 131072 B (`u8 flash_data[128_KB]`). An all-zero file is reformatted on load | Shared by default. Per-game via the option. Multi-disc games share one VMU through the product number | Feasible and lossless (section 3.3). Neutral form: VMS+VMI pair, or DCI | `shell/libretro/oslib.cpp:40-68`; `shell/libretro/libretro.cpp:843-860, 2242-2262`; `shell/libretro/libretro_core_options.h:1165-1178`; `core/emulator.cpp:858`; `core/hw/maple/maple_devs.cpp:353, 437-475` |
-| Dreamcast | flycast (standalone) | `PerGameVmu` (default **true**) gives A1 = `{gameId}_vmu_save_A1.bin`. Others (and A1 when the option is off) are `vmu_save_{port}.bin`. Looked up in `VMUPath` if set, otherwise the writable data dir. Legacy fallback `{content fileName}_vmu_save_A1.bin` | Raw 128 KiB | A1 per-game by default. Other ports shared | As above | `core/oslib/oslib.cpp:50-100`; `core/cfg/option.cpp:234`; `core/stdclass.cpp:140-143` |
-| Dreamcast | redream (standalone, closed source; the libretro core is abandoned) | `vmu0.bin` to `vmu3.bin` (ports A to D) in the redream data dir (libretro docs: in the save dir) | Raw 128 KiB VMU image (UNVERIFIED from source) | Shared across all games. No per-game option (LaunchBox plugins swap `vmu0.bin`) | Feasible via the VMU filesystem | docs.libretro.com/library/redream; forums.launchbox-app.com/files/file/5337-redream-per-game-vmus. Source UNVERIFIED |
-
----
-
-## 3. Container formats and extraction
-
-### 3.1 Sega CD / Mega CD BRAM
-
-- Size is 8 KiB internal, and 64 KiB to 512 KiB for the RAM cart. Blocks are 64 B.
-- The last 64 B hold the directory/format block. It contains:
-  - volume name `"___________"`
-  - free-block count and file count, each written 4 times
-  - `"SEGA_CD_ROM\0\x01\0\0\0"`
-  - `"RAM_CARTRIDGE___"` (`save-file-converter/frontend/src/util/SegaCd.js`; GPGX `brm_format`)
-- GPGX validates only the last 0x20 bytes of that block (`libretro.c:1078, 1148`).
-- Block 0 is reserved.
-- File data grows upward from block 1.
-- Directory entries (16 B plaintext: 11-char name `A-Z0-9_*`, protect/ECC flag, 2 B start block, 2 B size in blocks) grow downward from the second-to-last block, two per block.
-- Directory entries are always ECC-encoded. File data is ECC-encoded when the entry's flag is set. The encoding is custom Reed-Solomon plus one 16-bit CRC stored twice, the second copy inverted, so 64 B hold 32 B of payload (superctr/buram, MIT; confirmed by a sigil encoder that reproduces real volumes).
-- Reference implementations:
-  - superctr/buram (C, reverse-engineered from the BIOS; list, extract, insert, delete)
-  - save-file-converter `SegaCd/SegaCd.js`, `ReedSolomon.js`, `Crc16.js`
-- Per-game extraction:
-  - Save names are game-chosen and there is no product code, so mapping a save to a game needs a name table or heuristics.
-  - Extraction and injection are lossless when the entry is copied with its encoded blocks, or decoded and re-encoded with the same flag.
-  - Injection must recompute the directory counts and rewrite the 4 redundant copies.
-- Byte-expanded variants are UNVERIFIED: no sample exists, and save-file-converter's Sega CD code has no expansion handling (checked 2026-09-28). GPGX, PicoDrive and ares all store collapsed 8 KiB.
 
 ### 3.2 Saturn backup RAM
 
@@ -197,59 +230,19 @@ Tested 2026-09-28 on 45 Saturn discs (39 with ground truth from bucanero's list)
     - US and JP discs using different names (Resident Evil `BIOUDATA_`, Hang-On GP `_02` against the JP `_01`).
   - Sega CD, with no ground truth: the write shape plus 68000 references to `BRMWRITE` point at plausible names (`LODOSS_SAVE`, `DUN_EXPL_00`, `MORT_KOMBAT`). The shape alone also matches file tables, header strings and graphics. Three Wolf Team discs share one library name, `AISLE_LORD_`.
 
-### 3.3 Dreamcast VMU
-
-- The image is 128 KiB, 256 blocks of 512 B, little-endian. A standard VMU has this layout, but the root block records it, and readers must take it from there:
-  - Blocks 0-199: user area. Real images also record 240 and 241 user blocks (root offset 0x50).
-  - Blocks 200-240: unused on a standard VMU
-  - Blocks 241-253: directory (13 blocks, 32-byte entries, 208 slots). The root records the directory's top block and it runs down from there; some tools record the lowest block and write upwards (the jsr-forward-dir-vmu sample).
-  - Block 254: FAT (u16 per block; 0xFFFC free, 0xFFFA end of chain)
-  - Block 255: system/root block, starting with sixteen 0x55 bytes
-- Directory entry layout:
-  - `0x00` type (0x33 data, 0xCC game, 0x00 empty)
-  - `0x01` copy-protect (0xFF protected)
-  - `0x02` u16 first block
-  - `0x04` filename, 12 B Shift-JIS
-  - `0x10` BCD timestamp, 8 B
-  - `0x18` u16 size in blocks
-  - `0x1A` u16 header block offset
-  - `0x1C` 4 B unused
-- The VMS file header inside the data holds: description (16 B + 32 B), creator, icon count, animation speed, eyecatch type, CRC, data size, palette and icons.
-- Sources: mc.pp.se/dc/vms/flashmem.html; save-file-converter `Dreamcast/Components/*.js`.
-- Per-save formats:
-  - **VMS** is the raw file bytes (chain concatenated). It is paired with **VMI**, 108 B of metadata: checksum = first 4 bytes of the resource name AND "SEGA" (confirmed against real VMI files, 2026-09-28), description 32, copyright 32, timestamp 8, version, file number, resource name 8 (= the VMS base name), VMU filename 12, file mode (bit 1 game, bit 0 copy-protect), size.
-  - **DCI** (Nexus) is the 32-byte directory entry followed by data, with every 4-byte word byte-swapped.
-- Tools:
-  - save-file-converter (`Dreamcast/IndividualSaves/VmiVms.js`, `Dci.js`)
-  - bucanero/dc-save-converter (C, `vmufs.h`)
-  - gyrovorbis/libevmu
-  - DreamShell `vmu_manager`
-  - VMU Explorer (Windows)
-- Lossless: yes for data files. The directory entry fields round-trip through DCI exactly, and through VMI+VMS apart from the header-block offset, which VMI encodes as the game/data flag.
-- Game-type files (VMU minigames, 0xCC) must start at block 0 and be contiguous, and only one can exist per VMU.
-- The VMU filename (12 chars) is game-chosen, often matching the product code prefix (for example `SONICADV_SYS`). It is not guaranteed.
-
----
-
-## 4. Notes for save sync
+### Notes for save sync
 
 - Per-game raw files, safe to sync as opaque blobs:
-  - GPGX / PicoDrive MD, SMS, GG `.srm`
-  - PicoDrive CD `.srm`
-  - GPGX CD per-game `.brm`
   - Beetle `.srm` / `.bkr`
   - Kronos `.ram` / `.bkr`
-  - Flycast per-content VMU
-  - Standalone Flycast A1
 - Shared containers that need filesystem-level extraction/injection to sync per game:
-  - GPGX default `scd_{U,E,J}.brm` and `*_cart.brm`
-  - ares `backup.ram`
   - Beetle shared `.bkr` / `.bcr`
   - Yaba Sanshiro `backup.bin`
-  - Flycast default `vmu_save_*.bin`
-  - Redream `vmu0-3.bin`
 - Cross-emulator Saturn internal BRAM uses one byte layout, 32 KiB collapsed (Beetle `.srm`/`.bkr`, Mednafen `.bkr`, Kronos `.ram`/`.bkr`). The yabause 64 KiB expanded file collapses losslessly to it.
 - `.smpc` is not game data (clock plus BIOS language/settings). Treat it as device-local or skip it.
 - Beetle `.bcr` is per-game raw 512 KiB. Standalone Mednafen `.bcr` is gzip of the same bytes.
-- GPGX MD `.srm` length varies because trailing 0xFF is trimmed. Hashing for change detection should normalize (pad to 64 KiB with 0xFF) or accept length drift.
-- Flycast libretro renames and deletes legacy `{stem}.A1.bin` in favour of `{gameId}.A1.bin`. A sync client watching the old name will see it disappear.
+
+## Open items
+
+- Disc scan for save names (2026-09-28): owned name found for about 44% of 39 Saturn discs, 0 foreign names misattributed; Sega CD unmeasured. The scan's per-game names are in the session transcript, not in the repo.
+- ST-V under Kronos (`kronos/stv/{stem}.ram`) is not a Saturn volume and has no row.

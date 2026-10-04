@@ -562,6 +562,47 @@ static void check_folder_collect(const sigil_sync_result *first) {
  * saves behind an empty superblock is damaged: restore names it and writes
  * nothing until the request says to repair, then writes a full superblock.
  * A flow-style ARMSX2 index makes the same trip. */
+/* A listed file of a folder card the client can't open is an I/O error:
+ * collect would pack the save without it. */
+static void check_unopenable_folder_file(const sigil_sync_result *first) {
+    mem_root root = {0};
+    if (!first || !put_sample_folder(&root, CARD1, "ace-combat-04-aethersx2")) {
+        fail("unopenable folder file", "setup failed");
+        root_free(&root);
+        return;
+    }
+    put_superblock(&root, CARD1);
+    for (size_t i = 0; i < root.count && !root.unreadable[0]; i++) {
+        if (strstr(root.files[i].path, "BASLUS-20152")) {
+            snprintf(root.unreadable, sizeof(root.unreadable), "%s", root.files[i].path);
+        }
+    }
+    game g;
+    make_standalone(&g, &root, "Ace Combat 04 (USA).iso", "SLUS-20152");
+    sigil_sync_result *r = NULL;
+    if (!root.unreadable[0] || sigil_collect(&g.req, &r) != SIGIL_ERR_IO) {
+        fail("unopenable folder file", "collect packed a save without a file it couldn't read");
+    }
+    sigil_sync_result_free(r);
+    root_free(&root);
+
+    /* An unopenable superblock isn't an unusable one: repair would write a
+     * new superblock over a card it never read. */
+    mem_root other = {0};
+    if (!put_sample_folder(&other, CARD1, "7-wonders-armsx2")) fail("unopenable folder file", "setup failed");
+    put_superblock(&other, CARD1);
+    snprintf(other.unreadable, sizeof(other.unreadable), "%s", CARD1 "/_pcsx2_superblock");
+    make_standalone(&g, &other, "Ace Combat 04 (USA).iso", "SLUS-20152");
+    g.req.repair = 1;
+    g.req.overwrite_local = 1;
+    r = NULL;
+    if (sigil_restore(&g.req, first->data, first->len, &r) != SIGIL_ERR_IO || other.writes) {
+        fail("unopenable folder file", "restore wrote over a superblock it couldn't read");
+    }
+    sigil_sync_result_free(r);
+    root_free(&other);
+}
+
 static void check_folder_restore(const sigil_sync_result *first) {
     mem_root root = {0};
     if (!first || !put_sample_folder(&root, CARD1, "7-wonders-armsx2")) {
@@ -1469,6 +1510,7 @@ int main(void) {
     check_restore_foreign_unit();
     check_folder_collect(first);
     check_folder_restore(first);
+    check_unopenable_folder_file(first);
     check_folder_damage(first);
     check_unpackable_folder(first);
     check_superblock_rules(first);

@@ -1,0 +1,4 @@
+101c9400/meta/meta.xml	<menu/>
+101c9400/user/account/option.sav	account
+101c9400/user/common/save.dat	common
+101c9400/user/80000001/old.sav	legacy

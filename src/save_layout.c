@@ -32,15 +32,31 @@ static const sigil_layout_shared GPGX_SEGACD_SHARED[] = {
     S_OPT_DEV("{cart_size}_cart.brm", "genesis_plus_gx_cart_bram", "per cart", true, CART, 0),
 };
 
-static const sigil_layout_member BEETLE_PSX_MEMBERS[] = {
-    M_OPT("{stem}.srm", PRIMARY, "beetle_psx_hw_use_mednafen_memcard0_method", "libretro", true),
-    M_OPT("{stem}.{left_index}.mcr", PRIMARY, "beetle_psx_hw_use_mednafen_memcard0_method", "mednafen", false),
-    M_OPT("{stem}.{right_index}.mcr", SIDECAR, "beetle_psx_hw_enable_memcard1", "enabled", false),
-};
-static const sigil_layout_shared BEETLE_PSX_SHARED[] = {
-    S_OPT("mednafen_psx_libretro_shared.0.mcr", "beetle_psx_hw_shared_memory_cards", "enabled", false),
-    S_OPT("mednafen_psx_libretro_shared.1.mcr", "beetle_psx_hw_shared_memory_cards", "enabled", false),
-};
+/* Beetle PSX (libretro.c MDFN_MakeFName): shared cards swap the game's name
+ * for mednafen_psx_libretro_shared on every .mcr card and keep its index. Slot
+ * 1 under the libretro method is the .srm, which is never shared; slot 2 exists
+ * only with enable_memcard1. The hardware build reads beetle_psx_hw_* keys and
+ * the software build beetle_psx_*. */
+#define BEETLE_PSX_ROW(NAME, P)                                                                              \
+    static const sigil_layout_member NAME##_MEMBERS[] = {                                                    \
+        M_OPT("{stem}.srm", PRIMARY, P "use_mednafen_memcard0_method", "libretro", true),                     \
+        { .template_ = "{stem}.{left_index}.mcr", .role = SIGIL_SAVE_ROLE_PRIMARY,                           \
+          .opt_key = P "use_mednafen_memcard0_method", .opt_value = "mednafen", .opt_default = false,         \
+          .opt2_key = P "shared_memory_cards", .opt2_value = "disabled", .opt2_default = true },              \
+        { .template_ = "{stem}.{right_index}.mcr", .role = SIGIL_SAVE_ROLE_SIDECAR,                          \
+          .opt_key = P "enable_memcard1", .opt_value = "enabled", .opt_default = false,                       \
+          .opt2_key = P "shared_memory_cards", .opt2_value = "disabled", .opt2_default = true },              \
+    };                                                                                                       \
+    static const sigil_layout_shared NAME##_SHARED[] = {                                                     \
+        { .template_ = "mednafen_psx_libretro_shared.{left_index}.mcr",                                      \
+          .opt_key = P "shared_memory_cards", .opt_value = "enabled", .opt_default = false,                   \
+          .opt2_key = P "use_mednafen_memcard0_method", .opt2_value = "mednafen", .opt2_default = false },    \
+        { .template_ = "mednafen_psx_libretro_shared.{right_index}.mcr",                                     \
+          .opt_key = P "shared_memory_cards", .opt_value = "enabled", .opt_default = false,                   \
+          .opt2_key = P "enable_memcard1", .opt2_value = "enabled", .opt2_default = false },                  \
+    }
+BEETLE_PSX_ROW(BEETLE_PSX_HW, "beetle_psx_hw_");
+BEETLE_PSX_ROW(BEETLE_PSX, "beetle_psx_");
 
 /* `.srm` is always per game. The `.bkr` that save_method=mednafen uses, the
  * `.smpc` and the cart `.bcr` move to the shared files with shared_int and
@@ -172,10 +188,16 @@ static const sigil_layout_shared DOLPHIN_STANDALONE_SHARED[] = { GC_SLOT_A("") }
 static const char *const DOLPHIN_SUBDIRS[] = { "User/GC" };
 static const char *const DOLPHIN_STANDALONE_SUBDIRS[] = { "GC" };
 
+/* pcsx_rearmed (frontend/libretro.c load_memcards): slot 1 is the frontend's
+ * .srm in libretro mode, slot 2 has no libretro mode, and either slot can be
+ * a card named by the disc's id or one shared by every game. */
 static const sigil_layout_member PCSX_REARMED_MEMBERS[] = {
-    M("{stem}.srm", PRIMARY),
+    M_OPT("{stem}.srm", PRIMARY, "pcsx_rearmed_memcard1", "libretro", true),
+    M_OPT("{pcsx_serial}_1.mcd", PRIMARY, "pcsx_rearmed_memcard1", "serial", false),
+    M_OPT("{pcsx_serial}_2.mcd", SIDECAR, "pcsx_rearmed_memcard2", "serial", false),
 };
 static const sigil_layout_shared PCSX_REARMED_SHARED[] = {
+    S_OPT("pcsx-card1.mcd", "pcsx_rearmed_memcard1", "shared", false),
     S_OPT("pcsx-card2.mcd", "pcsx_rearmed_memcard2", "shared", true),
 };
 
@@ -260,16 +282,83 @@ static const sigil_layout_member SAME_CDI_MEMBERS[] = {
 };
 static const char *const SAME_CDI_SUBDIRS[] = { "same_cdi/nvram" };
 
+/* Nestopia (libretro/libretro.cpp SAVE_FDS): a disk has no save RAM, so
+ * RetroArch writes no .srm; the core writes a patch against the loaded file.
+ * Builds before the format option (3ac52e67c4) always wrote .sav as UPS. */
 static const sigil_layout_member NESTOPIA_FDS_MEMBERS[] = {
-    M("{stem}.srm", PRIMARY),
-    M_OPT("{stem}.sav", SIDECAR, "nestopia_fds_savefile_format", "sav_ups", true),
-    M_OPT("{stem}.ups", SIDECAR, "nestopia_fds_savefile_format", "ups", false),
-    M_OPT("{stem}.ips", SIDECAR, "nestopia_fds_savefile_format", "ips", false),
+    M_OPT("{stem}.sav", PRIMARY, "nestopia_fds_savefile_format", "sav_ups", true),
+    M_OPT("{stem}.ups", PRIMARY, "nestopia_fds_savefile_format", "ups", false),
+    M_OPT("{stem}.ips", PRIMARY, "nestopia_fds_savefile_format", "ips", false),
 };
 
+/* bsnes (target-libretro/program.cpp openRomSuperFamicom): the core writes
+ * save.ram, a clock cart's time.rtc (sfc/cartridge/save.cpp saveEpsonRTC,
+ * saveSharpRTC) and the Satellaview cart's download.ram (saveMCC) itself. */
 static const sigil_layout_member BSNES_SNES_MEMBERS[] = {
     M("{stem}.srm", PRIMARY),
+    M("{stem}.rtc", RTC),
+    M("{stem}.psr", SIDECAR),
 };
+
+/* yuzu and its forks (legacy layout, EDEN src/core/file_sys/savedata_factory.cpp
+ * GetFullPath): nand/user/save/0000000000000000/<user folder>/<TITLEID>/,
+ * device saves under the all-zero user. Each fork names its size file after
+ * itself (savedata_factory.h); a restore leaves the target's own in place. */
+static const sigil_layout_area YUZU_AREAS[] = {
+    { "nand/user/save/0000000000000000/{profile}/{save_id}/", "{save_id}/", SIGIL_SAVE_AREA_ACCOUNT, false, NULL },
+    { "nand/user/save/0000000000000000/00000000000000000000000000000000/{save_id}/", "device/{save_id}/",
+      SIGIL_SAVE_AREA_DEVICE, false, NULL },
+};
+static const char *const YUZU_IGNORED[] = {
+    ".yuzu_save_size", ".citron_save_size", ".sudachi_save_size", ".suyu_save_size",
+};
+static const sigil_layout_profiles YUZU_PROFILES = {
+    "nand", SIGIL_PROFILES_YUZU, "nand/system/save/8000000000000010/su/avators/profiles.dat",
+    YUZU_AREAS, COUNT(YUZU_AREAS), YUZU_IGNORED, COUNT(YUZU_IGNORED),
+};
+static const char *const YUZU_SUBDIRS[] = {
+    "nand/user/save/0000000000000000", "nand/system/save/8000000000000010/su/avators",
+};
+
+/* Cemu (src/Cafe/TitleList/SaveInfo.cpp, Account.cpp): the mlc's
+ * usr/save/00050000/<title low>/ holds meta/, user/<persistent id>/ per
+ * account and user/common/ for every account. Cemu writes meta/ again when
+ * the game opens its save. */
+static const sigil_layout_area CEMU_AREAS[] = {
+    { "mlc01/usr/save/00050000/{save_id}/meta/", "{save_id}/meta/", SIGIL_SAVE_AREA_DEVICE, true, NULL },
+    { "mlc01/usr/save/00050000/{save_id}/user/common/", "{save_id}/user/common/", SIGIL_SAVE_AREA_DEVICE, false,
+      NULL },
+    { "mlc01/usr/save/00050000/{save_id}/user/{profile}/", "{save_id}/user/account/", SIGIL_SAVE_AREA_ACCOUNT, false,
+      "{save_id}/user/{profile}/" },
+};
+static const sigil_layout_profiles CEMU_PROFILES = {
+    "mlc01", SIGIL_PROFILES_CEMU, "mlc01/usr/save/system/act/{profile}/account.dat",
+    CEMU_AREAS, COUNT(CEMU_AREAS), NULL, 0,
+};
+static const char *const CEMU_SUBDIRS[] = { "mlc01/usr/save/00050000", "mlc01/usr/save/system/act" };
+
+/* Vita3K (vita3k/io/src/io.cpp): ux0/user/<user id>/savedata/<SAVEDIR>/. */
+static const sigil_layout_area VITA3K_AREAS[] = {
+    { "ux0/user/{profile}/savedata/{save_id}/", "{save_id}/", SIGIL_SAVE_AREA_ACCOUNT, false, NULL },
+};
+static const sigil_layout_profiles VITA3K_PROFILES = {
+    "ux0", SIGIL_PROFILES_VITA3K, "ux0/user/{profile}/user.xml", VITA3K_AREAS, COUNT(VITA3K_AREAS), NULL, 0,
+};
+static const char *const VITA3K_SUBDIRS[] = { "ux0/user" };
+
+/* RPCS3 (rpcs3/Emu/Cell/Modules/cellSaveData.cpp): dev_hdd0/home/<user id>/
+ * savedata/<DIRNAME>/, every DIRNAME the game writes starting with its
+ * title id. */
+static const sigil_layout_area RPCS3_AREAS[] = {
+    { "dev_hdd0/home/{profile}/savedata/{save_id}/", "{save_id}/", SIGIL_SAVE_AREA_ACCOUNT, false, NULL },
+};
+static const sigil_layout_profiles RPCS3_PROFILES = {
+    "dev_hdd0", SIGIL_PROFILES_RPCS3, "dev_hdd0/home/{profile}/localusername", RPCS3_AREAS, COUNT(RPCS3_AREAS),
+    NULL, 0, true,
+};
+static const char *const RPCS3_SUBDIRS[] = { "dev_hdd0/home" };
+
+#define ROW_PROFILES(l, p, d, pr) { l, p, NULL, 0, NULL, 0, d, COUNT(d), NULL, &pr }
 
 #define ROW(l, p, m)            { l, p, m, COUNT(m), NULL, 0, NULL, 0 }
 #define ROW_SHARED(l, p, m, s)  { l, p, m, COUNT(m), s, COUNT(s), NULL, 0 }
@@ -284,7 +373,8 @@ static const sigil_layout LAYOUTS[] = {
     ROW("gpsp", NULL, SRM_ONLY_MEMBERS),
     ROW("bsnes", "snes", BSNES_SNES_MEMBERS),
     ROW_REGION("genesis_plus_gx", "segacd", GPGX_SEGACD_MEMBERS, GPGX_SEGACD_SHARED, "genesis_plus_gx_region_detect"),
-    ROW_SHARED("mednafen_psx_hw", NULL, BEETLE_PSX_MEMBERS, BEETLE_PSX_SHARED),
+    ROW_SHARED("mednafen_psx_hw", NULL, BEETLE_PSX_HW_MEMBERS, BEETLE_PSX_HW_SHARED),
+    ROW_SHARED("mednafen_psx", NULL, BEETLE_PSX_MEMBERS, BEETLE_PSX_SHARED),
     ROW_SHARED("pcsx_rearmed", NULL, PCSX_REARMED_MEMBERS, PCSX_REARMED_SHARED),
     ROW_DIRS("vita_pops", "psx", VITA_POPS_MEMBERS, VITA_POPS_SUBDIRS),
     ROW_SHARED("pcsx2", NULL, LRPS2_MEMBERS, LRPS2_SHARED),
@@ -310,6 +400,13 @@ static const sigil_layout LAYOUTS[] = {
     ROW("dosbox_pure", NULL, DOSBOX_PURE_MEMBERS),
     ROW_DIRS("same_cdi", NULL, SAME_CDI_MEMBERS, SAME_CDI_SUBDIRS),
     ROW("nestopia", "fds", NESTOPIA_FDS_MEMBERS),
+    ROW_PROFILES("eden", "switch", YUZU_SUBDIRS, YUZU_PROFILES),
+    ROW_PROFILES("citron", "switch", YUZU_SUBDIRS, YUZU_PROFILES),
+    ROW_PROFILES("sudachi", "switch", YUZU_SUBDIRS, YUZU_PROFILES),
+    ROW_PROFILES("yuzu", "switch", YUZU_SUBDIRS, YUZU_PROFILES),
+    ROW_PROFILES("cemu", "wiiu", CEMU_SUBDIRS, CEMU_PROFILES),
+    ROW_PROFILES("vita3k", "psvita", VITA3K_SUBDIRS, VITA3K_PROFILES),
+    ROW_PROFILES("rpcs3", "ps3", RPCS3_SUBDIRS, RPCS3_PROFILES),
 };
 
 const char *sigil_layout_platform(const char *slug) {
@@ -323,6 +420,7 @@ const char *sigil_layout_platform(const char *slug) {
     if (strcmp(slug, "famicom_disk_system") == 0 || strcmp(slug, "fds") == 0) return "fds";
     if (strcmp(slug, "dc") == 0) return "dreamcast";
     if (strcmp(slug, "ngc") == 0 || strcmp(slug, "gc") == 0) return "gamecube";
+    if (strcmp(slug, "vita") == 0) return "psvita";
     return slug;
 }
 

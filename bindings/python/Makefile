@@ -23,9 +23,9 @@ build: lib
 test: build
 	$(PYTHON) -m pytest test_sigil.py -v
 
-# Cross-language source checks; no compiled extension or Android toolchain.
+# Cross-language source and docs checks; no compiled extension or Android toolchain.
 contract:
-	$(PYTHON) -m pytest test_contract.py -v
+	$(PYTHON) -m pytest test_contract.py test_docs.py -v
 
 clean:
 	rm -rf $(BUILD_DIR) sigil/_sigil.c sigil/_sigil.o sigil/_sigil.*.so \

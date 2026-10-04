@@ -44,14 +44,14 @@ bool sigil_sync_claimed(const sigil_sync_request *req, const char *name) {
 }
 
 bool sigil_sync_listed(const sigil_sync_request *req, const char *path) {
-    return in_ids(req->save.listing, req->save.listing_count, path);
+    return sigil_save_listed(&req->save, path);
 }
 
 int sigil_sync_read_file(const sigil_sync_request *req, const char *path, size_t cap, uint8_t **out, size_t *len) {
     *out = NULL;
     *len = 0;
     sigil_io *io = req->save.open(req->save.open_ctx, path);
-    if (!io) return SIGIL_ERR_NOT_FOUND;
+    if (!io) return sigil_sync_listed(req, path) ? SIGIL_ERR_IO : SIGIL_ERR_NOT_FOUND;
     int rc = sigil_bram_read_all(io, cap, out, len);
     sigil_io_close(io);
     return rc;
@@ -66,8 +66,7 @@ bool sigil_sync_file_holds(const sigil_sync_request *req, const char *path, cons
     return same;
 }
 
-/* A path under the save root: relative, with no ".." segment. */
-static bool path_inside(const char *path) {
+bool sigil_sync_path_inside(const char *path) {
     if (!path[0] || path[0] == '/' || path[0] == '\\' || path[1] == ':') return false;
     for (const char *s = path; *s;) {
         size_t n = strcspn(s, "/\\");
@@ -79,7 +78,7 @@ static bool path_inside(const char *path) {
 }
 
 int sigil_sync_put(const sigil_sync_request *req, const char *path, const uint8_t *data, size_t len) {
-    if (!path_inside(path) || req->write(req->write_ctx, path, data, len) != 0 ||
+    if (!sigil_sync_path_inside(path) || req->write(req->write_ctx, path, data, len) != 0 ||
         !sigil_sync_file_holds(req, path, data, len)) {
         return SIGIL_ERR_IO;
     }
@@ -87,7 +86,7 @@ int sigil_sync_put(const sigil_sync_request *req, const char *path, const uint8_
 }
 
 int sigil_sync_drop(const sigil_sync_request *req, const char *path) {
-    return path_inside(path) && req->remove(req->write_ctx, path) == 0 ? SIGIL_OK : SIGIL_ERR_IO;
+    return sigil_sync_path_inside(path) && req->remove(req->write_ctx, path) == 0 ? SIGIL_OK : SIGIL_ERR_IO;
 }
 
 /* The key the state keeps a game's sync under: the lowest of its ids, so

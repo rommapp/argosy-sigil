@@ -1,7 +1,7 @@
 # C
 
 `#include <sigil.h>`, link `libsigil` and its bundled decompression and
-crypto libs (README, "Building"). Every call returns `SIGIL_OK` or a
+crypto libs ([building.md](building.md)). Every call returns `SIGIL_OK` or a
 negative `SIGIL_ERR_*`; `sigil_strerror(code)` names it. The caller sets
 `struct_version` on every struct it passes.
 
@@ -49,7 +49,7 @@ typedef struct {
     sigil_platform platform;      /* sigil_platform_to_slug() for the slug. */
     sigil_source source;          /* SIGIL_SOURCE_BINARY, SIGIL_SOURCE_FILENAME. */
     sigil_usage usage;            /* SIGIL_USAGE_FOLDER_EXACT, _FOLDER_PREFIX, _FILE_EXACT, _FILE_PREFIX,
-                                     _FOLDER_SPLIT. README "usage" says how to apply save_id for each. */
+                                     _FOLDER_SPLIT. identification.md, "usage", says how to apply save_id for each. */
     int experimental;
     int switch_content_type;      /* SIGIL_SWITCH_CONTENT_UNKNOWN, _APPLICATION, _PATCH, _ADDON. */
     uint32_t title_version;       /* Switch only. */
@@ -69,7 +69,7 @@ strncpy(game.save_id, stored_save_id, sizeof(game.save_id) - 1);      /* or leav
 
 ## 2. Locate the saves
 
-At sync time. No file is read.
+At sync time. No save is read.
 
 ```c
 int sigil_save_resolve(
@@ -80,10 +80,10 @@ int sigil_save_resolve(
 typedef struct {
     uint32_t struct_version;              /* SIGIL_SAVE_REQUEST_V1 */
     const char *layout;                   /* required. Libretro core name without _libretro: genesis_plus_gx,
-                                             mednafen_psx_hw, mame2003_plus. A core without a README layout
+                                             mednafen_psx_hw, mame2003_plus. A core without a layout
                                              row gets the default row (<stem>.srm, plus <stem>.rtc when the
                                              cart has a clock). */
-    const char *platform;                 /* optional. Slug from the README platform table, or segacd, fds.
+    const char *platform;                 /* optional. Slug from identification.md, or segacd, fds.
                                              Rows limited to one platform match only when it is given. */
     const char *content_path;             /* required. The path you handed the emulator, verbatim: rom,
                                              .m3u, .cue, .chd, or archive.zip#member.ext when a member was
@@ -96,13 +96,19 @@ typedef struct {
                                              only the keys the row names are read. */
     size_t option_count;
     const char *const *listing;           /* required. Every file directly in the save root plus every file
-                                             under sigil_save_layout_subdirs(layout), four levels deep, as
+                                             under sigil_save_layout_subdirs(layout), twelve levels deep, as
                                              root-relative / paths. The root: the directory the emulator
                                              writes this game's save into; RetroArch: savefile_directory,
-                                             plus the core-named subfolder when sort_savefiles_enable is on. */
+                                             plus the core-named subfolder when sort_savefiles_enable is on.
+                                             Layouts with profiles: the emulator's base folder, see below. */
     size_t listing_count;
-    sigil_save_open_fn open;              /* optional. Set with open_ctx to hash in this call (step 3). */
+    sigil_save_open_fn open;              /* optional. Set with open_ctx to hash in this call (step 3). Layouts
+                                             with profiles read the emulator's profile list through it. */
     void *open_ctx;
+    const char *root_path;                /* optional. The root's own path, / or \ separated. Layouts with
+                                             profiles read from it where the root sits. */
+    const char *profile;                  /* optional. Layouts with profiles: the profile whose saves to take,
+                                             by sigil_save_profile.id. */
 } sigil_save_request;
 ```
 
@@ -122,15 +128,65 @@ typedef struct {
     char artifact[256];                   /* File name the upload travels under. */
     char content_hash[33];                /* "" until step 3. */
     char identity_hash[33];               /* "" until step 3. */
+    sigil_save_alternate *alternates;     /* Listed files other option values would take. */
+    size_t alternate_count;
 } sigil_save_unit;
+
+typedef struct {
+    char path[512];                       /* Root-relative. */
+    int shared;                           /* 1 for a file every game shares. */
+    sigil_save_option options[2];         /* The values that take it; send them to read it. */
+    size_t option_count;
+} sigil_save_alternate;
 
 typedef struct {
     char path[512];      /* Root-relative. */
     char entry[256];     /* Archive entry name. */
     int role;            /* SIGIL_SAVE_ROLE_PRIMARY, _SIDECAR, _RTC. */
     int present;
+    int area;            /* SIGIL_SAVE_AREA_ACCOUNT or _DEVICE on layouts with profiles, _NONE elsewhere. */
 } sigil_save_member;
 ```
+
+### Layouts with profiles
+
+`eden`, `citron`, `sudachi` and `yuzu` (Switch), `cemu` (Wii U), `vita3k`
+and `rpcs3` keep a game's saves in folders per user profile, and the Switch
+and Wii U also keep device saves every profile shares.
+[save-units.md](save-units.md#profiles) has the folders. The root is the emulator's base folder, the one holding
+`nand/`, `mlc01/`, `ux0/` or `dev_hdd0/`; a root above it works when the
+listing reaches below, and a root inside it works when `root_path` says
+where it is. `sigil_save_base` turns any path into the base and the
+profile the path lies in, so a caller can list the base instead:
+
+```c
+int sigil_save_base(
+    const char *layout,           /* required. */
+    const char *path,             /* required. Any path around the emulator's folders. */
+    char *base, size_t base_cap,  /* required. path cut above the top folder, or path itself. */
+    char *profile, size_t profile_cap   /* required. The profile folder path lies in, or "". */
+);                                /* SIGIL_ERR_INVALID_ARG when a buffer is too small. */
+
+const char *sigil_save_layout_top(const char *layout);   /* "nand", "mlc01", "ux0", "dev_hdd0", or NULL. */
+```
+
+```c
+int sigil_save_profiles(
+    const sigil_save_request *req,  /* required. layout, listing, root_path, and open for the yuzu forks;
+                                       the game fields are not read. */
+    sigil_save_profile **out,       /* required. Free with sigil_save_profiles_free. NULL when none. */
+    size_t *count                   /* required. */
+);                                  /* SIGIL_ERR_UNSUPPORTED_FORMAT on a layout without profiles. */
+```
+
+The profile is the request's, else the one the root lies in, else the only
+one the emulator lists. Resolve returns `SIGIL_ERR_AMBIGUOUS` when two or
+more are listed, none is picked and one holds the game's saves. If you
+don't know which profile the user plays as, list them with
+`sigil_save_profiles`, ask the user, and pass the answer as `profile`;
+keep it per user so the question comes once. Without
+`open`, a yuzu fork's list can't be read, so pass `profile` or a root inside
+the profile's folder.
 
 ## 3. Hash the saves
 
@@ -163,8 +219,9 @@ unit->identity_hash   /* The same over the non-rtc members. Different content_ha
 
 Upload by `shape`. `SINGLE` sends the member as is. `MULTI` zips the
 members flat, each under its `entry`. `FOLDER` zips the `key` folder so
-entries read `<key>/<file>`. Name the upload `artifact`. Hash rules and
-the layout table: README, "Save units".
+entries read `<key>/<file>`. Name the upload `artifact`. Hash rules:
+[save-units.md](save-units.md#hash); each system's layouts:
+[platforms/](platforms/README.md).
 
 Restore by `path`. Unzip a `MULTI` artifact so every entry lands at its
 member's `path` under the root. Unzip a `FOLDER` artifact from the
@@ -211,58 +268,10 @@ typedef struct {
 ## Sync
 
 `sigil_collect` gathers one game's saves into the unit that travels to RomM;
-`sigil_restore` puts a unit back and reads it back. PS1 and PS2 memory
-cards, PCSX2 folder cards, GameCube cards and Dolphin's GCI folder, Saturn
-and Sega CD backup RAM, and Dreamcast VMUs work today. On PS1 and PS2 the
-unit is one per-game card: a raw PS1 card, or an 8 MB `.ps2` card with ECC.
-Restore writes a PS1 card back in the form it found: a DexDrive `.gme`
-keeps its header, with the frame copies following the directory and a
-slot's comment kept only beside the save it was written for; a PSP or Vita
-`.vmp` keeps its seed and is signed for its new contents. A new card named
-`.VMP` (the `vita_pops` layout) is a signed `.vmp`. A `.vmp` whose
-signature doesn't match its card, which the console refuses, is damaged.
-A PCSX2 folder card gives the same unit as a file card: restore unpacks it
-into the game's save folders and removes files of the game's folders the
-unit lacks (through `remove`). It formats a new folder card, one with no
-save folders, by writing its `_pcsx2_superblock`. A save folder whose
-`_pcsx2_index` doesn't parse is damaged: collect and restore return
-`SIGIL_ERR_DAMAGED` naming the index, and with `repair` read the folder
-without it and write a fresh one. Restore refuses the same way to write onto
-a card that holds saves behind an unusable superblock, and with `repair`
-writes a new superblock; collect reads such a card's folders as they are.
-A card or volume file sigil can't read as what its path holds (no card
-magic, cut short, an internal volume where a cart goes) is damaged too, and so is a save folder of the game or a companion that sigil can't
-pack (a subdirectory, a file name longer than a card entry holds), which
-PCSX2 still shows. So is a card or volume holding a corrupt save that may be
-the game's or a companion's (one carrying their id, one the owner rules give
-them, or one whose name the card lost), since collect would read that save
-as deleted. A managed restore also refuses a shared volume holding any
-corrupt save, which the swap would drop; unmanaged keeps it in place.
-`repair` changes none of these: sigil never writes over saves it can't
-read. An empty file counts as no card. On
-GameCube it is the game's saves as `.gci` files named as Dolphin names
-them (`<maker>-<gamecode>-<file>.gci`, escaped): the one file, or a zip
-of them named `<stem>.zip`. It is the same whether they came off a raw
-card or a GCI folder, and restore puts them into either; F-Zero GX's save
-is bound to the target card's serial on a raw card, as Dolphin binds it.
-Into a GCI folder, restore refuses with `SIGIL_ERR_NO_SPACE` a save Dolphin
-wouldn't load: Dolphin loads the running game's files first, then other
-games' (a companion's too) in name order while each leaves a tenth of the
-folder's blocks free, up to 112 saves, on a folder the size `MemoryCardSize`
-sets. Files are found by a `.gci` extension in any case.
-On Saturn and Sega CD it is the game's internal
-volume (`backup.ram`) when it has internal saves alone, else a zip named
-`<stem>.zip` holding `backup.ram` and `cart.ram` as present. On Dreamcast
-it is the game's VMU A1 (`vmu_A1.bin`) when it has saves there alone, else
-a zip of `vmu_A1.bin` to `vmu_D2.bin` as present. The member name, not the
-size, says which device a volume is, since a 4 MiB Saturn volume can be
-Yaba Sanshiro's internal memory or a 32 Mbit cart. Every
-volume in a unit is raw, whatever form the emulator stores it in; restore
-writes each file back in the emulator's form (gzip, byte expansion), and a
-file the emulator hasn't created yet in the form and size its layout row
-names. Every Saturn core but Yaba Sanshiro keeps 32 KiB of internal memory,
-so a unit whose internal saves need more returns `SIGIL_ERR_NO_SPACE` there
-with the blocks they lack.
+`sigil_restore` puts a unit back and reads it back. [sync.md](sync.md) has
+the rules every system shares (whose saves, managed and unmanaged, damaged
+files, companions, refusals); each system's page under
+[platforms/](platforms/README.md) has what its unit holds.
 
 ```c
 typedef struct {
@@ -316,11 +325,13 @@ typedef struct {
     char content_hash[33];            /* RomM content_hash of the unit. */
     char identity_hash[33];           /* Over the saves themselves; placement and timestamps don't move it. */
     int changed;                      /* identity_hash differs from the last sync. */
-    int conflict;                     /* restore wrote nothing because local saves changed. */
+    int conflict;                     /* restore wrote nothing because local saves changed; set exactly
+                                         when it returns SIGIL_ERR_CONFLICT. The bindings raise the
+                                         error and carry no such field. */
     uint8_t *state;                   /* Store it once every upload succeeded; pass it back next time. */
     size_t state_len;
-    uint8_t *holding;                 /* collect, Saturn and Sega CD: zip of the saves on a shared volume
-                                         with no known owner. NULL when there are none. */
+    uint8_t *holding;                 /* collect, Saturn, Sega CD and Dreamcast: zip of the saves on a
+                                         shared volume with no known owner. NULL when there are none. */
     size_t holding_len;
     char (*unowned)[64];              /* The names of the saves in holding. */
     size_t unowned_count;
@@ -332,7 +343,18 @@ typedef struct {
     uint32_t blocks_short;            /* SIGIL_ERR_NO_SPACE: the blocks the save lacked; 0 when there were
                                          enough free blocks but no directory slot, or other saves hold
                                          the blocks a Dreamcast game file must start at. */
+    sigil_save_profile *profiles;     /* Layouts with profiles: every profile the emulator lists. */
+    size_t profile_count;
+    char profile[64];                 /* The profile whose saves collect took or restore wrote. */
+    sigil_save_alternate *alternates; /* Listed files other option values would take, as on the unit. */
+    size_t alternate_count;
 } sigil_sync_result;
+
+typedef struct {
+    char id[64];                      /* As its save folder is named: Switch 125D2DBAEBDEB11000296E1E1ECBF401,
+                                         Wii U 80000001, Vita3K 00, RPCS3 00000001. */
+    char name[64];                    /* The nickname, UTF-8; "" when the emulator keeps none. */
+} sigil_save_profile;
 
 typedef struct {
     uint8_t *data;                    /* The companion's unit; NULL when none of its saves are there. */
@@ -343,14 +365,7 @@ typedef struct {
 } sigil_sync_companion_result;
 ```
 
-A game that reads an earlier title's save, as a sequel reads its prequel's,
-lists that title in `companions`. Restore puts each companion's saves on the
-game's card, volume or GCI folder beside the game's own. A companion without
-a unit keeps the saves it already has there. Collect leaves companion saves
-out of the game's unit and hash, and returns each companion's saves as its
-own unit, with `changed` against that companion's last sync.
-
-Restore refuses, writing nothing, with:
+Restore refuses, writing nothing, with (the rules: [sync.md](sync.md#refusals)):
 
 | Code | When | `problem` |
 |---|---|---|
@@ -359,50 +374,14 @@ Restore refuses, writing nothing, with:
 | `SIGIL_ERR_NO_SPACE` | the saves don't fit; `blocks_short` says by how much | the save |
 | `SIGIL_ERR_REGION` | a GameCube companion's save is from another Dolphin region than the game | the save |
 | `SIGIL_ERR_DAMAGED` | a file the saves go in is damaged and `repair` is 0, it isn't a card sigil can read, or it holds a corrupt save of the game or a companion (above) | the file |
-| `SIGIL_ERR_AMBIGUOUS` | more than one file could be the emulator's card and the options don't say which: Dolphin raw cards of two sizes with no `MemoryCardSize`. Collect refuses the same way | the files, one per line |
-| `SIGIL_ERR_NO_TARGET` | the unit holds a volume the emulator's settings keep no file for: a `cart.ram` for a core with no cart, a VMU port flycast doesn't keep per game | the unit member |
+| `SIGIL_ERR_AMBIGUOUS` | more than one file could be the emulator's card and the options don't say which: Dolphin raw cards of two sizes with no `MemoryCardSize`. On layouts with profiles, two or more profiles and none picked, for a unit with an account save (ask the user which profile is theirs; `profiles` or `sigil_save_profiles` lists them); or two emulator folders under the root. Collect refuses the same way | the files, the profiles as `id name`, or the folders, one per line |
+| `SIGIL_ERR_NO_TARGET` | the unit holds a volume the emulator's settings keep no file for: a `cart.ram` for a core with no cart, a VMU port flycast doesn't keep per game. On layouts with profiles, a member no folder of the game takes, an account save with no profile there, or a folder outside the root | the unit member |
+| `SIGIL_ERR_UNSUPPORTED_FORMAT` | layouts with profiles: two unit members go to one file | |
+| `SIGIL_ERR_IO` | a unit member's path would leave the save root, or a file the listing holds won't open through `open`. Collect refuses the same way, so a file it can't read never counts as no saves | |
 | `SIGIL_ERR_EXISTS` | Dolphin's GCI folder holds other games' files under the name Dolphin gives a new save and each of its ten `0`-inserted forms, so Dolphin would write over one | the save |
 
 Collect refuses with `SIGIL_ERR_DAMAGED` and `SIGIL_ERR_AMBIGUOUS` in the same way. With each of
-these the call still sets `*out`; free it as usual. sigil reports and the
-client decides: re-run with `overwrite_local` or `repair` once the user
-agreed, or leave the saves as they are.
-
-A game's saves are the ones carrying one of its ids, on its own card and on
-the shared cards beside it. Restore puts each save back on the card it was
-on, or on the game's own card when it is new; it never touches another
-game's save, and refuses with `SIGIL_ERR_NO_SPACE` before writing when the
-saves don't fit. A unit holding none of the game's saves is refused with
-`SIGIL_ERR_NOT_FOUND`. Saves of other games inside a unit are ignored.
-
-Saturn, Sega CD and Dreamcast saves carry no game id. Every save on a
-per-game volume (Beetle Saturn's `<stem>.srm` and `.bcr`, genesis_plus_gx
-with `system_bram` = `per game`, flycast's per-game VMUs) is the game's. On
-a shared volume (genesis_plus_gx's default `scd_U.brm`, Beetle's shared
-volumes, Yaba Sanshiro's `backup.bin`, flycast's `vmu_save_A1.bin`) a save
-belongs to the game the user claimed it for, else to the game the state
-learned it belongs to, else, in managed mode, to the game the volume was
-last swapped in for, else to the game the save-name table gives it by one
-of the ids in `title_id` or `game_ids` (`src/save_names.c`; Saturn and
-Sega CD product codes as the disc header spells them, Dreamcast product
-numbers). The rest come back in `holding`, which the client
-keeps where the user can claim them; `holding` and the unit both go up
-before the state is stored.
-
-In managed mode, restore swaps each shared volume for one holding only the
-game's saves, keeping the file's form (gzip, byte expansion). It refuses
-with `SIGIL_ERR_UNCOLLECTED` while the volume holds a save that isn't in
-the last holding unit or doesn't match its game's last collect: call
-collect for the game that ran last, upload, then restore again. In
-unmanaged mode, restore never swaps. It replaces only the game's saves,
-and only when the volume is as the last collect saw it; a collect that
-then finds the old saves back sets `restore_again`.
-
-genesis_plus_gx picks `scd_E`, `scd_U` or `scd_J` by the disc's region.
-sigil takes the region from `genesis_plus_gx_region_detect` when it is
-forced, else from the content file name's first region tag, such as
-`(USA)`, else from the only one of the three files present. Otherwise
-collect and restore return `SIGIL_ERR_NOT_FOUND`.
+these the call still sets `*out`; free it as usual.
 
 ## Helpers
 

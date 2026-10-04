@@ -18,7 +18,7 @@ typedef struct {
     int64_t  stamp;           /* Unix seconds, UTC */
 } sigil_gb_clock;
 
-/** The clock layouts emulators write. See docs/save-research/nintendo-cart.md section 2.1. */
+/** The clock layouts emulators write. See docs/platforms/gb.md, "What the stored clock means". */
 typedef enum {
     SIGIL_GB_CLOCK_VBA,           /* 48 bytes: 10 u32 LE regs (current, latched), u64 LE time. VBA-M, SameBoy, Gearboy standalone, and the neutral form */
     SIGIL_GB_CLOCK_VBA32,         /* 44 bytes: the same with a u32 time */

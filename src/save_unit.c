@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-#include "save_layout.h"
+#include "save_profiles.h"
 #include <ctype.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -54,14 +54,38 @@ static bool condition_holds(const sigil_save_request *req, const char *key,
     return strcmp(actual, value) == 0;
 }
 
+/* A member or shared file of a row, with the options that select it. */
+typedef struct {
+    const char *template_;
+    const char *keys[2];
+    const char *values[2];
+    bool        defaults[2];
+    int         shared;
+} row_file;
+
+static row_file member_file(const sigil_layout_member *lm) {
+    return (row_file){ lm->template_, { lm->opt_key, lm->opt2_key }, { lm->opt_value, lm->opt2_value },
+                       { lm->opt_default, lm->opt2_default }, 0 };
+}
+
+static row_file shared_file(const sigil_layout_shared *ls) {
+    return (row_file){ ls->template_, { ls->opt_key, ls->opt2_key }, { ls->opt_value, ls->opt2_value },
+                       { ls->opt_default, ls->opt2_default }, 1 };
+}
+
+static bool file_applies(const sigil_save_request *req, const row_file *f) {
+    return condition_holds(req, f->keys[0], f->values[0], f->defaults[0]) &&
+           condition_holds(req, f->keys[1], f->values[1], f->defaults[1]);
+}
+
 static bool member_applies(const sigil_save_request *req, const sigil_layout_member *lm) {
-    return condition_holds(req, lm->opt_key, lm->opt_value, lm->opt_default) &&
-           condition_holds(req, lm->opt2_key, lm->opt2_value, lm->opt2_default);
+    row_file f = member_file(lm);
+    return file_applies(req, &f);
 }
 
 static bool shared_applies(const sigil_save_request *req, const sigil_layout_shared *ls) {
-    return condition_holds(req, ls->opt_key, ls->opt_value, ls->opt_default) &&
-           condition_holds(req, ls->opt2_key, ls->opt2_value, ls->opt2_default);
+    row_file f = shared_file(ls);
+    return file_applies(req, &f);
 }
 
 /* genesis_plus_gx's RAM cart: genesis_plus_gx_cart_size names the size, the
@@ -103,13 +127,44 @@ typedef struct {
     char stem[SIGIL_SAVE_ENTRY_MAX];
     char dc_vmu_id[sizeof(((sigil_result *)0)->title_id)];
     char disc_id[sizeof(((sigil_result *)0)->title_id)];
+    char pcsx_serial[sizeof(((sigil_result *)0)->raw_serial)];
 } expand_ctx;
 
-/* A PSP EBOOT's DISC_ID: the title id's letters and digits (SLUS-01040 is
- * SLUS01040). */
+#define PCSX_CDROM_ID_MAX 9
+
+/* pcsx_rearmed's card name for a disc: the boot file's letters and digits as
+ * written, cut at nine (libpcsxcore/misc.c CheckCdrom), with a dash before the
+ * first digit (frontend/libretro.c get_dash_serial). raw_serial keeps the boot
+ * file as written; title_id stands in when there is none. */
+static void pcsx_serial(const sigil_save_request *req, char *out, size_t cap) {
+    out[0] = '\0';
+    if (!req->result) return;
+    const char *id = req->result->raw_serial[0] ? req->result->raw_serial : req->result->title_id;
+    char alnum[PCSX_CDROM_ID_MAX + 1];
+    size_t n = 0;
+    for (; *id && n < PCSX_CDROM_ID_MAX; id++) {
+        if (isalnum((unsigned char)*id)) alnum[n++] = *id;
+    }
+    alnum[n] = '\0';
+    size_t d = 0;
+    bool dashed = false;
+    for (size_t s = 0; alnum[s] && d + 1 < cap; d++) {
+        if (!dashed && isdigit((unsigned char)alnum[s])) {
+            out[d] = '-';
+            dashed = true;
+            continue;
+        }
+        out[d] = alnum[s++];
+    }
+    out[d] = '\0';
+}
+
+/* A PSP EBOOT's DISC_ID: the save id's letters and digits (SLUS-01040 is
+ * SLUS01040), the title id's when there is none. One EBOOT holds every disc
+ * of a set under one DISC_ID, so a later disc names that folder by save_id. */
 static void disc_id(const sigil_save_request *req, char *out, size_t cap) {
     size_t n = 0;
-    const char *id = req->result ? req->result->title_id : "";
+    const char *id = !req->result ? "" : req->result->save_id[0] ? req->result->save_id : req->result->title_id;
     for (; *id && n + 1 < cap; id++) {
         if (isalnum((unsigned char)*id)) out[n++] = *id;
     }
@@ -151,6 +206,17 @@ static void expand_ctx_init(expand_ctx *ctx, const sigil_save_request *req) {
     sigil_content_stem(req->content_path, ctx->stem, sizeof(ctx->stem));
     dc_vmu_id(req, ctx->dc_vmu_id, sizeof(ctx->dc_vmu_id));
     disc_id(req, ctx->disc_id, sizeof(ctx->disc_id));
+    pcsx_serial(req, ctx->pcsx_serial, sizeof(ctx->pcsx_serial));
+}
+
+/* A Beetle PSX card index, read under the option prefix of the build the row
+ * names: beetle_psx_ for the software core, beetle_psx_hw_ otherwise. */
+static const char *beetle_psx_index(const sigil_save_request *req, const char *suffix, const char *fallback) {
+    char key[64];
+    bool software = req->layout && strcmp(req->layout, "mednafen_psx") == 0;
+    snprintf(key, sizeof(key), "%s%s", software ? "beetle_psx_" : "beetle_psx_hw_", suffix);
+    const char *v = sigil_save_option_value(req, key);
+    return v ? v : fallback;
 }
 
 static const char *variable_value(const expand_ctx *ctx, const char *name, size_t len) {
@@ -161,6 +227,7 @@ static const char *variable_value(const expand_ctx *ctx, const char *name, size_
     if (len == 7 && strncmp(name, "save_id", 7) == 0) return req->result ? req->result->save_id : NULL;
     if (len == 9 && strncmp(name, "dc_vmu_id", 9) == 0) return ctx->dc_vmu_id;
     if (len == 7 && strncmp(name, "disc_id", 7) == 0) return ctx->disc_id;
+    if (len == 11 && strncmp(name, "pcsx_serial", 11) == 0) return ctx->pcsx_serial;
     if (len == 9 && strncmp(name, "gc_region", 9) == 0) return gc_region(req);
     if (len == 9 && strncmp(name, "cart_size", 9) == 0) {
         const gpgx_cart *cart = gpgx_cart_for(req);
@@ -170,14 +237,8 @@ static const char *variable_value(const expand_ctx *ctx, const char *name, size_
         const char *v = sigil_save_option_value(req, "opera_nvram_version");
         return v ? v : "0";
     }
-    if (len == 10 && strncmp(name, "left_index", 10) == 0) {
-        const char *v = sigil_save_option_value(req, "beetle_psx_hw_memcard_left_index");
-        return v ? v : "0";
-    }
-    if (len == 11 && strncmp(name, "right_index", 11) == 0) {
-        const char *v = sigil_save_option_value(req, "beetle_psx_hw_memcard_right_index");
-        return v ? v : "1";
-    }
+    if (len == 10 && strncmp(name, "left_index", 10) == 0) return beetle_psx_index(req, "memcard_left_index", "0");
+    if (len == 11 && strncmp(name, "right_index", 11) == 0) return beetle_psx_index(req, "memcard_right_index", "1");
     return NULL;
 }
 
@@ -206,7 +267,7 @@ static bool expand_template(const expand_ctx *ctx, const char *template_, char *
 
 /* ---- listing --------------------------------------------------------------- */
 
-static bool listing_has(const sigil_save_request *req, const char *path) {
+bool sigil_save_listed(const sigil_save_request *req, const char *path) {
     for (size_t i = 0; i < req->listing_count; i++) {
         if (req->listing[i] && strcmp(req->listing[i], path) == 0) return true;
     }
@@ -282,7 +343,7 @@ static int collect(const sigil_layout *layout, const sigil_save_request *req,
         }
 
         file_entry_name(path, entry, sizeof(entry));
-        if (listing_has(req, path)) {
+        if (sigil_save_listed(req, path)) {
             add_member(b, path, entry, lm->role, 1);
         } else if (lm->role == SIGIL_SAVE_ROLE_PRIMARY) {
             add_member(b, path, entry, lm->role, 0);
@@ -295,7 +356,7 @@ static int collect(const sigil_layout *layout, const sigil_save_request *req,
         const sigil_layout_shared *ls = &layout->shared[i];
         if (!shared_applies(req, ls)) continue;
         if (!expand_template(ctx, ls->template_, path, sizeof(path))) continue;
-        if (!listing_has(req, path)) continue;
+        if (!sigil_save_listed(req, path)) continue;
         if (b->unkeyed_count >= UNIT_MAX_UNKEYED) break;
         strncpy(b->unkeyed[b->unkeyed_count], path, SIGIL_SAVE_PATH_MAX - 1);
         b->unkeyed[b->unkeyed_count][SIGIL_SAVE_PATH_MAX - 1] = '\0';
@@ -432,6 +493,51 @@ static void artifact_name(sigil_save_unit *unit) {
     snprintf(unit->artifact, SIGIL_SAVE_ENTRY_MAX, "%s.zip", base);
 }
 
+/* A layout with profiles: the game's files in the profile's account folder
+ * and the device folders, under their unit names. */
+static int resolve_profiles(const sigil_save_request *req, const sigil_layout_profiles *row, sigil_save_unit **out) {
+    if (!req->result || !req->result->save_id[0]) return SIGIL_ERR_INVALID_ARG;
+    sigil_profile_root p;
+    char problem[SIGIL_SAVE_PATH_MAX];
+    int rc = sigil_profile_root_open(req, row, &p, problem);
+    if (rc == SIGIL_OK && sigil_profile_undecided(&p)) rc = SIGIL_ERR_AMBIGUOUS;
+    sigil_profile_file *files = NULL;
+    size_t count = 0;
+    if (rc == SIGIL_OK) rc = sigil_profile_files(&p, p.profile, &files, &count);
+    sigil_save_unit *unit = rc == SIGIL_OK ? (sigil_save_unit *)calloc(1, sizeof(*unit)) : NULL;
+    if (rc == SIGIL_OK && !unit) rc = SIGIL_ERR_OOM;
+    if (rc == SIGIL_OK && count) {
+        unit->members = (sigil_save_member *)calloc(count, sizeof(sigil_save_member));
+        if (!unit->members) rc = SIGIL_ERR_OOM;
+    }
+    if (rc != SIGIL_OK) {
+        free(files);
+        free(unit);
+        return rc;
+    }
+    unit->struct_version = SIGIL_SAVE_UNIT_V1;
+    snprintf(unit->key, sizeof(unit->key), "%s", p.save_id);
+    for (size_t i = 0; i < count; i++) {
+        sigil_save_member *m = &unit->members[i];
+        snprintf(m->path, sizeof(m->path), "%s", files[i].path);
+        snprintf(m->entry, sizeof(m->entry), "%s", files[i].entry);
+        m->role = SIGIL_SAVE_ROLE_PRIMARY;
+        m->present = 1;
+        m->area = files[i].area;
+    }
+    free(files);
+    unit->member_count = count;
+    unit->shape = count ? SIGIL_SAVE_SHAPE_FOLDER : SIGIL_SAVE_SHAPE_NONE;
+    artifact_name(unit);
+    if (req->open) rc = sigil_save_hash(unit, req->open, req->open_ctx);
+    if (rc != SIGIL_OK) {
+        sigil_save_unit_free(unit);
+        return rc;
+    }
+    *out = unit;
+    return SIGIL_OK;
+}
+
 int sigil_save_resolve(const sigil_save_request *req, sigil_save_unit **out) {
     if (!req || !out || req->struct_version != SIGIL_SAVE_REQUEST_V1) return SIGIL_ERR_INVALID_ARG;
     if (!req->content_path || !req->listing) return SIGIL_ERR_INVALID_ARG;
@@ -445,6 +551,7 @@ int sigil_save_resolve(const sigil_save_request *req, sigil_save_unit **out) {
     if (req->result && req->result->struct_version >= SIGIL_RESULT_V3) features |= req->result->features;
 
     const sigil_layout *layout = sigil_layout_find(req->layout, req->platform);
+    if (layout->profiles) return resolve_profiles(req, layout->profiles, out);
 
     unit_builder *b = (unit_builder *)calloc(1, sizeof(*b));
     if (!b) return SIGIL_ERR_OOM;
@@ -482,12 +589,85 @@ int sigil_save_resolve(const sigil_save_request *req, sigil_save_unit **out) {
 
     artifact_name(unit);
 
-    if (req->open) {
-        int rc = sigil_save_hash(unit, req->open, req->open_ctx);
-        if (rc != SIGIL_OK) { sigil_save_unit_free(unit); return rc; }
-    }
+    int rc = sigil_save_alternates(req, &unit->alternates, &unit->alternate_count);
+    if (rc == SIGIL_OK && req->open) rc = sigil_save_hash(unit, req->open, req->open_ctx);
+    if (rc != SIGIL_OK) { sigil_save_unit_free(unit); return rc; }
 
     *out = unit;
+    return SIGIL_OK;
+}
+
+/* ---- alternates -------------------------------------------------------------- */
+
+static size_t row_file_count(const sigil_layout *layout) {
+    return layout->member_count + layout->shared_count;
+}
+
+static row_file row_file_at(const sigil_layout *layout, size_t i) {
+    return i < layout->member_count ? member_file(&layout->members[i])
+                                    : shared_file(&layout->shared[i - layout->member_count]);
+}
+
+/* A file the request's options already take, by any member or shared file. */
+static bool taken_now(const sigil_layout *layout, const sigil_save_request *req, const expand_ctx *ctx,
+                      const char *path) {
+    char other[SIGIL_SAVE_PATH_MAX];
+    for (size_t i = 0; i < row_file_count(layout); i++) {
+        row_file f = row_file_at(layout, i);
+        if (file_applies(req, &f) && expand_template(ctx, f.template_, other, sizeof(other)) &&
+            strcmp(other, path) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool already_listed(const sigil_save_alternate *list, size_t count, const char *path) {
+    for (size_t i = 0; i < count; i++) {
+        if (strcmp(list[i].path, path) == 0) return true;
+    }
+    return false;
+}
+
+int sigil_save_alternates(const sigil_save_request *req, sigil_save_alternate **out, size_t *count) {
+    *out = NULL;
+    *count = 0;
+    if (!req->content_path || !req->listing) return SIGIL_OK;
+    const sigil_layout *layout = sigil_layout_find(req->layout, req->platform);
+    if (layout->profiles) return SIGIL_OK;
+    expand_ctx ctx;
+    expand_ctx_init(&ctx, req);
+    if (ctx.stem[0] == '\0') return SIGIL_OK;
+
+    sigil_save_alternate *list = NULL;
+    size_t n = 0;
+    char path[SIGIL_SAVE_PATH_MAX];
+    for (size_t i = 0; i < row_file_count(layout); i++) {
+        row_file f = row_file_at(layout, i);
+        if (!expand_template(&ctx, f.template_, path, sizeof(path)) || path[strlen(path) - 1] == '/') continue;
+        if (!sigil_save_listed(req, path) || taken_now(layout, req, &ctx, path) || already_listed(list, n, path)) {
+            continue;
+        }
+        sigil_save_alternate *grown = (sigil_save_alternate *)realloc(list, (n + 1) * sizeof(*list));
+        if (!grown) {
+            free(list);
+            return SIGIL_ERR_OOM;
+        }
+        list = grown;
+        sigil_save_alternate *a = &list[n++];
+        memset(a, 0, sizeof(*a));
+        snprintf(a->path, sizeof(a->path), "%s", path);
+        a->shared = f.shared;
+        for (size_t k = 0; k < 2; k++) {
+            if (f.keys[k] && !condition_holds(req, f.keys[k], f.values[k], f.defaults[k])) {
+                a->options[a->option_count].key = f.keys[k];
+                a->options[a->option_count].value = f.values[k];
+                a->option_count++;
+            }
+        }
+    }
+    *out = list;
+    *count = n;
     return SIGIL_OK;
 }
 
@@ -562,7 +742,7 @@ int sigil_save_volume_targets(const sigil_save_request *req, sigil_volume_target
             char path[SIGIL_SAVE_PATH_MAX];
             if (lm->device != device || !member_applies(req, lm)) continue;
             if (!expand_template(&ctx, lm->template_, path, sizeof(path))) continue;
-            found_present = listing_has(req, path);
+            found_present = sigil_save_listed(req, path);
             if (found && !found_present) continue;
             found = true;
             snprintf(t->path, sizeof(t->path), "%s", path);
@@ -582,7 +762,7 @@ int sigil_save_volume_targets(const sigil_save_request *req, sigil_volume_target
             if (ls->device != device || !shared_applies(req, ls)) continue;
             if (!expand_template(&ctx, ls->template_, path, sizeof(path))) continue;
             candidates++;
-            bool here = listing_has(req, path);
+            bool here = sigil_save_listed(req, path);
             if (here) {
                 present++;
                 only_present = ls;
@@ -619,5 +799,6 @@ void sigil_save_unit_free(sigil_save_unit *unit) {
     free(unit->members);
     free(unit->expected);
     free(unit->unkeyed);
+    free(unit->alternates);
     free(unit);
 }

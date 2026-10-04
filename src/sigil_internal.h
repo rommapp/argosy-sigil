@@ -139,14 +139,26 @@ int sigil_nca_decrypt_header(const uint8_t *raw_header,
 void sigil_aes_ctr_crypt(const uint8_t key[16], uint8_t ctr[16],
                          uint8_t *buf, size_t len);
 
-/* Title facts a Switch container walk resolves. `content_type` and `version`
- * are populated only from CNMT; `from_cnmt` marks the authoritative path. */
+/* Title facts a Switch container walk resolves. `content_type`, `version`
+ * and `application_id` are populated only from CNMT; `from_cnmt` marks the
+ * authoritative path. */
 typedef struct {
-    char     title_id[17];
+    char     title_id[17];         /* the content's own id: an update's or a DLC's differs from its game's */
+    char     application_id[17];   /* the game it belongs to, whose id the save folder carries */
     int      content_type;   /* enum sigil_switch_content_type */
     uint32_t version;
     bool     from_cnmt;
 } sigil_switch_title;
+
+/* The game a Switch content id belongs to, read from the id alone (a file
+ * name's): an id ending in 800 is an update of the game ending in 000, one
+ * ending in anything else but 000 a DLC of the game 0x1000 below its block. */
+void sigil_switch_application_of_id(const char id[17], char out[17]);
+
+/* Keeps `t` in `*best` when nothing is kept yet (`*have` false) or `t` is an
+ * application, so a dump holding a game beside its update or DLC reads as the
+ * game. True once an application is kept: the walk can stop. */
+bool sigil_switch_title_keep(sigil_switch_title *best, bool *have, const sigil_switch_title *t);
 
 /* Given a decrypted Meta NCA header plus the raw container IO and the key
  * material, decrypt the section, locate the .cnmt and read the authoritative
@@ -293,6 +305,16 @@ size_t sigil_save_shared_paths(const sigil_save_request *req, char (*out)[SIGIL_
 
 /** The request's value for option `key`, or NULL when it gives none. */
 const char *sigil_save_option_value(const sigil_save_request *req, const char *key);
+
+/** `path` is in the request's listing. */
+bool sigil_save_listed(const sigil_save_request *req, const char *path);
+
+/**
+ * The listed files the layout would take under other option values, each with
+ * the values that take it; `*out` is freed with free(). None on a layout with
+ * profiles. SIGIL_ERR_OOM is the only failure.
+ */
+int sigil_save_alternates(const sigil_save_request *req, sigil_save_alternate **out, size_t *count);
 
 /**
  * The region letter that ends a GameCube game code, from the result's raw

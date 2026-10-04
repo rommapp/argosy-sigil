@@ -241,6 +241,49 @@ static void check_restore_into_empty_root(const sigil_sync_result *first) {
     root_free(&root);
 }
 
+/* pcsx_rearmed's serial mode: a unit restores into the card named after the
+ * boot file as pcsx names it, and collects back unchanged; its shared mode
+ * finds the game's saves on pcsx-card1.mcd. */
+static void check_pcsx_card_modes(const sigil_sync_result *first) {
+    if (!first) return;
+    mem_root root = {0};
+    game g;
+    make_game(&g, &root, "pcsx_rearmed", "Xenogears (USA) (Disc 1).cue", "SLUS-00664", XENOGEARS, 2);
+    snprintf(g.result.raw_serial, sizeof(g.result.raw_serial), "%s", "slus_006.64");
+    g.options[0] = (sigil_save_option){ "pcsx_rearmed_memcard1", "serial" };
+    g.req.save.options = g.options;
+    g.req.save.option_count = 1;
+    sigil_sync_result *r = NULL;
+    if (sigil_restore(&g.req, first->data, first->len, &r) != SIGIL_OK) {
+        fail("pcsx serial card", "restore failed");
+    } else if (!root_find(&root, "slus-00664_1.mcd") || root.count != 1) {
+        fail("pcsx serial card", "the card didn't go where pcsx_rearmed keeps it");
+    } else {
+        refresh_listing(&g, &root);
+        sigil_sync_result *back = NULL;
+        if (sigil_collect(&g.req, &back) != SIGIL_OK || strcmp(back->identity_hash, first->identity_hash) != 0) {
+            fail("pcsx serial card", "saves differ after the trip");
+        }
+        sigil_sync_result_free(back);
+
+        mem_file *f = root_find(&root, "slus-00664_1.mcd");
+        mem_root shared = {0};
+        root_put(&shared, "pcsx-card1.mcd", f->data, f->len);
+        make_game(&g, &shared, "pcsx_rearmed", "Xenogears (USA) (Disc 1).cue", "SLUS-00664", XENOGEARS, 2);
+        g.options[0] = (sigil_save_option){ "pcsx_rearmed_memcard1", "shared" };
+        g.req.save.options = g.options;
+        g.req.save.option_count = 1;
+        back = NULL;
+        if (sigil_collect(&g.req, &back) != SIGIL_OK || strcmp(back->identity_hash, first->identity_hash) != 0) {
+            fail("pcsx shared card 1", "the game's saves on pcsx-card1.mcd were not found");
+        }
+        sigil_sync_result_free(back);
+        root_free(&shared);
+    }
+    sigil_sync_result_free(r);
+    root_free(&root);
+}
+
 static uint8_t *extract_named(const uint8_t *image, const char *name, size_t *len) {
     sigil_card_listing *l = NULL;
     uint8_t *mcs = NULL;
@@ -627,6 +670,36 @@ static void check_faulty_writes(const sigil_sync_result *first) {
     }
 }
 
+/* A listed card the client can't open is an I/O error, never an absent
+ * card: collect would report no saves, and restore would write a fresh card
+ * over the other games' saves on it. */
+static void check_unreadable_card(void) {
+    size_t len = 0;
+    uint8_t *card = sample("megaman-bad-link-mcd", &len);
+    if (!card) return;
+    mem_root root = {0};
+    root_put(&root, "Mega Man Legends 2 (USA).srm", card, len);
+    game g;
+    make_game(&g, &root, "pcsx_rearmed", "Mega Man Legends 2 (USA).cue", "SLUS-01334", MEGAMAN, 1);
+    sigil_sync_result *unit = NULL;
+    if (sigil_collect(&g.req, &unit) != SIGIL_OK || !unit->data) fail("unreadable card", "setup collect failed");
+
+    snprintf(root.unreadable, sizeof(root.unreadable), "%s", "Mega Man Legends 2 (USA).srm");
+    sigil_sync_result *r = NULL;
+    if (sigil_collect(&g.req, &r) != SIGIL_ERR_IO) fail("unreadable card", "collect read an unopenable card as no saves");
+    sigil_sync_result_free(r);
+    g.req.overwrite_local = 1;
+    r = NULL;
+    if (unit && unit->data && sigil_restore(&g.req, unit->data, unit->len, &r) != SIGIL_ERR_IO) {
+        fail("unreadable card", "restore wrote over a card it couldn't read");
+    }
+    if (root.writes) fail("unreadable card", "restore wrote");
+    sigil_sync_result_free(r);
+    sigil_sync_result_free(unit);
+    root_free(&root);
+    free(card);
+}
+
 #define BUGS_CUE  "Bugs Bunny - Lost in Time (Europe).cue"
 #define BUGS_CARD "Bugs Bunny - Lost in Time (Europe).srm"
 static const char *const BUGS[] = { "SLES-01726" };
@@ -749,6 +822,46 @@ static void check_vita_console_card(void) {
     mem_file *kept = root_find(&fresh, CT_DIR "PARAM.SFO");
     if (!kept || kept->len != lens[2] || memcmp(kept->data, files[2], lens[2]) != 0) {
         fail("vita console card", "restore rewrote the PARAM.SFO the Vita wrote");
+    }
+done:
+    sigil_sync_result_free(r);
+    sigil_sync_result_free(unit);
+    root_free(&vita);
+    root_free(&fresh);
+    for (size_t i = 0; i < 5; i++) free(files[i]);
+}
+
+/* A later disc of a set syncs the EBOOT's one folder when the client names
+ * it as save_id: collect finds the card and restore writes nowhere else. */
+static void check_pops_later_disc(void) {
+    static const char *const SET[] = { "SLUS-01363", "SLUS-01364" };
+    mem_root vita = {0}, fresh = {0};
+    uint8_t *files[5] = { NULL };
+    size_t lens[5] = { 0 };
+    bool loaded = true;
+    for (size_t i = 0; i < 5; i++) {
+        char path[128];
+        snprintf(path, sizeof(path), CT_DIR "%s", CT_FILES[i]);
+        files[i] = corpus_sample(&g_manifest, "psx", "chrono-trigger-vita-pops", path, &lens[i]);
+        loaded = loaded && files[i];
+        if (files[i]) root_put(&vita, path, files[i], lens[i]);
+    }
+    sigil_sync_result *unit = NULL, *r = NULL;
+    game g;
+    if (!loaded) { fail("pops later disc", "setup failed"); goto done; }
+    make_game(&g, &vita, "vita_pops", "Chrono Trigger (Disc 2).cue", "SLUS-01364", SET, 2);
+    snprintf(g.result.save_id, sizeof(g.result.save_id), "%s", "SLUS-01363");
+    if (sigil_collect(&g.req, &unit) != SIGIL_OK || !unit->data) {
+        fail("pops later disc", "disc 2 didn't find the set's folder");
+        goto done;
+    }
+    make_game(&g, &fresh, "vita_pops", "Chrono Trigger (Disc 2).cue", "SLUS-01364", SET, 2);
+    snprintf(g.result.save_id, sizeof(g.result.save_id), "%s", "SLUS-01363");
+    if (sigil_restore(&g.req, unit->data, unit->len, &r) != SIGIL_OK || !root_find(&fresh, CT_DIR "SCEVMC0.VMP")) {
+        fail("pops later disc", "disc 2 didn't restore into the set's folder");
+    }
+    for (size_t i = 0; i < fresh.count; i++) {
+        if (strncmp(fresh.listing[i], CT_DIR, strlen(CT_DIR)) != 0) fail("pops later disc", "restore wrote outside the set's folder");
     }
 done:
     sigil_sync_result_free(r);
@@ -964,6 +1077,7 @@ int main(void) {
     check_changed(first);
     check_discs_share_state(first);
     check_restore_into_empty_root(first);
+    check_pcsx_card_modes(first);
     check_restore_keeps_other_games();
     check_restore_no_room();
     check_unnormalized_frame();
@@ -971,9 +1085,11 @@ int main(void) {
     check_unit_rules();
     check_restore_to_slot_2();
     check_faulty_writes(first);
+    check_unreadable_card();
     check_wrapped_cards();
     check_broken_own_save();
     check_vita_console_card();
+    check_pops_later_disc();
     check_pops_param_sfo();
     sigil_sync_result_free(first);
 

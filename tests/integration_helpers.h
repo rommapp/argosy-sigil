@@ -3,12 +3,11 @@
 #define SIGIL_TEST_HELPERS_H
 
 #include "sigil.h"
-#include <dirent.h>
+#include "test_fs.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 
 #define TEST_SKIP 77
 
@@ -51,40 +50,41 @@ static int sample_limit_from_env(int default_limit) {
     return n > 0 ? n : default_limit;
 }
 
-static walk_stats walk_dir(const char *dir, walk_fn fn, const char *filter_exts[]) {
-    walk_stats st = {0};
-    int limit = sample_limit_from_env(25);
-    DIR *dp = opendir(dir);
-    if (!dp) return st;
+typedef struct {
+    const char  *dir;
+    walk_fn      fn;
+    const char **filter_exts;
+    int          limit;
+    walk_stats   st;
+} walk_ctx;
 
-    struct dirent *e;
-    while ((e = readdir(dp)) != NULL) {
-        if (e->d_name[0] == '.') continue;
-        if (st.processed >= limit) break;
+static bool walk_entry(void *ctx, const char *name, bool is_dir) {
+    walk_ctx *w = (walk_ctx *)ctx;
+    if (w->st.processed >= w->limit) return false;
+    if (name[0] == '.' || is_dir) return true;
 
-        char ext[16];
-        ext_of(e->d_name, ext);
-        if (filter_exts) {
-            bool match = false;
-            for (int i = 0; filter_exts[i]; i++) {
-                if (strcmp(ext, filter_exts[i]) == 0) { match = true; break; }
-            }
-            if (!match) continue;
+    char ext[16];
+    ext_of(name, ext);
+    if (w->filter_exts) {
+        bool match = false;
+        for (int i = 0; w->filter_exts[i]; i++) {
+            if (strcmp(ext, w->filter_exts[i]) == 0) { match = true; break; }
         }
-
-        char full[1024];
-        snprintf(full, sizeof(full), "%s/%s", dir, e->d_name);
-
-        struct stat sb;
-        if (stat(full, &sb) != 0 || !S_ISREG(sb.st_mode)) continue;
-
-        st.processed++;
-        int rc = fn(full, e->d_name);
-        if (rc == 0) st.passed++;
-        else         st.failed++;
+        if (!match) return true;
     }
-    closedir(dp);
-    return st;
+
+    char full[1024];
+    snprintf(full, sizeof(full), "%s/%s", w->dir, name);
+    w->st.processed++;
+    if (w->fn(full, name) == 0) w->st.passed++;
+    else                        w->st.failed++;
+    return true;
+}
+
+static walk_stats walk_dir(const char *dir, walk_fn fn, const char *filter_exts[]) {
+    walk_ctx w = { dir, fn, filter_exts, sample_limit_from_env(25), {0} };
+    test_dir_each(dir, walk_entry, &w);
+    return w.st;
 }
 
 #endif

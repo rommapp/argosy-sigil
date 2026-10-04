@@ -36,6 +36,8 @@ sigil_add_test(unit_filename)
 sigil_add_test(unit_dreamcast)
 sigil_add_test(unit_xbox)
 sigil_add_test(unit_ps3_iso)
+sigil_add_test(unit_psvita)
+sigil_add_test(unit_dir_scan)
 sigil_add_test(unit_3ds)
 sigil_add_test(unit_wiiu)
 sigil_add_test(unit_zip)
@@ -63,7 +65,7 @@ foreach(t integration_card_ps1 integration_card_ps2 integration_card_gamecube
           integration_card_dreamcast integration_card_saturn integration_card_segacd
           integration_clock_gb integration_sync_ps1 integration_sync_ps2
           integration_sync_volumes integration_sync_dreamcast integration_sync_gamecube
-          integration_sync_companions)
+          integration_sync_companions integration_sync_profiles)
     sigil_add_test(${t})
     target_include_directories(${t} PRIVATE ${CMAKE_SOURCE_DIR}/src)
     target_compile_definitions(${t} PRIVATE
@@ -87,6 +89,8 @@ target_include_directories(unit_save_unit PRIVATE ${CMAKE_SOURCE_DIR}/src)
 # The JNI binding's name escaping is plain C, tested here without a JDK.
 sigil_add_test(unit_jni_names)
 target_include_directories(unit_jni_names PRIVATE ${CMAKE_SOURCE_DIR}/bindings/android/src/main/cpp)
+sigil_add_test(unit_jni_utf16)
+target_include_directories(unit_jni_utf16 PRIVATE ${CMAKE_SOURCE_DIR}/bindings/android/src/main/cpp)
 
 # The Go and Python bindings link the static libraries this build makes, so
 # their tests run here when the toolchain is there and the build is plain and
@@ -94,7 +98,9 @@ target_include_directories(unit_jni_names PRIVATE ${CMAKE_SOURCE_DIR}/bindings/a
 if(NOT SIGIL_BUILD_SHARED AND NOT CMAKE_C_FLAGS MATCHES "-fsanitize")
     find_program(SIGIL_GO go)
     if(SIGIL_GO)
-        add_test(NAME binding_go COMMAND ${SIGIL_GO} test -count=1 ./...
+        # -a: cgo doesn't track include/sigil.h, which sits outside the package,
+        # so a cached build keeps the old struct layout after the header changes.
+        add_test(NAME binding_go COMMAND ${SIGIL_GO} test -count=1 -a ./...
                  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/bindings/go)
         set_tests_properties(binding_go PROPERTIES ENVIRONMENT "CGO_LDFLAGS=-L${CMAKE_BINARY_DIR}")
     else()
@@ -115,7 +121,7 @@ if(NOT SIGIL_BUILD_SHARED AND NOT CMAKE_C_FLAGS MATCHES "-fsanitize")
                              FIXTURES_SETUP sigil_python_extension)
         add_test(NAME binding_python COMMAND ${SIGIL_BINDING_PYTHON} -m pytest -q test_sigil.py WORKING_DIRECTORY ${python_dir})
         set_tests_properties(binding_python PROPERTIES FIXTURES_REQUIRED sigil_python_extension)
-        add_test(NAME binding_contract COMMAND ${SIGIL_BINDING_PYTHON} -m pytest -q test_contract.py
+        add_test(NAME binding_contract COMMAND ${SIGIL_BINDING_PYTHON} -m pytest -q test_contract.py test_docs.py
                  WORKING_DIRECTORY ${python_dir})
     else()
         message(STATUS "Python binding tests off: set SIGIL_BINDING_PYTHON to a Python with cffi and pytest")

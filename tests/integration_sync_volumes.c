@@ -343,6 +343,59 @@ static void check_saturn_single(void) {
     free(internal);
 }
 
+/* A core older than the save-method option keeps only `.bkr`: collect with no
+ * options finds no saves but names the option value that reads them, and
+ * collect and restore with that value take the `.bkr`. */
+static void check_saturn_legacy_bkr(void) {
+    size_t len = 0;
+    uint8_t *internal = sample(&g_saturn, "saturn", "hyper-duel-bkr", NULL, &len);
+    if (!internal) return;
+    mem_root root = {0};
+    root_put(&root, "Hyper Duel (Japan).bkr", internal, len);
+    game g;
+    make_game(&g, &root, "mednafen_saturn", "saturn", "Hyper Duel (Japan).cue", SIGIL_SYNC_MANAGED);
+    sigil_sync_result *r = NULL;
+    if (sigil_collect(&g.req, &r) != SIGIL_OK || r->data) {
+        fail("saturn legacy bkr", "a modern collect took the .bkr");
+    } else if (r->alternate_count != 1 || strcmp(r->alternates[0].path, "Hyper Duel (Japan).bkr") != 0 ||
+               r->alternates[0].option_count != 1 ||
+               strcmp(r->alternates[0].options[0].key, "beetle_saturn_save_method") != 0 ||
+               strcmp(r->alternates[0].options[0].value, "mednafen") != 0) {
+        fail("saturn legacy bkr", "collect didn't name the option that reads the .bkr");
+    } else {
+        add_option(&g, r->alternates[0].options[0].key, r->alternates[0].options[0].value);
+        sigil_sync_result *legacy = NULL;
+        if (sigil_collect(&g.req, &legacy) != SIGIL_OK || !legacy->data || legacy->alternate_count != 0) {
+            fail("saturn legacy bkr", "the named option didn't read the .bkr");
+        } else {
+            mem_root fresh_root = {0};
+            game fresh;
+            make_game(&fresh, &fresh_root, "mednafen_saturn", "saturn", "Hyper Duel (Japan).cue", SIGIL_SYNC_MANAGED);
+            add_option(&fresh, "beetle_saturn_save_method", "mednafen");
+            sigil_sync_result *back = NULL;
+            if (sigil_restore(&fresh.req, legacy->data, legacy->len, &back) != SIGIL_OK ||
+                !root_find(&fresh_root, "Hyper Duel (Japan).bkr") || root_find(&fresh_root, "Hyper Duel (Japan).srm")) {
+                fail("saturn legacy bkr", "restore with the named option didn't write the .bkr alone");
+            }
+            sigil_sync_result_free(back);
+            root_free(&fresh_root);
+
+            game modern;
+            make_game(&modern, &root, "mednafen_saturn", "saturn", "Hyper Duel (Japan).cue", SIGIL_SYNC_MANAGED);
+            back = NULL;
+            if (sigil_restore(&modern.req, legacy->data, legacy->len, &back) != SIGIL_OK || back->alternate_count != 1 ||
+                strcmp(back->alternates[0].path, "Hyper Duel (Japan).bkr") != 0) {
+                fail("saturn legacy bkr", "a modern restore didn't report the .bkr it left alone");
+            }
+            sigil_sync_result_free(back);
+        }
+        sigil_sync_result_free(legacy);
+    }
+    sigil_sync_result_free(r);
+    root_free(&root);
+    free(internal);
+}
+
 /* A cart volume of `size` bytes holding Rayman's cart save, written raw. */
 static uint8_t *rayman_cart_of(size_t size, size_t *len) {
     size_t cart_len = 0;
@@ -584,6 +637,38 @@ done:
 /* Managed: a swap refuses while a save with no owner changed after its
  * holding unit went up, so it can't be swapped away unsaved. A managed
  * swap's `prepared` doesn't make an unmanaged collect take others' saves. */
+/* A listed volume the client can't open is an I/O error, never an absent
+ * volume: restore would otherwise write a fresh one over the other games'
+ * saves on it. */
+static void check_unopenable_volume(void) {
+    shared_saves s;
+    if (!load_shared_saves(&s)) { free_shared_saves(&s); fail("unreadable volume", "setup failed"); return; }
+    const uint8_t *both[2] = { s.zwei, s.toki };
+    size_t lens[2] = { s.zwei_len, s.toki_len };
+    size_t v_len = 0, u_len = 0;
+    uint8_t *v = saturn_volume(both, lens, 2, &v_len), *u = unit_of(s.zwei, s.zwei_len, &u_len);
+    for (int mode = SIGIL_SYNC_MANAGED; v && u && mode <= SIGIL_SYNC_UNMANAGED; mode++) {
+        mem_root root = {0};
+        root_put(&root, SHARED_BKR, v, v_len);
+        snprintf(root.unreadable, sizeof(root.unreadable), "%s", SHARED_BKR);
+        game g;
+        make_shared(&g, &root, ZWEI_CUE, ZWEI_IDS, 1, mode);
+        sigil_sync_result *r = NULL;
+        if (sigil_collect(&g.req, &r) != SIGIL_ERR_IO) fail("unreadable volume", "collect read an unopenable volume as empty");
+        sigil_sync_result_free(r);
+        g.req.overwrite_local = 1;
+        r = NULL;
+        if (sigil_restore(&g.req, u, u_len, &r) != SIGIL_ERR_IO) fail("unreadable volume", "restore went ahead");
+        if (root.writes) fail("unreadable volume", "restore wrote over a volume it couldn't read");
+        sigil_sync_result_free(r);
+        root_free(&root);
+    }
+    if (!v || !u) fail("unreadable volume", "setup failed");
+    free(v);
+    free(u);
+    free_shared_saves(&s);
+}
+
 static void check_saturn_swap_guard(void) {
     shared_saves s;
     if (!load_shared_saves(&s)) { free_shared_saves(&s); fail("saturn swap guard", "setup failed"); return; }
@@ -1964,11 +2049,13 @@ int main(void) {
     check_saturn_internal_and_cart();
     check_saturn_keeps_gzip();
     check_saturn_single();
+    check_saturn_legacy_bkr();
     check_kronos();
     check_cart_only_unit_is_zip();
     check_cart_follows_option();
     check_saturn_unmanaged();
     check_saturn_swap_guard();
+    check_unopenable_volume();
     check_owner_precedence();
     check_saturn_companion_shared();
     check_big_units_and_forms();

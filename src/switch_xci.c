@@ -71,13 +71,15 @@ static bool hfs0_name_is_nca(const uint8_t *name, size_t name_len) {
         && (name[name_len - 1] | 0x20) == 'a';
 }
 
-/* CNMT-preferred pass over HFS0 NCA entries; NOT_FOUND when no key material
- * or no Meta NCA yields a parseable content-meta. */
+/* CNMT-preferred pass over HFS0 NCA entries, an application's CNMT winning
+ * over an update's or a DLC's; NOT_FOUND when no key material or no Meta NCA
+ * yields a parseable content-meta. */
 static int hfs0_try_cnmt(const sigil_io *io, uint64_t data_start,
                          const uint8_t *entries, uint32_t file_count,
                          const uint8_t *string_table, uint32_t string_table_size,
                          const uint8_t *header_key, const sigil_support *sup,
                          sigil_switch_title *out) {
+    bool have = false;
     for (uint32_t i = 0; i < file_count; i++) {
         const uint8_t *e = entries + i * HFS0_ENTRY_SIZE;
         uint64_t fo = sigil_read_le64(e);
@@ -99,10 +101,13 @@ static int hfs0_try_cnmt(const sigil_io *io, uint64_t data_start,
         if (sigil_nca_decrypt_header(raw, header_key, dec) != SIGIL_OK) continue;
         if (dec[0x205] != 1) continue; /* not a Meta NCA */
 
-        int rc = sigil_cnmt_from_meta_nca(io, data_start + fo, dec, sup, out);
-        if (rc == SIGIL_OK || rc == SIGIL_ERR_KEYS_INCOMPATIBLE) return rc;
+        sigil_switch_title t;
+        memset(&t, 0, sizeof(t));
+        int rc = sigil_cnmt_from_meta_nca(io, data_start + fo, dec, sup, &t);
+        if (rc == SIGIL_ERR_KEYS_INCOMPATIBLE) return rc;
+        if (rc == SIGIL_OK && sigil_switch_title_keep(out, &have, &t)) break;
     }
-    return SIGIL_ERR_NOT_FOUND;
+    return have ? SIGIL_OK : SIGIL_ERR_NOT_FOUND;
 }
 
 static int hfs0_extract_title_from_partition(const sigil_io *io,

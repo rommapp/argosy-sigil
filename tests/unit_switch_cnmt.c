@@ -21,14 +21,23 @@ void sigil_aes_ctr_crypt(const uint8_t key[16], uint8_t ctr[16],
 #define SEC_START        (SEC_START_MEDIA * 0x200u)
 
 #define SEC_PFS0_OFF     0x20u  /* inner PFS0 sits past a fake hash region */
-#define CNMT_LEN         0x10u
+#define CNMT_LEN         0x30u  /* header, then an 0x10-byte extended header */
 
-/* Outer NSP (PFS0) layout wrapping the single Meta NCA. */
+/* Outer NSP (PFS0) layout wrapping up to two Meta NCAs. */
+#define MAX_NCAS   2u
 #define OUT_HDR    16u
 #define OUT_ENTRY  24u
-#define OUT_STRTBL 48u
-#define OUT_DATA   (OUT_HDR + OUT_ENTRY + OUT_STRTBL)
-#define OUT_SIZE   (OUT_DATA + NCA_SIZE)
+#define OUT_STRTBL 96u
+#define OUT_DATA   (OUT_HDR + OUT_ENTRY * MAX_NCAS + OUT_STRTBL)
+#define OUT_SIZE   (OUT_DATA + NCA_SIZE * MAX_NCAS)
+
+#define META_APPLICATION 0x80u
+#define META_PATCH       0x81u
+#define META_ADDON       0x82u
+
+#define BASE_ID  0x0100000000010000ull
+#define PATCH_ID 0x0100000000010800ull
+#define ADDON_ID 0x0100000000011001ull
 
 static const uint8_t HEADER_KEY[32] = {
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
@@ -48,6 +57,26 @@ static const uint8_t SECTION_KEY[16] = {
 #define GENERATION   0x00000002u
 #define SECURE_VALUE 0x00000003u
 
+/* What one Meta NCA's CNMT says. `application_id` 0 leaves the extended
+ * header out, as a CNMT whose extended header size is 0. */
+typedef struct {
+    uint8_t  meta_type;
+    uint64_t id;
+    uint32_t version;
+    uint64_t application_id;
+} meta;
+
+static int g_fails = 0;
+
+static void fail(const char *where, const char *what) {
+    fprintf(stderr, "FAIL %s: %s\n", where, what);
+    g_fails++;
+}
+
+static void write_le16(uint8_t *p, uint16_t v) {
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+}
 static void write_le32(uint8_t *p, uint32_t v) {
     for (int i = 0; i < 4; i++) p[i] = (uint8_t)(v >> (8 * i));
 }
@@ -75,7 +104,7 @@ static int mem_read(void *ctx, uint64_t off, void *buf, size_t len) {
 }
 static int64_t mem_size(void *ctx) { return (int64_t)((mem_ctx *)ctx)->len; }
 
-static void build_section(uint8_t sec[NCA_SECTION_SIZE]) {
+static void build_section(uint8_t sec[NCA_SECTION_SIZE], const meta *m) {
     memset(sec, 0xAA, NCA_SECTION_SIZE);
 
     uint8_t *pfs = sec + SEC_PFS0_OFF;
@@ -95,15 +124,14 @@ static void build_section(uint8_t sec[NCA_SECTION_SIZE]) {
     memcpy(strtbl, "a.cnmt", 6);
 
     uint8_t *cnmt = strtbl + 8;
-    /* title_id 0x0100000000010800 little-endian */
-    static const uint8_t title_id[8] = { 0x00, 0x08, 0x01, 0x00,
-                                         0x00, 0x00, 0x00, 0x01 };
-    memcpy(cnmt, title_id, 8);
-    write_le32(cnmt + 8, 0x30000); /* version */
-    cnmt[0x0C] = 0x81;             /* meta_type: Patch */
-    cnmt[0x0D] = 0;
-    cnmt[0x0E] = 0;
-    cnmt[0x0F] = 0;
+    memset(cnmt, 0, CNMT_LEN);
+    write_le64(cnmt, m->id);
+    write_le32(cnmt + 0x08, m->version);
+    cnmt[0x0C] = m->meta_type;
+    if (m->application_id) {
+        write_le16(cnmt + 0x0E, 0x10);   /* extended header size */
+        write_le64(cnmt + 0x20, m->application_id);
+    }
 
     uint8_t ctr[16] = {0};
     ctr[0] = (uint8_t)(SECURE_VALUE >> 24);
@@ -120,7 +148,7 @@ static void build_section(uint8_t sec[NCA_SECTION_SIZE]) {
     sigil_aes_ctr_crypt(SECTION_KEY, ctr, sec, NCA_SECTION_SIZE);
 }
 
-static void build_nca(uint8_t nca[NCA_SIZE]) {
+static void build_nca(uint8_t nca[NCA_SIZE], const meta *m) {
     memset(nca, 0, NCA_SIZE);
 
     memcpy(nca + 0x200, "NCA3", 4);
@@ -146,28 +174,36 @@ static void build_nca(uint8_t nca[NCA_SIZE]) {
     write_le32(fsh + 0x140, GENERATION);
     write_le32(fsh + 0x144, SECURE_VALUE);
 
-    build_section(nca + NCA_HEADER_SIZE);
+    build_section(nca + NCA_HEADER_SIZE, m);
 
     sigil_aes_xts_encrypt_nintendo(HEADER_KEY, 0, nca, NCA_HEADER_SIZE);
 }
 
-static void build_image(uint8_t buf[OUT_SIZE]) {
+/* An NSP holding one Meta NCA per entry of `metas`, in that order. */
+static void build_image(uint8_t buf[OUT_SIZE], const meta *metas, uint32_t count) {
+    static const char *const NAMES[MAX_NCAS] = {
+        /* A retail NCA name: its 32-hex content id, whose last 16 characters
+         * start with 01 (issue #9, Radiant Silvergun). A keyless guess read
+         * them as a title id. */
+        "db705e4d8570380301cd8d0cd59fbf16.nca",
+        "5c2b1a9e0f3d47e6a8b0c1d2e3f40516.nca",
+    };
     memset(buf, 0, OUT_SIZE);
     memcpy(buf, "PFS0", 4);
-    write_le32(buf + 4, 1);
+    write_le32(buf + 4, count);
     write_le32(buf + 8, OUT_STRTBL);
-
-    uint8_t *entry = buf + OUT_HDR;
-    write_le64(entry, 0);
-    write_le64(entry + 8, NCA_SIZE);
-    write_le32(entry + 16, 0);
-
-    /* A retail NCA name: its 32-hex content id, whose last 16 characters
-     * start with 01 (issue #9, Radiant Silvergun). A keyless guess read them
-     * as a title id. */
-    memcpy(buf + OUT_HDR + OUT_ENTRY, "db705e4d8570380301cd8d0cd59fbf16.nca", 37);
-
-    build_nca(buf + OUT_DATA);
+    uint32_t name_at = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        uint8_t *entry = buf + OUT_HDR + i * OUT_ENTRY;
+        write_le64(entry, (uint64_t)i * NCA_SIZE);
+        write_le64(entry + 8, NCA_SIZE);
+        write_le32(entry + 16, name_at);
+        memcpy(buf + OUT_HDR + count * OUT_ENTRY + name_at, NAMES[i], strlen(NAMES[i]) + 1);
+        name_at += (uint32_t)strlen(NAMES[i]) + 1;
+    }
+    /* The string table sits after `count` entries; data after the table. */
+    size_t data = OUT_HDR + count * OUT_ENTRY + OUT_STRTBL;
+    for (uint32_t i = 0; i < count; i++) build_nca(buf + data + (size_t)i * NCA_SIZE, &metas[i]);
 }
 
 /* Extracts the image with prod.keys text `keys` (NULL for none). */
@@ -188,10 +224,37 @@ static int extract_with(const uint8_t *image, const char *keys, sigil_result *r)
     return sigil_extract_from_io(&io, "meta.nsp", SIGIL_PLATFORM_SWITCH, &opts, r);
 }
 
-int main(void) {
-    uint8_t image[OUT_SIZE];
-    build_image(image);
+static char g_keys[256];
 
+/* An NSP of `metas` reads as the game `title_id`, with the content's own id,
+ * type and version kept beside it. */
+static void expect(const char *where, const meta *metas, uint32_t count, const char *title_id, const char *raw_serial,
+                   int content_type, uint32_t version) {
+    static uint8_t image[OUT_SIZE];
+    build_image(image, metas, count);
+    sigil_result r;
+    memset(&r, 0, sizeof(r));
+    int rc = extract_with(image, g_keys, &r);
+    char what[160];
+    if (rc != SIGIL_OK) {
+        snprintf(what, sizeof(what), "rc=%d (%s)", rc, sigil_strerror(rc));
+        fail(where, what);
+        return;
+    }
+    if (strcmp(r.title_id, title_id) != 0 || strcmp(r.save_id, title_id) != 0) {
+        snprintf(what, sizeof(what), "title_id '%s' save_id '%s', want %s", r.title_id, r.save_id, title_id);
+        fail(where, what);
+    }
+    if (strcmp(r.raw_serial, raw_serial) != 0) {
+        snprintf(what, sizeof(what), "raw_serial '%s', want %s", r.raw_serial, raw_serial);
+        fail(where, what);
+    }
+    if (r.switch_content_type != content_type) fail(where, "content type");
+    if (r.title_version != version) fail(where, "version");
+    if (r.source != SIGIL_SOURCE_BINARY) fail(where, "source");
+}
+
+int main(void) {
     char kaek_hex[33], hkey_hex[65], wrong_hex[65];
     hex_encode(KAEK, 16, kaek_hex);
     hex_encode(HEADER_KEY, 32, hkey_hex);
@@ -199,52 +262,52 @@ int main(void) {
     for (int i = 0; i < 32; i++) wrong[i] = (uint8_t)(HEADER_KEY[i] ^ 0x5A);
     hex_encode(wrong, 32, wrong_hex);
 
-    char keys_text[256], no_kaek[256], wrong_header[256];
-    snprintf(keys_text, sizeof(keys_text), "header_key = %s\nkey_area_key_application_00 = %s\n", hkey_hex, kaek_hex);
+    char no_kaek[256], wrong_header[256];
+    snprintf(g_keys, sizeof(g_keys), "header_key = %s\nkey_area_key_application_00 = %s\n", hkey_hex, kaek_hex);
     snprintf(no_kaek, sizeof(no_kaek), "header_key = %s\n", hkey_hex);
     snprintf(wrong_header, sizeof(wrong_header), "header_key = %s\nkey_area_key_application_00 = %s\n", wrong_hex,
              kaek_hex);
+
+    const meta patch = { META_PATCH, PATCH_ID, 0x30000, BASE_ID };
+    static uint8_t image[OUT_SIZE];
+    build_image(image, &patch, 1);
 
     /* prod.keys is required: no title id is guessed without it, from the
      * NCA names or anywhere else. */
     sigil_result r;
     int rc = extract_with(image, NULL, &r);
-    if (rc != SIGIL_ERR_NEEDS_KEY) {
-        fprintf(stderr, "FAIL: no keys gave rc=%d title_id='%s', want NEEDS_KEY\n", rc, r.title_id);
-        return 1;
-    }
+    if (rc != SIGIL_ERR_NEEDS_KEY) fail("no keys", "want NEEDS_KEY");
     /* Keys that can't open the content are a key file mismatch. */
-    if ((rc = extract_with(image, no_kaek, &r)) != SIGIL_ERR_KEYS_INCOMPATIBLE) {
-        fprintf(stderr, "FAIL: a key file without the generation's key gave rc=%d\n", rc);
-        return 1;
-    }
-    if ((rc = extract_with(image, wrong_header, &r)) != SIGIL_ERR_KEYS_INCOMPATIBLE) {
-        fprintf(stderr, "FAIL: a wrong header key gave rc=%d\n", rc);
-        return 1;
+    if (extract_with(image, no_kaek, &r) != SIGIL_ERR_KEYS_INCOMPATIBLE) fail("no kaek", "want KEYS_INCOMPATIBLE");
+    if (extract_with(image, wrong_header, &r) != SIGIL_ERR_KEYS_INCOMPATIBLE) {
+        fail("wrong header key", "want KEYS_INCOMPATIBLE");
     }
 
-    rc = extract_with(image, keys_text, &r);
-    if (rc != SIGIL_OK) {
-        fprintf(stderr, "FAIL: rc=%d (%s)\n", rc, sigil_strerror(rc));
-        return 1;
-    }
-    if (strcmp(r.title_id, "0100000000010800") != 0) {
-        fprintf(stderr, "FAIL: title_id='%s'\n", r.title_id);
-        return 1;
-    }
-    if (r.switch_content_type != SIGIL_SWITCH_CONTENT_PATCH) {
-        fprintf(stderr, "FAIL: content_type=%d\n", r.switch_content_type);
-        return 1;
-    }
-    if (r.title_version != 0x30000) {
-        fprintf(stderr, "FAIL: title_version=%u\n", r.title_version);
-        return 1;
-    }
-    if (r.source != SIGIL_SOURCE_BINARY) {
-        fprintf(stderr, "FAIL: source=%d\n", (int)r.source);
-        return 1;
-    }
+    /* Saves are kept under the base game's id, so an update or a DLC reads as
+     * that game; its own id stays in raw_serial. */
+    expect("patch", &patch, 1, "0100000000010000", "0100000000010800", SIGIL_SWITCH_CONTENT_PATCH, 0x30000);
+    const meta bare_patch = { META_PATCH, PATCH_ID, 0x30000, 0 };
+    expect("patch without extended header", &bare_patch, 1, "0100000000010000", "0100000000010800",
+           SIGIL_SWITCH_CONTENT_PATCH, 0x30000);
+    const meta addon = { META_ADDON, ADDON_ID, 0x10000, BASE_ID };
+    expect("addon", &addon, 1, "0100000000010000", "0100000000011001", SIGIL_SWITCH_CONTENT_ADDON, 0x10000);
+    const meta bare_addon = { META_ADDON, ADDON_ID, 0x10000, 0 };
+    expect("addon without extended header", &bare_addon, 1, "0100000000010000", "0100000000011001",
+           SIGIL_SWITCH_CONTENT_ADDON, 0x10000);
+    /* The CNMT's own word wins over the id arithmetic. */
+    const meta elsewhere = { META_ADDON, ADDON_ID, 0x10000, 0x0100000000050000ull };
+    expect("addon naming its game", &elsewhere, 1, "0100000000050000", "0100000000011001", SIGIL_SWITCH_CONTENT_ADDON,
+           0x10000);
+    const meta app = { META_APPLICATION, BASE_ID, 0, BASE_ID | 0x800 };
+    expect("application", &app, 1, "0100000000010000", "0100000000010000", SIGIL_SWITCH_CONTENT_APPLICATION, 0);
 
+    /* A dump holding the game and its update reads as the game, whichever
+     * Meta NCA comes first. */
+    const meta merged[2] = { patch, app };
+    expect("patch before application", merged, 2, "0100000000010000", "0100000000010000",
+           SIGIL_SWITCH_CONTENT_APPLICATION, 0);
+
+    if (g_fails) return 1;
     printf("ok unit_switch_cnmt\n");
     return 0;
 }

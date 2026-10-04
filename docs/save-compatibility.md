@@ -29,9 +29,9 @@ Fan translations and hacks vary.
 Disc releases look their saves up by id, so a save from another region is invisible to the game.
 
 - PS1: SLES and SLUS saves don't show up across regions. Rewriting the product code in the directory frame works for many games, not all (https://janstechblog.blogspot.com/2014/01/howto-changing-region-on-ps1-savegames.html).
-- GameCube: the fourth character of the game code (E, P, J) is in the save header, and Dolphin keeps separate `USA`, `EUR` and `JAP` folders ([nintendo-disc.md](nintendo-disc.md)). Rewriting the code works for some games only. Fire Emblem: Path of Radiance EUR to USA fails (https://www.gc-forever.com/forums/viewtopic.php?t=3471, https://gbatemp.net/threads/change-save-region-for-fire-emblem-path-of-radiance-from-ntsc-to-pal.575449/).
-- Saturn: saves are named per region, for example Resident Evil `BIOUDATA_` and Hang-On GP `_01` against `_02` ([sega.md](sega.md) section 3.2.2).
-- PS2: 71 of the 421 `memcardFilters` entries leave out their own serial, mostly bundles, demos and region variants ([sony.md](sony.md) section 2.2). That GPL-3 list is the only large source that says saves cross ids.
+- GameCube: the fourth character of the game code (E, P, J) is in the save header, and Dolphin keeps separate `USA`, `EUR` and `JAP` folders ([gamecube](platforms/gamecube.md#emulator-research)). Rewriting the code works for some games only. Fire Emblem: Path of Radiance EUR to USA fails (https://www.gc-forever.com/forums/viewtopic.php?t=3471, https://gbatemp.net/threads/change-save-region-for-fire-emblem-path-of-radiance-from-ntsc-to-pal.575449/).
+- Saturn: saves are named per region, for example Resident Evil `BIOUDATA_` and Hang-On GP `_01` against `_02` ([saturn](platforms/saturn.md#emulator-research), "Finding the names a disc writes").
+- PS2: 71 of the 421 `memcardFilters` entries leave out their own serial, mostly bundles, demos and region variants ([ps2](platforms/ps2.md#emulator-research), "PCSX2 folder memory cards"). That GPL-3 list is the only large source that says saves cross ids.
 - Wii and Switch title ids per region, and whether regions share saves: UNVERIFIED.
 
 What breaks compatibility:
