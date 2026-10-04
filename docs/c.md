@@ -79,10 +79,8 @@ int sigil_save_resolve(
 
 typedef struct {
     uint32_t struct_version;              /* SIGIL_SAVE_REQUEST_V1 */
-    const char *layout;                   /* required. Libretro core name without _libretro: genesis_plus_gx,
-                                             mednafen_psx_hw, mame2003_plus. A core without a layout
-                                             row gets the default row (<stem>.srm, plus <stem>.rtc when the
-                                             cart has a clock). */
+    const char *layout;                   /* required. Layout id of the emulator running the game; see
+                                             below. */
     const char *platform;                 /* optional. Slug from identification.md, or segacd, fds.
                                              Rows limited to one platform match only when it is given. */
     const char *content_path;             /* required. The path you handed the emulator, verbatim: rom,
@@ -148,6 +146,20 @@ typedef struct {
 } sigil_save_member;
 ```
 
+`layout` names the emulator, because each keeps its saves differently.
+For a libretro core, pass the core's name without `_libretro`
+(`genesis_plus_gx`, `mednafen_psx_hw`). For a standalone emulator, pass
+its layout id (`dolphin_standalone`, `pcsx2_standalone`, `eden`).
+[platforms/](platforms/README.md#layouts) lists every id with its
+emulator. An id with no row gets the libretro default (`<stem>.srm`, plus
+`<stem>.rtc` when the cart has a clock), which fits an unlisted libretro
+core but names nothing an unlisted standalone emulator writes.
+
+If `alternate_count` is not 0, the root holds this game's saves under
+other option values, such as Beetle Saturn's `.bkr` from a build older
+than its save-method option. Ask the user, or call again with each
+alternate's `options`; sigil never picks one itself.
+
 ### Layouts with profiles
 
 `eden`, `citron`, `sudachi` and `yuzu` (Switch), `cemu` (Wii U), `vita3k`
@@ -210,10 +222,13 @@ static sigil_io *open_member(void *ctx, const char *relative_path) {
 ```
 
 ```c
-unit->content_hash    /* What the RomM server computes for the artifact. */
-unit->identity_hash   /* The same over the non-rtc members. Different content_hash, same
-                         identity_hash: a clock tick, not a new save. */
+unit->content_hash    /* What RomM stores for the artifact and compares against. */
+unit->identity_hash   /* The same over the saves alone, leaving out the clock file. */
 ```
+
+Compare `content_hash` with RomM's. `identity_hash` is sigil's own: RomM
+never sees it, and sync's `changed` is already built on it, so a clock
+that ticked doesn't read as a new save. Most clients never read it.
 
 ## Upload and restore
 
@@ -365,22 +380,10 @@ typedef struct {
 } sigil_sync_companion_result;
 ```
 
-Restore refuses, writing nothing, with (the rules: [sync.md](sync.md#refusals)):
-
-| Code | When | `problem` |
-|---|---|---|
-| `SIGIL_ERR_CONFLICT` | the saves on disk changed since the last sync and `overwrite_local` is 0 | |
-| `SIGIL_ERR_UNCOLLECTED` | a shared volume holds saves no collect has passed on yet | |
-| `SIGIL_ERR_NO_SPACE` | the saves don't fit; `blocks_short` says by how much | the save |
-| `SIGIL_ERR_REGION` | a GameCube companion's save is from another Dolphin region than the game | the save |
-| `SIGIL_ERR_DAMAGED` | a file the saves go in is damaged and `repair` is 0, it isn't a card sigil can read, or it holds a corrupt save of the game or a companion (above) | the file |
-| `SIGIL_ERR_AMBIGUOUS` | more than one file could be the emulator's card and the options don't say which: Dolphin raw cards of two sizes with no `MemoryCardSize`. On layouts with profiles, two or more profiles and none picked, for a unit with an account save (ask the user which profile is theirs; `profiles` or `sigil_save_profiles` lists them); or two emulator folders under the root. Collect refuses the same way | the files, the profiles as `id name`, or the folders, one per line |
-| `SIGIL_ERR_NO_TARGET` | the unit holds a volume the emulator's settings keep no file for: a `cart.ram` for a core with no cart, a VMU port flycast doesn't keep per game. On layouts with profiles, a member no folder of the game takes, an account save with no profile there, or a folder outside the root | the unit member |
-| `SIGIL_ERR_UNSUPPORTED_FORMAT` | layouts with profiles: two unit members go to one file | |
-| `SIGIL_ERR_IO` | a unit member's path would leave the save root, or a file the listing holds won't open through `open`. Collect refuses the same way, so a file it can't read never counts as no saves | |
-| `SIGIL_ERR_EXISTS` | Dolphin's GCI folder holds other games' files under the name Dolphin gives a new save and each of its ten `0`-inserted forms, so Dolphin would write over one | the save |
-
-Collect refuses with `SIGIL_ERR_DAMAGED` and `SIGIL_ERR_AMBIGUOUS` in the same way. With each of
+Restore refuses, writing nothing, with the codes in
+[sync.md, Refusals](sync.md#refusals), which also says what `problem`
+names for each. Collect refuses with `SIGIL_ERR_DAMAGED`,
+`SIGIL_ERR_AMBIGUOUS` and `SIGIL_ERR_IO` in the same way. With each of
 these the call still sets `*out`; free it as usual.
 
 ## Helpers
