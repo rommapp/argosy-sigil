@@ -26,6 +26,9 @@ tests/*.log
 *.swp
 .DS_Store
 
+# Working notes: plans, progress and research kept out of the published docs
+/notes/
+
 # Local sample data
 /local-roms/
 /tests/fixtures/saves/*/files/*

@@ -48,27 +48,15 @@ generic to sniff, so they need an explicit `3ds` hint.
 
 See [Identification](../identification.md) for the fields and `usage` values.
 
-## Emulator research
+## Save formats
 
-Scope: battery/flash/EEPROM saves and RTC data, not save states. Researched 2026-09-26 against the default branch of each repo (shallow clones). Line numbers refer to those heads and will drift; the function names are the stable anchor.
-
-`{stem}` = content filename without extension. "RA" = RetroArch frontend. RetroArch's own behaviour is in [RetroArch frontend behaviour](gb.md#retroarch-frontend-behaviour-applies-to-every-libretro-core-that-exposes-memory).
-
-### Emulators
-
-| Platform | Emulator | Files and naming | Format | Scope | Options / versions that change files | Lossless conversion | Source |
-|---|---|---|---|---|---|---|---|
-| 3DS | Citra / Azahar / Lime3DS (standalone) | Per title, under `{user}/sdmc/Nintendo 3DS/00000000000000000000000000000000/00000000000000000000000000000000/`. SaveData: `title/{tid_high:08x}/{tid_low:08x}/data/00000001/` (a folder tree of the game's own files) plus the sibling `data/00000001.metadata` (16 B `ArchiveFormatInfo`: u32 total_size, u32 num_dirs, u32 num_files, u8 duplicate_data, padding). ExtData: `extdata/00000000/{id_low:08x}/` with a `metadata` file (path uses `{:08X}` in some code paths). Cartridge games use the same SD SaveData path. | **Host-filesystem container**: decrypted, unpacked files, not the DISA/DIFF image of real hardware | per-title folder (plus extdata folder, plus NAND sysdata for system titles) | none that change bytes | Azahar and Lime3DS share the Citra layout, so copying the folder tree is lossless. Real 3DS: Checkpoint/JKSM export the same unpacked file tree. The `.metadata` has to be synthesized (UNVERIFIED how a missing one is handled). | [archive_source_sd_savedata.cpp L21-34, L86-95](https://github.com/azahar-emu/azahar/blob/master/src/core/file_sys/archive_source_sd_savedata.cpp#L21-L34), [archive_extsavedata.cpp L189-203, L335](https://github.com/azahar-emu/azahar/blob/master/src/core/file_sys/archive_extsavedata.cpp#L189-L203), [archive_backend.h L111-118](https://github.com/azahar-emu/azahar/blob/master/src/core/file_sys/archive_backend.h#L111-L118), [fs/archive.h SYSTEM_ID/SDCARD_ID](https://github.com/azahar-emu/azahar/blob/master/src/core/hle/service/fs/archive.h) |
-| 3DS | citra (libretro) / azahar (libretro) | Same tree, rooted at `{RA save dir}/Citra/` (libretro/citra) or `{RA save dir}/Azahar/` (azahar's `src/citra_libretro`), falling back to the RA system dir. No `.srm`. | Filesystem container | per-title folder | `citra_use_libretro_save_path` = "LibRetro Default" / "Citra Default" (azahar: `{prefix}_use_libretro_save_path`, prefix UNVERIFIED). The non-default value uses the emulator's normal user dir. | Folder copy between the libretro and standalone roots is lossless | [libretro/citra citra_libretro.cpp L446-466](https://github.com/libretro/citra/blob/master/src/citra_libretro/citra_libretro.cpp#L446-L466), [azahar core_settings.cpp L1072-1101](https://github.com/azahar-emu/azahar/blob/master/src/citra_libretro/core_settings.cpp#L1072-L1101) |
-
-### Conversion notes
-
-- **3DS** saves are folder trees, not files. A sync unit is `title/{high}/{low}/data/00000001/` + `00000001.metadata`, plus the extdata folders the title uses. The extdata ID is not derivable from the title ID in general (UNVERIFIED).
-
-### User profiles
-
-- **verified**: no user accounts. A title's save is `title/<high>/<low>/data/00000001/`, plus any extra data (extdata) folders it uses. See [conversion notes](#conversion-notes).
-- **lead**: a title's extended header names the extdata id it may use; some extdata is shared between titles (a series sharing data, system extdata). That id is the flag for "this game keeps data outside its save". Reading it from a retail image needs the NCCH decrypted.
+Citra, Azahar and Lime3DS keep a title's save as an unpacked folder
+tree, `title/<high>/<low>/data/00000001/`, plus a small
+`00000001.metadata` file beside it and any extra data (extdata) folders
+the title uses. The libretro cores keep the same tree under the
+frontend's save folder. Real-console tools (Checkpoint, JKSM) export the
+same tree, so copying the folder moves a save without loss. The 3DS has
+no user accounts.
 
 ## Open items
 

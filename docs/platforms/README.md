@@ -1,14 +1,14 @@
 # Platforms
 
 One page per system. Each says how sigil identifies a game, which emulator
-layouts it knows, what sync does there, the emulator research behind it,
-and what isn't covered yet.
+layouts it knows and how each was verified, what sync does there, and
+what isn't covered yet.
 
 Status:
 
 - **synced**: collect and restore move the saves ([sync.md](../sync.md)).
 - **located**: `sigil_save_resolve` names the save files ([save-units.md](../save-units.md)); collect and restore don't cover the system yet.
-- **in development**: research only; no layout names the saves.
+- **in development**: sigil may identify the game, but no layout names the saves yet.
 
 ## Systems
 
