@@ -62,10 +62,8 @@ At sync time. No save is read.
 ```kotlin
 Sigil.locateSaves(
     game: SigilResult,                          // required. Step 1.
-    core: String,                               // required. Libretro core name without _libretro:
-                                                //   genesis_plus_gx, mednafen_psx_hw, mame2003_plus. A core
-                                                //   without a layout row gets the default row
-                                                //   (<stem>.srm, plus <stem>.rtc when the cart has a clock).
+    core: String,                               // required. Layout id of the emulator running the game;
+                                                //   see below.
     contentPath: String,                        // required. The path you handed the emulator, verbatim:
                                                 //   rom, .m3u, .cue, .chd, or archive.zip#member.ext when a
                                                 //   member was loaded. Only the file name part is used.
@@ -87,6 +85,20 @@ Sigil.locateSaves(
                                                 //   saveRoot, where sigil reads the profile list and fills
                                                 //   them.
 ```
+
+`core` names the emulator, because each keeps its saves differently. For
+a libretro core, pass the core's name without `_libretro`
+(`genesis_plus_gx`, `mednafen_psx_hw`). For a standalone emulator, pass
+its layout id (`dolphin_standalone`, `pcsx2_standalone`, `eden`).
+[platforms/](platforms/README.md#layouts) lists every id with its
+emulator. An id with no row gets the libretro default (`<stem>.srm`, plus
+`<stem>.rtc` when the cart has a clock), which fits an unlisted libretro
+core but names nothing an unlisted standalone emulator writes.
+
+If `alternates` is not empty, the root holds this game's saves under
+other option values, such as Beetle Saturn's `.bkr` from a build older
+than its save-method option. Ask the user, or call again with each
+alternate's `options`; sigil never picks one itself.
 
 On a layout with profiles (`eden`, `citron`, `sudachi`, `yuzu`, `cemu`,
 `vita3k`, `rpcs3`), `saveRoot` may be any folder around the emulator's
@@ -144,10 +156,13 @@ Sigil.hashSaves(
 ```
 
 ```kotlin
-contentHash: String     // What the RomM server computes for the artifact.
-identityHash: String    // The same over the non-rtc members. Different contentHash, same
-                        //   identityHash: a clock tick, not a new save.
+contentHash: String     // What RomM stores for the artifact and compares against.
+identityHash: String    // The same over the saves alone, leaving out the clock file.
 ```
+
+Compare `contentHash` with RomM's. `identityHash` is sigil's own: RomM
+never sees it, and sync's `changed` is already built on it, so a clock
+that ticked doesn't read as a new save. Most clients never read it.
 
 ## Upload and restore
 
@@ -224,22 +239,8 @@ Sigil.collect(
     repair: Boolean = false,                // Rebuild what SigilException.DAMAGED named, where sigil can.
     profile: String? = null,                // Layouts with profiles: the profile whose saves to take.
 ): SigilSyncResult
-    // Raises SigilException.DAMAGED when a file holding the saves is damaged and repair is false,
-    //   isn't a card sigil can read at all, or holds a corrupt save of the game or a companion
-    //   (repair changes neither of the last two), and AMBIGUOUS when more than one file could
-    //   be the emulator's card, or more than one profile could hold the saves (`profiles` on
-    //   the exception lists them).
 
 Sigil.restore(unit: ByteArray, /* same inputs */, overwriteLocal: Boolean = false): SigilSyncResult
-    // Each of these raises SigilException and writes nothing: CONFLICT (the saves under
-    //   saveRoot changed since the last sync), UNCOLLECTED (a shared volume holds saves no
-    //   collect has passed on yet), NO_SPACE (the saves don't fit; `blocksShort` says by how
-    //   much), REGION (a companion's save from another region), NO_TARGET (the unit holds a
-    //   volume or member with no file to go in), AMBIGUOUS (more than one file could be the
-    //   emulator's card, or more than one profile could take the saves), DAMAGED and EXISTS
-    //   (Dolphin's GCI folder has no free name for a new save). The last six name the save,
-    //   member or files in `problem`, each line escaped as SigilCardEntry.name. sync.md,
-    //   "Refusals", has the table.
 
 class SigilCompanion(
     gameIds: List<String>,      // The companion's ids, as for gameIds.
@@ -281,6 +282,26 @@ data class SigilProfile(
 
 A companion's saves go on the game's card beside the game's own and stay
 out of the game's unit; [sync.md](sync.md#companions) has the rules.
+
+### Refusals
+
+`restore` writes nothing when it raises `SigilException` with one of
+these codes. `collect` raises `DAMAGED`, `AMBIGUOUS` and `IO` the same
+way. The exception's `problem` names the save, member or files at fault
+when there is one, each line escaped as `SigilCardEntry.name` is.
+[sync.md](sync.md#refusals) has when each one happens.
+
+| Code | Meaning |
+|---|---|
+| `CONFLICT` | the saves under `saveRoot` changed since the last sync; pass `overwriteLocal = true` once the user agrees |
+| `UNCOLLECTED` | a shared volume holds saves no collect has passed on yet; collect for the game that ran last first |
+| `NO_SPACE` | the saves don't fit; `blocksShort` says by how much |
+| `REGION` | a companion's save is from another region |
+| `NO_TARGET` | the unit holds a volume or member with no file to go in |
+| `AMBIGUOUS` | more than one card file or profile could take the saves; `profiles` lists the profiles, so ask the user and pass the choice |
+| `DAMAGED` | a file the saves are in is damaged; pass `repair = true` once the user agrees |
+| `EXISTS` | Dolphin's GCI folder has no free name for a new save |
+| `IO` | a file the listing holds won't open, or a member's path would leave the root |
 
 ## Helpers
 

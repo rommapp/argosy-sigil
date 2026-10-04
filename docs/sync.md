@@ -114,7 +114,8 @@ Restore refuses, writing nothing, with:
 | `SIGIL_ERR_IO` | a unit member's path would leave the save root, or a file the listing holds won't open through `open`. Collect refuses the same way, so a file it can't read never counts as no saves | |
 | `SIGIL_ERR_EXISTS` | Dolphin's GCI folder holds other games' files under the name Dolphin gives a new save and each of its ten `0`-inserted forms, so Dolphin would write over one | the save |
 
-Collect refuses with `SIGIL_ERR_DAMAGED` and `SIGIL_ERR_AMBIGUOUS` in the same way. With each of
-these the call still sets `*out`; free it as usual. sigil reports and the
+Collect refuses with `SIGIL_ERR_DAMAGED`, `SIGIL_ERR_AMBIGUOUS` and
+`SIGIL_ERR_IO` in the same way. With each of these the call still sets
+`*out`; free it as usual. sigil reports and the
 client decides: re-run with `overwrite_local` or `repair` once the user
 agreed, or leave the saves as they are.

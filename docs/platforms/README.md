@@ -50,48 +50,60 @@ Status:
 
 ## Layouts
 
+Every call that finds or moves saves takes a layout id: the `core`
+argument in the bindings, `layout` in C. It names the emulator running
+the game, because each emulator keeps its saves differently.
+
+- For a libretro core, pass the core's library name without `_libretro`:
+  `genesis_plus_gx` for `genesis_plus_gx_libretro.so`.
+- For a standalone emulator, pass its id from the table, such as
+  `dolphin_standalone`, `pcsx2_standalone` or `eden`.
+
+An id with no row here gets the libretro default row (`{stem}.srm`, plus
+`{stem}.rtc` when the cart has a clock), documented on
+[gb](gb.md#save-layouts). That fits a libretro core with no row of its
+own. It does not fit a standalone emulator missing from the table: the
+default row names a `.srm` the emulator never writes, so locate finds
+nothing and restore writes a file the emulator doesn't read.
+
 Every layout id `src/save_layout.c` defines, and the page that documents
 it. A layout id without a row here, or missing from its page's Save layouts
-section, fails `bindings/python/test_contract.py`.
+section, fails `bindings/python/test_docs.py`.
 
-| Layout | Page |
-|---|---|
-| `vba_next` | [gba](gba.md) |
-| `gpsp` | [gba](gba.md) |
-| `bsnes` | [snes](snes.md) |
-| `genesis_plus_gx` | [segacd](segacd.md) |
-| `mednafen_psx_hw` | [psx](psx.md) |
-| `mednafen_psx` | [psx](psx.md) |
-| `pcsx_rearmed` | [psx](psx.md) |
-| `vita_pops` | [psx](psx.md) |
-| `pcsx2` | [ps2](ps2.md) |
-| `pcsx2_standalone` | [ps2](ps2.md) |
-| `mednafen_saturn` | [saturn](saturn.md) |
-| `kronos` | [saturn](saturn.md) |
-| `dolphin` | [gamecube](gamecube.md) |
-| `dolphin_standalone` | [gamecube](gamecube.md) |
-| `flycast` | [dreamcast](dreamcast.md) |
-| `flycast_standalone` | [dreamcast](dreamcast.md) |
-| `yabause` | [saturn](saturn.md) |
-| `yabasanshiro` | [saturn](saturn.md) |
-| `mednafen_ngp` | [ngp](ngp.md) |
-| `opera` | [3do](3do.md) |
-| `pokemini` | [pokemini](pokemini.md) |
-| `handy` | [lynx](lynx.md) |
-| `melonds` | [nds](nds.md) |
-| `fbneo` | [arcade](arcade.md) |
-| `mame2003_plus` | [arcade](arcade.md) |
-| `dosbox_pure` | [dos](dos.md) |
-| `same_cdi` | [cdi](cdi.md) |
-| `nestopia` | [fds](fds.md) |
-| `eden` | [switch](switch.md) |
-| `citron` | [switch](switch.md) |
-| `sudachi` | [switch](switch.md) |
-| `yuzu` | [switch](switch.md) |
-| `cemu` | [wiiu](wiiu.md) |
-| `vita3k` | [psvita](psvita.md) |
-| `rpcs3` | [ps3](ps3.md) |
-
-A core with no row of its own uses the libretro default row (`{stem}.srm`,
-plus `{stem}.rtc` when the cart has a clock), documented on
-[gb](gb.md#save-layouts).
+| Layout | Page | Emulator | Kind |
+|---|---|---|---|
+| `vba_next` | [gba](gba.md) | VBA Next | libretro core |
+| `gpsp` | [gba](gba.md) | gpSP | libretro core |
+| `bsnes` | [snes](snes.md) | bsnes | libretro core |
+| `genesis_plus_gx` | [segacd](segacd.md) | Genesis Plus GX, Sega CD games | libretro core |
+| `mednafen_psx_hw` | [psx](psx.md) | Beetle PSX HW | libretro core |
+| `mednafen_psx` | [psx](psx.md) | Beetle PSX | libretro core |
+| `pcsx_rearmed` | [psx](psx.md) | PCSX ReARMed | libretro core |
+| `vita_pops` | [psx](psx.md) | PS1 Classics on a PSP or PS Vita (POPS, Adrenaline) | console |
+| `pcsx2` | [ps2](ps2.md) | LRPS2 | libretro core |
+| `pcsx2_standalone` | [ps2](ps2.md) | PCSX2, AetherSX2, NetherSX2, ARMSX2 | standalone |
+| `mednafen_saturn` | [saturn](saturn.md) | Beetle Saturn | libretro core |
+| `kronos` | [saturn](saturn.md) | Kronos | libretro core |
+| `dolphin` | [gamecube](gamecube.md) | Dolphin | libretro core |
+| `dolphin_standalone` | [gamecube](gamecube.md) | Dolphin | standalone |
+| `flycast` | [dreamcast](dreamcast.md) | Flycast | libretro core |
+| `flycast_standalone` | [dreamcast](dreamcast.md) | Flycast | standalone |
+| `yabause` | [saturn](saturn.md) | Yabause | libretro core |
+| `yabasanshiro` | [saturn](saturn.md) | Yaba Sanshiro | libretro core |
+| `mednafen_ngp` | [ngp](ngp.md) | Beetle NeoPop | libretro core |
+| `opera` | [3do](3do.md) | Opera | libretro core |
+| `pokemini` | [pokemini](pokemini.md) | PokeMini | libretro core |
+| `handy` | [lynx](lynx.md) | Handy | libretro core |
+| `melonds` | [nds](nds.md) | melonDS (the legacy core) | libretro core |
+| `fbneo` | [arcade](arcade.md) | FBNeo | libretro core |
+| `mame2003_plus` | [arcade](arcade.md) | MAME 2003-Plus | libretro core |
+| `dosbox_pure` | [dos](dos.md) | DOSBox Pure | libretro core |
+| `same_cdi` | [cdi](cdi.md) | SAME CDi | libretro core |
+| `nestopia` | [fds](fds.md) | Nestopia, FDS disks | libretro core |
+| `eden` | [switch](switch.md) | Eden | standalone |
+| `citron` | [switch](switch.md) | Citron | standalone |
+| `sudachi` | [switch](switch.md) | Sudachi | standalone |
+| `yuzu` | [switch](switch.md) | yuzu | standalone |
+| `cemu` | [wiiu](wiiu.md) | Cemu | standalone |
+| `vita3k` | [psvita](psvita.md) | Vita3K | standalone |
+| `rpcs3` | [ps3](ps3.md) | RPCS3, aPS3e | standalone |

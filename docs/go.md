@@ -71,10 +71,7 @@ At sync time. No save is read.
 ```go
 sigil.LocateSaves(
     game *Result,          // required. Step 1.
-    core string,           // required. Libretro core name without _libretro: genesis_plus_gx,
-                           //   mednafen_psx_hw, mame2003_plus. A core without a layout row
-                           //   gets the default row (<stem>.srm, plus <stem>.rtc when the cart has
-                           //   a clock).
+    core string,           // required. Layout id of the emulator running the game; see below.
     contentPath string,    // required. The path you handed the emulator, verbatim: rom, .m3u, .cue,
                            //   .chd, or archive.zip#member.ext when a member was loaded. Only the
                            //   file name part is used.
@@ -98,6 +95,20 @@ type LocateOptions struct {
                                 //   by Profile.ID.
 }
 ```
+
+`core` names the emulator, because each keeps its saves differently. For
+a libretro core, pass the core's name without `_libretro`
+(`genesis_plus_gx`, `mednafen_psx_hw`). For a standalone emulator, pass
+its layout id (`dolphin_standalone`, `pcsx2_standalone`, `eden`).
+[platforms/](platforms/README.md#layouts) lists every id with its
+emulator. An id with no row gets the libretro default (`<stem>.srm`, plus
+`<stem>.rtc` when the cart has a clock), which fits an unlisted libretro
+core but names nothing an unlisted standalone emulator writes.
+
+If `Alternates` is not empty, the root holds this game's saves under
+other option values, such as Beetle Saturn's `.bkr` from a build older
+than its save-method option. Ask the user, or call again with each
+alternate's `Options`; sigil never picks one itself.
 
 On a layout with profiles (`eden`, `citron`, `sudachi`, `yuzu`, `cemu`,
 `vita3k`, `rpcs3`), the save root may be any folder around the emulator's
@@ -155,10 +166,13 @@ sigil.HashSaves(
 ```
 
 ```go
-unit.ContentHash   // What the RomM server computes for the artifact.
-unit.IdentityHash  // The same over the non-rtc members. Different ContentHash, same
-                   //   IdentityHash: a clock tick, not a new save.
+unit.ContentHash   // What RomM stores for the artifact and compares against.
+unit.IdentityHash  // The same over the saves alone, leaving out the clock file.
 ```
+
+Compare `ContentHash` with RomM's. `IdentityHash` is sigil's own: RomM
+never sees it, and sync's `Changed` is already built on it, so a clock
+that ticked doesn't read as a new save. Most clients never read it.
 
 ## Upload and restore
 
@@ -224,16 +238,6 @@ system's page under [platforms/](platforms/README.md). For Saturn and Sega CD, b
 ```go
 sigil.Collect(game *Result, core, contentPath, saveRoot string, opts *SyncOptions) (*SyncResult, error)
 sigil.Restore(unit []byte, game *Result, core, contentPath, saveRoot string, opts *SyncOptions) (*SyncResult, error)
-    // Each of these writes nothing: sigil.ErrConflict (the saves under saveRoot changed since
-    //   the last sync), sigil.ErrUncollected (a shared volume holds saves no collect has passed
-    //   on yet), and as a *sigil.ProblemError, which matches its error with errors.Is:
-    //   sigil.ErrNoSpace (BlocksShort says by how much), sigil.ErrRegion (a companion's save
-    //   from another region), sigil.ErrNoTarget (the unit holds a volume or member with no file
-    //   to go in), sigil.ErrAmbiguous (more than one file could be the emulator's card, or more
-    //   than one profile could take the saves) and sigil.ErrDamaged (unless Repair rebuilt it; a card sigil can't read,
-    //   or one holding a corrupt save of the game or a companion, stays ErrDamaged), and
-    //   sigil.ErrExists (Dolphin's GCI folder has no free name for a new save). Problem names the save, member or files. Collect returns ErrDamaged
-    //   and ErrAmbiguous the same way. sync.md, "Refusals", has the table.
 
 type ProblemError struct {
     Err         error   // sigil.ErrNoSpace, ErrRegion, ErrNoTarget, ErrAmbiguous, ErrDamaged or ErrExists.
@@ -296,6 +300,26 @@ type SyncResult struct {
 
 A companion's saves go on the game's card beside the game's own and stay
 out of the game's unit; [sync.md](sync.md#companions) has the rules.
+
+### Refusals
+
+`Restore` writes nothing when it returns one of these. `Collect` returns
+`ErrDamaged`, `ErrAmbiguous` and `ErrIO` the same way. The errors marked
+"ProblemError" come as a `*sigil.ProblemError`, which matches its error
+with `errors.Is` and names what is at fault in `Problem`.
+[sync.md](sync.md#refusals) has when each one happens.
+
+| Error | Meaning | ProblemError |
+|---|---|---|
+| `ErrConflict` | the saves under `saveRoot` changed since the last sync; pass `OverwriteLocal` once the user agrees | |
+| `ErrUncollected` | a shared volume holds saves no collect has passed on yet; collect for the game that ran last first | |
+| `ErrNoSpace` | the saves don't fit; `BlocksShort` says by how much | yes |
+| `ErrRegion` | a companion's save is from another region | yes |
+| `ErrNoTarget` | the unit holds a volume or member with no file to go in | yes |
+| `ErrAmbiguous` | more than one card file or profile could take the saves; ask the user, then pass the choice | yes |
+| `ErrDamaged` | a file the saves are in is damaged; pass `Repair` once the user agrees | yes |
+| `ErrExists` | Dolphin's GCI folder has no free name for a new save | yes |
+| `ErrIO` | a file the listing holds won't open, or a member's path would leave the root | |
 
 ## Helpers
 

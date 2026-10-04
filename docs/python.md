@@ -62,10 +62,8 @@ At sync time. No save is read.
 ```python
 sigil.locate_saves(
     game: SigilResult,                          # required. Step 1.
-    core: str,                                  # required. Libretro core name without _libretro:
-                                                #   genesis_plus_gx, mednafen_psx_hw, mame2003_plus. A core
-                                                #   without a layout row gets the default row
-                                                #   (<stem>.srm, plus <stem>.rtc when the cart has a clock).
+    core: str,                                  # required. Layout id of the emulator running the game;
+                                                #   see below.
     content_path: str,                          # required. The path you handed the emulator, verbatim:
                                                 #   rom, .m3u, .cue, .chd, or archive.zip#member.ext when a
                                                 #   member was loaded. Only the file name part is used.
@@ -88,6 +86,20 @@ sigil.locate_saves(
                                                 #   save_root, where sigil reads the profile list and fills
                                                 #   them.
 ```
+
+`core` names the emulator, because each keeps its saves differently. For
+a libretro core, pass the core's name without `_libretro`
+(`genesis_plus_gx`, `mednafen_psx_hw`). For a standalone emulator, pass
+its layout id (`dolphin_standalone`, `pcsx2_standalone`, `eden`).
+[platforms/](platforms/README.md#layouts) lists every id with its
+emulator. An id with no row gets the libretro default (`<stem>.srm`, plus
+`<stem>.rtc` when the cart has a clock), which fits an unlisted libretro
+core but names nothing an unlisted standalone emulator writes.
+
+If `alternates` is not empty, the root holds this game's saves under
+other option values, such as Beetle Saturn's `.bkr` from a build older
+than its save-method option. Ask the user, or call again with each
+alternate's `options`; sigil never picks one itself.
 
 On a layout with profiles (`eden`, `citron`, `sudachi`, `yuzu`, `cemu`,
 `vita3k`, `rpcs3`), `save_root` may be any folder around the emulator's
@@ -145,10 +157,13 @@ sigil.hash_saves(
 ```
 
 ```python
-content_hash: str     # What the RomM server computes for the artifact.
-identity_hash: str    # The same over the non-rtc members. Different content_hash, same
-                      #   identity_hash: a clock tick, not a new save.
+content_hash: str     # What RomM stores for the artifact and compares against.
+identity_hash: str    # The same over the saves alone, leaving out the clock file.
 ```
+
+Compare `content_hash` with RomM's. `identity_hash` is sigil's own: RomM
+never sees it, and sync's `changed` is already built on it, so a clock
+that ticked doesn't read as a new save. Most clients never read it.
 
 ## Upload and restore
 
@@ -226,22 +241,8 @@ sigil.collect(
     repair: bool = False,                   # Rebuild what SigilDamagedError named, where sigil can.
     profile: str | None = None,             # Layouts with profiles: the profile whose saves to take.
 ) -> SigilSyncResult
-    # Raises SigilDamagedError when a file holding the saves is damaged and repair is False,
-    #   isn't a card sigil can read at all, or holds a corrupt save of the game or a companion
-    #   (repair changes neither of the last two), and SigilAmbiguousError when more than one
-    #   file could be the emulator's card, or more than one profile could hold the saves
-    #   (`profiles` on the error lists them).
 
 sigil.restore(unit: bytes, ..., overwrite_local: bool = False) -> SigilSyncResult
-    # Each of these writes nothing: SigilConflictError (the saves under save_root changed since
-    #   the last sync), SigilUncollectedError (a shared volume holds saves no collect has passed
-    #   on yet), SigilNoSpaceError (the saves don't fit; `blocks_short` says by how much),
-    #   SigilRegionError (a companion's save from another region), SigilNoTargetError (the
-    #   unit holds a volume or member with no file to go in), SigilAmbiguousError (more than one
-    #   file could be the emulator's card, or more than one profile could take the saves),
-    #   SigilDamagedError and SigilExistsError (Dolphin's GCI folder has no free name for a new
-    #   save). The last six name the save, member or files in `problem`. sync.md, "Refusals", has
-    #   the table.
 
 SigilCompanion(
     game_ids: tuple[str, ...],  # The companion's ids, as for game_ids.
@@ -283,6 +284,26 @@ SigilProfile(
 
 A companion's saves go on the game's card beside the game's own and stay
 out of the game's unit; [sync.md](sync.md#companions) has the rules.
+
+### Refusals
+
+`restore` writes nothing when it raises one of these. `collect` raises
+`SigilDamagedError`, `SigilAmbiguousError` and `SigilIOError` the same
+way. Every error carries `problem`, naming the save, member or files at
+fault when there is one. [sync.md](sync.md#refusals) has when each one
+happens.
+
+| Error | Meaning |
+|---|---|
+| `SigilConflictError` | the saves under `save_root` changed since the last sync; pass `overwrite_local=True` once the user agrees |
+| `SigilUncollectedError` | a shared volume holds saves no collect has passed on yet; collect for the game that ran last first |
+| `SigilNoSpaceError` | the saves don't fit; `blocks_short` says by how much |
+| `SigilRegionError` | a companion's save is from another region |
+| `SigilNoTargetError` | the unit holds a volume or member with no file to go in |
+| `SigilAmbiguousError` | more than one card file or profile could take the saves; `profiles` lists the profiles, so ask the user and pass the choice |
+| `SigilDamagedError` | a file the saves are in is damaged; pass `repair=True` once the user agrees |
+| `SigilExistsError` | Dolphin's GCI folder has no free name for a new save |
+| `SigilIOError` | a file the listing holds won't open, or a member's path would leave the root |
 
 ## Helpers
 
