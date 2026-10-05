@@ -86,7 +86,7 @@ All the bindings expose the same operations, options and fields.
 needed) holds the table of names and fails when a binding drops one, and
 keeps the C enums, the JNI descriptors and the Kotlin constructors in
 step. A new binding under `bindings/<lang>/` joins that table and gets
-its own page under `docs/`. `make contract` also runs
+its own page under `docs/quickstart-guides/`. `make contract` also runs
 `bindings/python/test_docs.py`: every layout row in `src/save_layout.c`
 has a page under `docs/platforms/` that documents it, every platform page
 states its status, and every relative link and anchor in the README and

@@ -446,7 +446,7 @@ object Sigil {
     /**
      * The files under a save root that belong to [game] when [core] runs [contentPath]. No save
      * is read; on a layout with profiles the emulator's profile list is, when [saveRoot] is
-     * given, and the hashes are filled. docs/kotlin.md defines every input.
+     * given, and the hashes are filled. docs/quickstart-guides/kotlin.md defines every input.
      */
     fun locateSaves(
         game: SigilResult,
@@ -520,7 +520,7 @@ object Sigil {
      * [game]'s saves under [saveRoot] gathered into the unit that travels to RomM. Store the
      * result's state once the unit, its holding unit and each changed companion unit reached
      * RomM. Raises [SigilException] with [SigilException.DAMAGED] and
-     * [SigilException.AMBIGUOUS] as [restore] does. docs/kotlin.md defines every input.
+     * [SigilException.AMBIGUOUS] as [restore] does. docs/quickstart-guides/kotlin.md defines every input.
      */
     fun collect(
         game: SigilResult,

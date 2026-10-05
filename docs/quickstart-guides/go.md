@@ -3,7 +3,7 @@
 `import sigil "github.com/rommforge/argosy-sigil/bindings/go"` (cgo;
 `make build` compiles the static libs it links). On Windows cgo links
 with MinGW gcc, so build sigil with MinGW too; it can't link the `.lib`
-archives MSVC makes ([building.md](building.md#windows)). Failures return a sentinel per C code
+archives MSVC makes ([building.md](../building.md#windows)). Failures return a sentinel per C code
 (`sigil.ErrNotFound`, `sigil.ErrNeedsKey`, `sigil.ErrIO`, ...) for
 `errors.Is`.
 
@@ -111,7 +111,7 @@ type LocateOptions struct {
 a libretro core, pass the core's name without `_libretro`
 (`genesis_plus_gx`, `mednafen_psx_hw`). For a standalone emulator, pass
 its layout id (`dolphin_standalone`, `pcsx2_standalone`, `eden`).
-[platforms/](platforms/README.md#layouts) lists every id with its
+[platforms/](../platforms/README.md#layouts) lists every id with its
 emulator. An id with no row gets the libretro default (`<stem>.srm`, plus
 `<stem>.rtc` when the cart has a clock), which fits an unlisted libretro
 core but names nothing an unlisted standalone emulator writes.
@@ -128,7 +128,7 @@ around the emulator's own: its base (the folder holding `nand/`, `mlc01/`,
 `ux0/`, `dev_hdd0/` or `PSP/`), a folder above it, or one inside it such
 as a profile's save folder. Sigil re-roots at the base and takes the profile the root lies in.
 Member paths are then relative to the base, which `SaveBase` returns.
-[save-units.md](save-units.md#profiles) has the folders and the profile rules.
+[save-units.md](../save-units.md#profiles) has the folders and the profile rules.
 
 With two or more profiles and none picked, `Collect` and `Restore` return
 `ErrAmbiguous`. If you don't know which profile the user plays as, ask
@@ -260,7 +260,7 @@ that make up the game's save, and you package them yourself:
 This path writes whole files, so it can't merge a game's saves into a
 shared memory card or a profile folder the way `Restore` does. Use
 `Collect` and `Restore` wherever they cover the system. Hash rules:
-[save-units.md](save-units.md#hash).
+[save-units.md](../save-units.md#hash).
 
 ## Sync
 
@@ -272,9 +272,9 @@ Dreamcast VMUs, the save folders the yuzu forks, Cemu, Vita3K and RPCS3
 keep per user profile, and PSP save folders work today. `Restore` returns
 `sigil.ErrNotFound` for a unit holding none of the game's saves, and
 ignores other games' saves inside a unit. The rules every system shares are
-in [sync.md](sync.md); what a unit holds, how Saturn and Sega CD saves find
+in [sync.md](../sync.md); what a unit holds, how Saturn and Sega CD saves find
 their owner, and how genesis_plus_gx's region file is picked are on each
-system's page under [platforms/](platforms/README.md). For Saturn and Sega CD, build the game with
+system's page under [platforms/](../platforms/README.md). For Saturn and Sega CD, build the game with
 `PersistedResult("saturn", "", "", 0)` or `("segacd", ...)`.
 
 ```go
@@ -341,7 +341,7 @@ type SyncResult struct {
 ```
 
 A companion's saves go on the game's card beside the game's own and stay
-out of the game's unit; [sync.md](sync.md#companions) has the rules.
+out of the game's unit; [sync.md](../sync.md#companions) has the rules.
 
 ### Refusals
 
@@ -349,7 +349,7 @@ out of the game's unit; [sync.md](sync.md#companions) has the rules.
 `ErrDamaged`, `ErrAmbiguous` and `ErrIO` the same way. The errors marked
 "ProblemError" come as a `*sigil.ProblemError`, which matches its error
 with `errors.Is` and names what is at fault in `Problem`.
-[sync.md](sync.md#refusals) has when each one happens.
+[sync.md](../sync.md#refusals) has when each one happens.
 
 | Error | Meaning | ProblemError |
 |---|---|---|

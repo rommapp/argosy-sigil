@@ -16,7 +16,7 @@ emulator keeps its saves; sigil never searches the drive. From there:
 - **Game id**: sigil reads the platform's own id out of the ROM.
 - **Names the save files**: sigil knows which files in that save folder are
   this game's, for each emulator it lists. The client uploads them as they
-  are ([members](docs/c.md#without-collect-and-restore)).
+  are ([members](docs/quickstart-guides/c.md#without-collect-and-restore)).
 - **Builds the upload**: sigil packs the game's saves into the unit that
   goes to RomM and writes a downloaded one back, conflicts included
   ([sync](docs/sync.md)). Where the emulator keeps every game on one
@@ -56,12 +56,12 @@ containers sigil reads: [identification](docs/identification.md),
 
 ## Bindings
 
-- C: [include/sigil.h](include/sigil.h). Guide: [docs/c.md](docs/c.md).
+- C: [include/sigil.h](include/sigil.h). Guide: [C](docs/quickstart-guides/c.md).
 - Kotlin/Java (Android, JNI): [`bindings/android/`](bindings/android/).
-  Guide: [docs/kotlin.md](docs/kotlin.md).
-- Go (cgo): [`bindings/go/`](bindings/go/). Guide: [docs/go.md](docs/go.md).
+  Guide: [Kotlin](docs/quickstart-guides/kotlin.md).
+- Go (cgo): [`bindings/go/`](bindings/go/). Guide: [Go](docs/quickstart-guides/go.md).
 - Python (cffi): [`bindings/python/`](bindings/python/). Guide:
-  [docs/python.md](docs/python.md).
+  [Python](docs/quickstart-guides/python.md).
 
 Every binding exposes the same operations, options and fields. Each guide
 walks the three steps (identify the game, locate its saves, hash or sync

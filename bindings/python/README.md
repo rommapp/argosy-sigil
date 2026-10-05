@@ -33,5 +33,5 @@ python -m pytest test_sigil.py
 
 ## Usage
 
-[docs/python.md](../../docs/python.md): identify, locate, hash, sync,
+[docs/quickstart-guides/python.md](../../docs/quickstart-guides/python.md): identify, locate, hash, sync,
 with what each call requires and returns.
