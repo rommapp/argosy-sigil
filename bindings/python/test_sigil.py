@@ -188,7 +188,8 @@ _DC_DIR = Path(__file__).resolve().parents[2] / "tests/fixtures/saves/dc/files"
 _GUNDAM = sigil.SigilResult.persisted("dc", "T13301N", "T13301N", 0)
 
 
-@pytest.mark.skipif(not _DC_DIR.exists(), reason="Dreamcast samples missing")
+@pytest.mark.skipif(not (_DC_DIR / "gundam-0079-flycast").exists() or not (_DC_DIR / "vmoooo-vmu").exists(),
+                    reason="Dreamcast samples missing")
 def test_a_vmu_the_settings_keep_no_file_for_is_no_target(tmp_path):
     source, target = tmp_path / "source", tmp_path / "target"
     source.mkdir()
@@ -366,6 +367,7 @@ def test_pcsx2_folder_card_syncs_through_the_default_listing(tmp_path):
     assert "memcards/Mcd001.ps2/BASLUS-20152AC04/_pcsx2_meta/icon.sys" in listed
 
 
+@pytest.mark.skipif(not _ACE_DIR.exists(), reason="PS2 save samples missing")
 def test_pcsx2_folder_restore_removes_a_dropped_folder_and_its_directory(tmp_path):
     source = tmp_path / "source" / "memcards" / "Mcd001.ps2" / "BASLUS-20152AC04"
     source.mkdir(parents=True)
@@ -462,6 +464,7 @@ GB = sigil.SigilResult.persisted("gb", "", "", 0)
 GB_RTC = sigil.SigilResult.persisted("gbc", "", "", sigil.FEATURE_RTC)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows file names are UTF-16, so none holds a byte outside UTF-8")
 def test_names_that_are_not_utf8_pass_through_unchanged():
     # os.scandir hands a name holding byte 0xFF back with a surrogate in its place.
     odd = "G\udcff"
