@@ -29,7 +29,7 @@ static int load_card_file(const sigil_sync_request *req, const char *path, sigil
     for (size_t i = 0; i < s->count; i++) {
         if (strcmp(s->files[i].path, path) == 0) return SIGIL_OK;
     }
-    sigil_io *io = req->save.open(req->save.open_ctx, path);
+    sigil_io *io = sigil_save_open(req->save.open, req->save.open_ctx, path);
     if (!io) return sigil_sync_listed(req, path) ? SIGIL_ERR_IO : SIGIL_OK;
     if ((io->size && io->size(io->ctx) == 0) || erased(io)) {
         sigil_io_close(io);

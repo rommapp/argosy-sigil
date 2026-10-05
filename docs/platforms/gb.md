@@ -57,9 +57,9 @@ These apply to every libretro core that exposes save memory.
   `RETRO_MEMORY_RTC` as `{stem}.rtc`, the bytes exactly as the core
   exposes them, with no header.
 - With `save_file_compression` on (off by default), RetroArch wraps the
-  file in RZIP, which starts with `#RZIPv`. A sync server must detect
-  `#RZIPv` and inflate before comparing bytes. RetroArch reads
-  uncompressed files either way.
+  file in RZIP, which starts with `#RZIPv`. Collect, restore and
+  `sigil_save_hash` read through it ([sync](../sync.md#compressed-saves)).
+  RetroArch reads uncompressed files either way.
 - `sort_savefiles_enable` (on by default), `sort_savefiles_by_content_enable`
   and `savefiles_in_content_dir` change the folder, not the bytes.
 - Some cores write their own files through the save folder instead
@@ -125,7 +125,6 @@ emulator's `.srm` and `.rtc`, as clients uploaded before sigil.
 - A header saying 2 KiB of RAM (`0x149` = `0x01`, unused by licensed carts) gives 8 KiB in mGBA and Gearboy and 2 KiB in SameBoy and VBA-M; sigil doesn't convert between them.
 - A game that writes MBC2's RAM through its mirrors (`0xA200` to `0xBFFF`) lands elsewhere in gambatte's and TGB Dual's 8 KiB file than in the 512-byte emulators; sigil takes the first 512 bytes.
 - HuC3, TAMA5 and TPP1 clocks are left in the RAM file as each emulator wrote them, not converted.
-- RetroArch's RZIP-compressed saves aren't read.
 
 - Pizza Boy A/C: closed source, format and RTC handling unknown.
 - When RetroArch's `sort_savefiles_enable` default became `true`.

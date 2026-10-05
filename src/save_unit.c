@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "save_profiles.h"
+#include "rzip.h"
 #include <ctype.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -484,7 +485,7 @@ static int on_zip_entry(void *ctx, const char *name, const char *md5_hex) {
 }
 
 static int hash_single(sigil_save_open_fn open, void *open_ctx, const sigil_save_member *member, char out_hex[33]) {
-    sigil_io *io = open(open_ctx, member->path);
+    sigil_io *io = sigil_save_open(open, open_ctx, member->path);
     if (!io) return SIGIL_ERR_IO;
     int rc;
     if (sigil_io_is_zip(io)) {
@@ -517,7 +518,7 @@ int sigil_save_hash(sigil_save_unit *unit, sigil_save_open_fn open, void *open_c
     const sigil_save_member *state_member = NULL;
     int rc = SIGIL_OK;
     for (size_t i = 0; i < unit->member_count && rc == SIGIL_OK; i++) {
-        sigil_io *io = open(open_ctx, unit->members[i].path);
+        sigil_io *io = sigil_save_open(open, open_ctx, unit->members[i].path);
         if (!io) { rc = SIGIL_ERR_IO; break; }
         char hex[33];
         rc = md5_stream(io, hex);

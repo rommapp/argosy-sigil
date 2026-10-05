@@ -41,7 +41,7 @@ static int gather_volumes(const sigil_sync_ctx *x, volume_set *s, sigil_sync_res
         snprintf(raw, sizeof(raw), "%s/%s/%s", x->kind->platform, x->req->save.layout ? x->req->save.layout : "",
                  f->target.path);
         sigil_sync_escape(raw, f->key, sizeof(f->key));
-        sigil_io *io = x->req->save.open(x->req->save.open_ctx, f->target.path);
+        sigil_io *io = sigil_save_open(x->req->save.open, x->req->save.open_ctx, f->target.path);
         if (!io) {
             if (sigil_sync_listed(x->req, f->target.path)) rc = SIGIL_ERR_IO;
             continue;

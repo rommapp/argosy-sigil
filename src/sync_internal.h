@@ -12,6 +12,7 @@
 #include "card_ps2.h"
 #include "card_segacd.h"
 #include "save_profiles.h"
+#include "rzip.h"
 #include <stdio.h>
 #include <stdlib.h>
 

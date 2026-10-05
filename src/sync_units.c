@@ -50,7 +50,7 @@ bool sigil_sync_listed(const sigil_sync_request *req, const char *path) {
 int sigil_sync_read_file(const sigil_sync_request *req, const char *path, size_t cap, uint8_t **out, size_t *len) {
     *out = NULL;
     *len = 0;
-    sigil_io *io = req->save.open(req->save.open_ctx, path);
+    sigil_io *io = sigil_save_open(req->save.open, req->save.open_ctx, path);
     if (!io) return sigil_sync_listed(req, path) ? SIGIL_ERR_IO : SIGIL_ERR_NOT_FOUND;
     int rc = sigil_bram_read_all(io, cap, out, len);
     sigil_io_close(io);

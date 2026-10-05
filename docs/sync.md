@@ -85,6 +85,18 @@ It replaces only the game's saves,
 and only when the volume is as the last collect saw it; a collect that
 then finds the old saves back sets `restore_again`.
 
+## Compressed saves
+
+RetroArch's `save_file_compression` writes saves in RZIP: `#RZIPv`, a
+version byte (1 for deflate, 2 for Zstandard, which current builds write
+where it's compiled in), `#`, the chunk and total sizes, then the
+compressed chunks. Collect, restore and `sigil_save_hash` read any save
+file, card or volume through it, so a compressed save gives the same unit
+and hash as the same save uncompressed. Restore writes uncompressed files,
+which RetroArch reads either way. An RZIP file whose chunks don't
+decompress is read as it is, and so as damaged where a card or volume
+belongs.
+
 ## Damaged files
 
 A card or volume file sigil can't read as what its path holds (no card

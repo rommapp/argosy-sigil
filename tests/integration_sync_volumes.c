@@ -4,6 +4,7 @@
 #include "card_saturn.h"
 #include "card_segacd.h"
 #include <stdbool.h>
+#include <zlib.h>
 
 #define TEST_SKIP  77
 #define LUNAR      "Lunar - The Silver Star (USA).cue"
@@ -338,6 +339,26 @@ static void check_saturn_single(void) {
         check_faulty_write("saturn faulty write", "mednafen_saturn", "saturn", "Hyper Duel (Japan).cue", NULL, NULL,
                            r->data, r->len, last_set_byte);
     }
+
+    /* RetroArch's save compression (RZIP, one deflate chunk) leaves the volume the same save. */
+    uLongf z = compressBound((uLong)len);
+    uint8_t *rz = (uint8_t *)malloc(20 + 4 + z);
+    compress2(rz + 24, &z, internal, (uLong)len, 6);
+    memcpy(rz, "#RZIPv\x01#", 8);
+    sigil_write_le32(rz + 8, 131072);
+    sigil_write_le64(rz + 12, len);
+    sigil_write_le32(rz + 20, (uint32_t)z);
+    mem_root packed = {0};
+    root_put(&packed, "Hyper Duel (Japan).srm", rz, 24 + z);
+    game p;
+    make_game(&p, &packed, "mednafen_saturn", "saturn", "Hyper Duel (Japan).cue", SIGIL_SYNC_MANAGED);
+    sigil_sync_result *pr = NULL;
+    if (sigil_collect(&p.req, &pr) != SIGIL_OK || !r || !pr->data || strcmp(pr->identity_hash, r->identity_hash) != 0) {
+        fail("saturn rzip", "a compressed volume doesn't collect as the volume");
+    }
+    sigil_sync_result_free(pr);
+    root_free(&packed);
+    free(rz);
     sigil_sync_result_free(r);
     root_free(&root);
     free(internal);
