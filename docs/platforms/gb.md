@@ -23,6 +23,9 @@ the emulator names the save after the content file.
 means the bytes are not a Game Boy header. gambatte, mGBA and VBA-M key
 their `RETRO_MEMORY_RTC` region on the same values.
 
+`SIGIL_FEATURE_MBC2`: header byte `0x147` is `0x05` (MBC2) or `0x06`
+(MBC2+BATTERY).
+
 ## Save layouts
 
 Rows from the [layout table](../save-units.md). The default row applies to any cart core with no row of its own.
@@ -93,6 +96,21 @@ else the core's. For a core sigil has no format for and no `.rtc` there,
 it writes the RAM alone. A unit without `clock.rtc` leaves the clock on
 disk as it is.
 
+MBC2's RAM is 512 four-bit cells, stored three ways: mGBA packs two cells
+to a byte (256 bytes, the even cell in the low nibble); SameBoy, VBA-M,
+Gearboy and Mesen2 keep one per byte in the low nibble (512, with 0xF, 0x0
+or whatever the game wrote above it); gambatte and TGB Dual keep the
+cart's whole 8 KiB range, the cells in its first 512 bytes. None of them
+reads another's form: VBA-M stops saving the cart for the session when
+the file isn't 512 bytes, and mGBA reads a 512-byte file as packed pairs.
+The unit holds the 512 cells, each in the low nibble with 0xF above it,
+so the same save gives the same unit from any of them. Restore writes the
+form of the file already there, else the core's: 256 for `mgba` and
+`mgba_standalone`, 8 KiB for `gambatte` and `tgbdual` (0xFF past the
+cells), 512 for any other. A 256 or 512-byte RAM is taken as MBC2's
+whatever the request says, since no other cart has RAM of that size; an
+8 KiB RAM only with `SIGIL_FEATURE_MBC2`.
+
 On the standalone rows restore writes one `.sav`: the RAM, and on a clock
 cart the unit's clock in the emulator's footer, or the clock already there
 when the unit has none. A cart without a clock never gets a footer, since
@@ -104,7 +122,8 @@ emulator's `.srm` and `.rtc`, as clients uploaded before sigil.
 ## Open items
 
 - A clock format can't hold all of the neutral clock: gambatte drops halt and carry, Mesen2 the latched registers, TGB Dual the wall time. Restore writes what the format holds and doesn't report what it dropped.
-- RAM size differs between emulators for a cart whose header says 2 KiB (mGBA and Gearboy keep 8 KiB, SameBoy and VBA-M 2 KiB) and for MBC2 (mGBA packs it into 256 bytes, VBA-M and SameBoy keep 512). The same progress then gives a different unit per emulator; sigil doesn't convert between them.
+- A header saying 2 KiB of RAM (`0x149` = `0x01`, unused by licensed carts) gives 8 KiB in mGBA and Gearboy and 2 KiB in SameBoy and VBA-M; sigil doesn't convert between them.
+- A game that writes MBC2's RAM through its mirrors (`0xA200` to `0xBFFF`) lands elsewhere in gambatte's and TGB Dual's 8 KiB file than in the 512-byte emulators; sigil takes the first 512 bytes.
 - HuC3, TAMA5 and TPP1 clocks are left in the RAM file as each emulator wrote them, not converted.
 - RetroArch's RZIP-compressed saves aren't read.
 

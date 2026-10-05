@@ -12,6 +12,8 @@
 #define GB_MBC3_TIMER_RAM_BATTERY 0x10
 #define GB_TAMA5                  0xFD
 #define GB_HUC3                   0xFE
+#define GB_MBC2                   0x05
+#define GB_MBC2_BATTERY           0x06
 
 static bool gb_cart_has_rtc(uint8_t cart_type) {
     return cart_type == GB_MBC3_TIMER_BATTERY
@@ -47,6 +49,7 @@ int sigil_extract_gb(const sigil_io *io, const char *filename_hint,
     if (!gb_header_checksum_ok(rom)) return SIGIL_ERR_UNSUPPORTED_FORMAT;
 
     if (gb_cart_has_rtc(rom[GB_CART_TYPE])) out->features |= SIGIL_FEATURE_RTC;
+    if (rom[GB_CART_TYPE] == GB_MBC2 || rom[GB_CART_TYPE] == GB_MBC2_BATTERY) out->features |= SIGIL_FEATURE_MBC2;
     out->source = SIGIL_SOURCE_BINARY;
     return SIGIL_OK;
 }

@@ -114,6 +114,10 @@ typedef enum {
  * writes `<stem>.rtc`). GB: header byte 0x147 in {0x0F, 0x10, 0xFD, 0xFE}.
  * SNES: (ROMType << 8 | ROMSpeed) is 0x5535 (S-RTC) or 0xF93A (SPC7110 RTC). */
 #define SIGIL_FEATURE_RTC  (1u << 0)
+/* MBC2: a GB cart whose RAM is 512 four-bit cells inside the mapper, which
+ * emulators store as 256, 512 or 8192 bytes. GB: header byte 0x147 in
+ * {0x05, 0x06}. */
+#define SIGIL_FEATURE_MBC2 (1u << 1)
 
 typedef enum {
     SIGIL_SOURCE_BINARY = 0,

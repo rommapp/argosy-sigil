@@ -50,6 +50,8 @@ sigil_add_test(unit_n64)
 target_include_directories(unit_n64 PRIVATE ${CMAKE_SOURCE_DIR}/src)
 sigil_add_test(unit_n64_save)
 target_include_directories(unit_n64_save PRIVATE ${CMAKE_SOURCE_DIR}/src)
+sigil_add_test(unit_sync_gb_mbc2)
+target_include_directories(unit_sync_gb_mbc2 PRIVATE ${CMAKE_SOURCE_DIR}/src)
 sigil_add_test(unit_save_unit)
 sigil_add_test(unit_utf8_paths)
 

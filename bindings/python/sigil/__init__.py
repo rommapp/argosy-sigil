@@ -60,6 +60,7 @@ __all__ = [
 
 PLATFORM_AUTO: int = lib.SIGIL_PLATFORM_AUTO
 FEATURE_RTC: int = lib.SIGIL_FEATURE_RTC
+FEATURE_MBC2: int = lib.SIGIL_FEATURE_MBC2
 
 
 class SigilError(Exception):

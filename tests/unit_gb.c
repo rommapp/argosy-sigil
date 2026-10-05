@@ -31,7 +31,7 @@ static void write_header(uint8_t *rom, uint8_t cart_type) {
 }
 
 static int expect(uint8_t cart_type, const char *name, const char *slug,
-                  int want_rc, int want_rtc, int want_platform, const char *label) {
+                  int want_rc, uint32_t want_features, int want_platform, const char *label) {
     uint8_t rom[ROM_LEN];
     write_header(rom, cart_type);
     mem_ctx ctx = { rom, sizeof(rom) };
@@ -43,13 +43,12 @@ static int expect(uint8_t cart_type, const char *name, const char *slug,
         return 1;
     }
     if (rc != SIGIL_OK) return 0;
-    int has_rtc = (r.features & SIGIL_FEATURE_RTC) ? 1 : 0;
-    if (has_rtc != want_rtc || (int)r.platform != want_platform
+    if (r.features != want_features || (int)r.platform != want_platform
         || r.usage != SIGIL_USAGE_FILE_PREFIX || r.source != SIGIL_SOURCE_BINARY
         || r.title_id[0] != '\0' || r.save_id[0] != '\0'
         || r.struct_version < SIGIL_RESULT_V3) {
-        fprintf(stderr, "FAIL %s: rtc=%d platform=%d usage=%d source=%d title='%s' v=%u\n",
-                label, has_rtc, (int)r.platform, (int)r.usage, (int)r.source,
+        fprintf(stderr, "FAIL %s: features=%u platform=%d usage=%d source=%d title='%s' v=%u\n",
+                label, r.features, (int)r.platform, (int)r.usage, (int)r.source,
                 r.title_id, r.struct_version);
         return 1;
     }
@@ -58,14 +57,17 @@ static int expect(uint8_t cart_type, const char *name, const char *slug,
 
 int main(void) {
     int fails = 0;
-    fails += expect(0x10, "Pokemon - Crystal Version (USA).gbc", NULL, SIGIL_OK, 1, SIGIL_PLATFORM_GBC, "mbc3 timer ram battery");
-    fails += expect(0x0F, "clock.gb", NULL, SIGIL_OK, 1, SIGIL_PLATFORM_GB, "mbc3 timer battery");
-    fails += expect(0xFE, "Robopon - Sun Version (USA).gbc", "gbc", SIGIL_OK, 1, SIGIL_PLATFORM_GBC, "huc3");
-    fails += expect(0xFD, "tamagotchi.gb", NULL, SIGIL_OK, 1, SIGIL_PLATFORM_GB, "tama5");
+    const uint32_t RTC = SIGIL_FEATURE_RTC, MBC2 = SIGIL_FEATURE_MBC2;
+    fails += expect(0x10, "Pokemon - Crystal Version (USA).gbc", NULL, SIGIL_OK, RTC, SIGIL_PLATFORM_GBC, "mbc3 timer ram battery");
+    fails += expect(0x0F, "clock.gb", NULL, SIGIL_OK, RTC, SIGIL_PLATFORM_GB, "mbc3 timer battery");
+    fails += expect(0xFE, "Robopon - Sun Version (USA).gbc", "gbc", SIGIL_OK, RTC, SIGIL_PLATFORM_GBC, "huc3");
+    fails += expect(0xFD, "tamagotchi.gb", NULL, SIGIL_OK, RTC, SIGIL_PLATFORM_GB, "tama5");
     fails += expect(0x13, "Pokemon - Yellow Version (USA).gbc", NULL, SIGIL_OK, 0, SIGIL_PLATFORM_GBC, "mbc3 ram battery, no timer");
     fails += expect(0x1B, "Pokemon - Red Version (USA).gb", NULL, SIGIL_OK, 0, SIGIL_PLATFORM_GB, "mbc5 ram battery");
     fails += expect(0x00, "Tetris (World).gb", NULL, SIGIL_OK, 0, SIGIL_PLATFORM_GB, "rom only");
-    fails += expect(0x10, "clock.gb", "gbc", SIGIL_OK, 1, SIGIL_PLATFORM_GBC, "platform hint wins over extension");
+    fails += expect(0x10, "clock.gb", "gbc", SIGIL_OK, RTC, SIGIL_PLATFORM_GBC, "platform hint wins over extension");
+    fails += expect(0x06, "Final Fantasy Legend, The (USA).gb", NULL, SIGIL_OK, MBC2, SIGIL_PLATFORM_GB, "mbc2 battery");
+    fails += expect(0x05, "mbc2.gb", NULL, SIGIL_OK, MBC2, SIGIL_PLATFORM_GB, "mbc2");
 
     {
         uint8_t rom[ROM_LEN];

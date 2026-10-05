@@ -76,7 +76,9 @@ absent. With one non-rtc member left it is that member's raw hash.
 `sigil_result.features` (struct version 3) is a bitfield read from the
 cart header. `SIGIL_FEATURE_RTC` says the cart carries a real-time clock,
 so a libretro core exposes `RETRO_MEMORY_RTC` and RetroArch persists it
-beside the save as `<stem>.rtc`. The header rules that set it are on the
+beside the save as `<stem>.rtc`. `SIGIL_FEATURE_MBC2` says a Game Boy
+cart's RAM is MBC2's 512 four-bit cells, which emulators store in three
+different forms. The header rules that set them are on the
 [Game Boy](platforms/gb.md) and [SNES](platforms/snes.md) pages.
 
 ## Layout rows

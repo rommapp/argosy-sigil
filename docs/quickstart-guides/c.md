@@ -54,7 +54,7 @@ typedef struct {
     int experimental;
     int switch_content_type;      /* SIGIL_SWITCH_CONTENT_UNKNOWN, _APPLICATION, _PATCH, _ADDON. */
     uint32_t title_version;       /* Switch only. */
-    uint32_t features;            /* Bit set. SIGIL_FEATURE_RTC: cart has a clock. */
+    uint32_t features;            /* Bit set. SIGIL_FEATURE_RTC: cart has a clock. SIGIL_FEATURE_MBC2: MBC2 RAM. */
     char n64_header[24];          /* N64 only. The cart's name; "" when not plain ASCII. */
     char n64_md5[33];             /* N64 only. The ROM's MD5 in .z64 byte order, uppercase. */
     char n64_md5_n64[33];         /* N64 only. The same in .n64 byte order, as Project64 hashes it. */

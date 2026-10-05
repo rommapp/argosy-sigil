@@ -47,6 +47,7 @@ static int clock_format(const char *layout, size_t len) {
 typedef struct {
     uint8_t       *ram;
     size_t         ram_len;
+    size_t         stored_len;   /* the RAM's length as the file held it, before MBC2's conversion */
     bool           has_clock;
     sigil_gb_clock clock;
 } gb_save;
@@ -56,9 +57,79 @@ static void gb_free(gb_save *s) {
     memset(s, 0, sizeof(*s));
 }
 
+static uint32_t features_of(const sigil_sync_request *req) {
+    return req->save.result ? req->save.result->features : req->save.features;
+}
+
 static bool clock_cart(const sigil_sync_request *req) {
-    uint32_t features = req->save.result ? req->save.result->features : req->save.features;
-    return (features & SIGIL_FEATURE_RTC) != 0;
+    return (features_of(req) & SIGIL_FEATURE_RTC) != 0;
+}
+
+/* ---- MBC2 ------------------------------------------------------------------------
+ * MBC2's RAM is 512 four-bit cells. mGBA packs two to a byte (256 bytes, the
+ * even address in the low nibble); SameBoy, VBA-M, Gearboy and Mesen2 keep
+ * one per byte in the low nibble (512); gambatte and TGB Dual keep the
+ * cart's whole 8 KiB address range (8192), the cells in its first 512
+ * bytes. The neutral form is 512 bytes, each cell in the low nibble and
+ * 0xF above it, as the cart reads back. */
+
+#define MBC2_CELLS  512u
+#define MBC2_PACKED 256u
+#define MBC2_SPAN   8192u
+
+/* A 256 or 512-byte RAM is MBC2's whatever the request says: no other cart
+ * has RAM of that size. 8 KiB is MBC2's only when the header says so. */
+static bool mbc2(const sigil_sync_request *req, size_t len) {
+    return (features_of(req) & SIGIL_FEATURE_MBC2) || len == MBC2_PACKED || len == MBC2_CELLS;
+}
+
+/* The MBC2 form a core stores. */
+static size_t mbc2_form(const char *layout) {
+    static const struct { const char *layout; size_t form; } FORMS[] = {
+        { "mgba", MBC2_PACKED }, { "mgba_standalone", MBC2_PACKED },
+        { "gambatte", MBC2_SPAN }, { "tgbdual", MBC2_SPAN },
+    };
+    for (size_t i = 0; layout && i < sizeof(FORMS) / sizeof(FORMS[0]); i++) {
+        if (strcmp(FORMS[i].layout, layout) == 0) return FORMS[i].form;
+    }
+    return MBC2_CELLS;
+}
+
+/* Turns `s`'s RAM, in any of the three forms, into the neutral 512 bytes. */
+static int mbc2_to_neutral(gb_save *s) {
+    uint8_t *cells = (uint8_t *)malloc(MBC2_CELLS);
+    if (!cells) return SIGIL_ERR_OOM;
+    memset(cells, 0xFF, MBC2_CELLS);
+    for (size_t i = 0; i < MBC2_CELLS; i++) {
+        if (s->ram_len == MBC2_PACKED) {
+            uint8_t pair = s->ram[i / 2];
+            cells[i] = (uint8_t)(0xF0 | (i % 2 ? pair >> 4 : pair & 0x0F));
+        } else if (i < s->ram_len) {
+            cells[i] = (uint8_t)(0xF0 | (s->ram[i] & 0x0F));
+        }
+    }
+    free(s->ram);
+    s->ram = cells;
+    s->ram_len = MBC2_CELLS;
+    return SIGIL_OK;
+}
+
+/* The neutral cells in `form`; an 8 KiB span holds 0xFF past them. `out` holds `form` bytes. */
+static void mbc2_from_neutral(const uint8_t cells[MBC2_CELLS], size_t form, uint8_t *out) {
+    if (form == MBC2_PACKED) {
+        for (size_t i = 0; i < MBC2_PACKED; i++) {
+            out[i] = (uint8_t)((cells[2 * i] & 0x0F) | (cells[2 * i + 1] & 0x0F) << 4);
+        }
+        return;
+    }
+    memset(out, 0xFF, form);
+    memcpy(out, cells, MBC2_CELLS);
+}
+
+/* Takes MBC2 RAM into the neutral form; other RAM as it is. */
+static int normalize(const sigil_sync_request *req, gb_save *s) {
+    s->stored_len = s->ram_len;
+    return s->ram && mbc2(req, s->ram_len) ? mbc2_to_neutral(s) : SIGIL_OK;
 }
 
 /* Cart RAM sizes are multiples of 512 bytes; standalone mGBA, VBA-M, SameBoy
@@ -137,6 +208,7 @@ static int read_local(const sigil_sync_request *req, const gb_files *f, gb_save 
     if (f->ram_present) {
         rc = sigil_sync_read_file(req, f->ram, GB_MAX_RAM + 64, &data, &len);
         if (rc == SIGIL_OK) rc = take_ram(s, data, len, footer_format(req->save.layout));
+        if (rc == SIGIL_OK) rc = normalize(req, s);
         free(data);
     }
     if (rc == SIGIL_OK && f->rtc_present) {
@@ -264,6 +336,14 @@ static int target_clock(const sigil_sync_request *req, const gb_files *f, const 
  * stops saving a cart whose file runs past its RAM. */
 static int ram_file(const sigil_sync_request *req, const char *path, const gb_save *in, const gb_save *local,
                     uint8_t **out, size_t *len) {
+    if (mbc2(req, in->ram_len)) {
+        bool known = local->stored_len == MBC2_PACKED || local->stored_len == MBC2_CELLS || local->stored_len == MBC2_SPAN;
+        *len = known ? local->stored_len : mbc2_form(req->save.layout);
+        *out = (uint8_t *)malloc(*len);
+        if (!*out) return SIGIL_ERR_OOM;
+        mbc2_from_neutral(in->ram, *len, *out);
+        return SIGIL_OK;
+    }
     const gb_save *timed = in->has_clock ? in : local->has_clock ? local : NULL;
     bool footer = ends_with(path, ".sav") && clock_cart(req) && timed;
     *len = in->ram_len + (footer ? 48 : 0);
@@ -281,6 +361,7 @@ int sigil_sync_restore_gb(sigil_sync_ctx *x, const uint8_t *unit, size_t len, si
     gb_files f;
     memset(&local, 0, sizeof(local));
     int rc = read_unit(unit, len, received_len, &in, r);
+    if (rc == SIGIL_OK) rc = normalize(x->req, &in);
     if (rc == SIGIL_OK) {
         identity_of(x->req, &in, r->identity_hash);
         artifact_of(x->req, r->shape == SIGIL_SAVE_SHAPE_MULTI, r);

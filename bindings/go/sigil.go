@@ -123,6 +123,10 @@ const (
 // persists it beside the save as <stem>.rtc.
 const FeatureRTC uint32 = C.SIGIL_FEATURE_RTC
 
+// FeatureMBC2 marks a Game Boy cart whose RAM is MBC2's 512 four-bit cells;
+// collect and restore convert between the forms emulators store it in.
+const FeatureMBC2 uint32 = C.SIGIL_FEATURE_MBC2
+
 // Slug returns the canonical string slug for this platform.
 func (p Platform) Slug() string {
 	return C.GoString(C.sigil_platform_to_slug(C.sigil_platform(p)))
