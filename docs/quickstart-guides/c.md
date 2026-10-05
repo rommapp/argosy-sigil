@@ -170,6 +170,13 @@ other option values, such as Beetle Saturn's `.bkr` from a build older
 than its save-method option. Ask the user, or call again with each
 alternate's `options`; sigil never picks one itself.
 
+The listing has to recurse into folders as well as files, twelve levels
+below each of `sigil_save_layout_subdirs`, as the bindings' list helpers
+do. Sigil tells a PCSX2 folder card from a file card by its contents:
+`memcards/Mcd001.ps2` is a folder card when the listing holds paths below
+it (`memcards/Mcd001.ps2/_pcsx2_superblock`), and a file card when it is
+listed alone.
+
 ### Layouts with profiles
 
 `eden`, `citron`, `sudachi` and `yuzu` (Switch), `cemu` (Wii U), `vita3k`
