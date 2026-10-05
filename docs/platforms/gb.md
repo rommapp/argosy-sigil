@@ -1,7 +1,6 @@
 # Game Boy and Game Boy Color
 
-Status: located
-Sigil reads the cart header and names the files each core keeps for a cart. Collect and restore don't cover these carts.
+Status: synced
 
 ## Identification
 
@@ -64,7 +63,34 @@ timestamp with different registers, so the same bytes can mean
 different clocks between emulators; roadmap section 3 defines one
 neutral clock for conversion.
 
+## Sync
+
+A cart without a clock travels as its RAM, one file named
+`{stem}.srm`. A cart with one (`SIGIL_FEATURE_RTC`) travels as a zip of
+`save.sram` and, when the emulator kept a clock, `clock.rtc`: the current
+registers valid at the UTC time in its stamp, in the 48-byte VBA layout.
+The identity covers the RAM only, so a clock that ticked isn't a new
+save, and a clock cart's identity is the same with or without
+`clock.rtc`.
+
+Collect reads the clock in the format of the core the request names:
+`gambatte` 8 bytes, `mgba` 48 (its time paired with the latched
+registers), `sameboy` 32, `tgbdual` 4, `vbam` 48. For another core it
+goes by the `.rtc`'s size, 48 bytes reading as VBA. Restore writes the RAM
+to the `.srm` and the clock in the format of the `.rtc` already there,
+else the core's. For a core sigil has no format for and no `.rtc` there,
+it writes the RAM alone. A unit without `clock.rtc` leaves the clock on
+disk as it is.
+
+Restore also reads a `.sav` with the clock appended (mGBA, VBA-M, SameBoy
+and Gearboy standalone), and a zip of an emulator's `.srm` and `.rtc`, as
+clients uploaded before sigil.
+
 ## Open items
+
+- A clock format can't hold all of the neutral clock: gambatte drops halt and carry, Mesen2 the latched registers, TGB Dual the wall time. Restore writes what the format holds and doesn't report what it dropped.
+- Standalone emulators (mGBA, VBA-M, SameBoy, Gearboy) have no layout rows; restore reads their `.sav` but can't write one.
+- RetroArch's RZIP-compressed saves aren't read.
 
 - Pizza Boy A/C: closed source, format and RTC handling unknown.
 - When RetroArch's `sort_savefiles_enable` default became `true`.

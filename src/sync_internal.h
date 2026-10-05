@@ -178,6 +178,18 @@ int sigil_sync_collect_n64(sigil_sync_ctx *x, sigil_sync_result *r);
 int sigil_sync_restore_n64(sigil_sync_ctx *x, const uint8_t *unit, size_t len, size_t received_len,
                            sigil_sync_result *r, char local_identity[33]);
 
+/* ---- Game Boy and Game Boy Color cartridges (sync_gb.c) ------------------------ */
+
+/** Collect on GB/GBC: the cart RAM, zipped with the neutral clock on a cart with one. */
+int sigil_sync_collect_gb(sigil_sync_ctx *x, sigil_sync_result *r);
+/**
+ * Restore on GB/GBC: the neutral unit, a raw .srm or .sav with its clock
+ * footer, or a zip of an emulator's .srm and .rtc, written as the request's
+ * core keeps them.
+ */
+int sigil_sync_restore_gb(sigil_sync_ctx *x, const uint8_t *unit, size_t len, size_t received_len,
+                          sigil_sync_result *r, char local_identity[33]);
+
 enum { SYNC_OWN_GAME, SYNC_OWN_OTHER, SYNC_OWN_NONE, SYNC_OWN_COMPANION };
 
 /* Whose saves a unit or card read takes: the game's, the game's and its

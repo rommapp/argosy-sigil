@@ -19,6 +19,7 @@ and passes back. The calls and their fields are on each language's page
 | Switch, Wii U, PS Vita, PS3 | a zip of the game's save folders, without the profile id | [switch](platforms/switch.md#sync), [wiiu](platforms/wiiu.md#sync), [psvita](platforms/psvita.md#sync), [ps3](platforms/ps3.md#sync) |
 | PSP | a zip of the game's save folders | [psp](platforms/psp.md#sync) |
 | 3DS | a zip of the title's save folder, its metadata and its extdata | [3ds](platforms/3ds.md#sync) |
+| GB, GBC | the cart RAM; on a cart with a clock, a zip of `save.sram` and `clock.rtc` | [gb](platforms/gb.md#sync) |
 | N64 | a zip of the save types the game uses (`eeprom`, `pak1` to `pak4`, `sram`, `flash`), whichever emulator wrote them | [n64](platforms/n64.md#sync) |
 
 Every volume in a unit is raw, whatever form the emulator stores it in;
@@ -40,6 +41,7 @@ next collect then gives the save in sigil's form; upload that.
 | Saturn, Sega CD, Dreamcast | a raw volume file as the emulator stored it (gzip and byte expansion included), or a flat zip of them under their on-disk names, each matched to its volume by the layout's file names |
 | Wii U | a zip naming the account folder by its id (`<save_id>/user/80000001/`) |
 | 3DS | a zip rooted at `data/` and `extdata/` |
+| GB, GBC | a raw `.srm`, a `.sav` with its clock appended, or a zip of an emulator's `.srm` and `.rtc` |
 | N64 | a libretro `.srm`, a lone `.eep`, or a zip of an emulator's files (`.srm`, `.eep`, `.sra`, `.fla`, `.mpk`, `_Cont_<n>.mpk`) |
 | Any | any of the above, or sigil's own unit, ending in the hardcore marker Argosy appended (`{"h":true,...}`, its length as a little-endian u32, then `ARGOSY` 01 00). Restore leaves the marker out of the saves, companion units included, and sets `hardcore_marker`; `content_hash` still covers it |
 | Switch | one folder rooted at `<title>/`: the device save for the titles that keep theirs on the device (Animal Crossing: New Horizons, Nintendo Switch Sports, 1-2-Switch, Ring Fit Adventure, the four Labo kits, Go Vacation), the account save for any other |

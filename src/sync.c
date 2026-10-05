@@ -160,13 +160,25 @@ static int finish(sigil_sync_ctx *x, sigil_sync_result *r, bool collecting) {
     return rc;
 }
 
-static bool n64_cart(const sigil_sync_request *req) {
-    return req->save.platform && strcmp(sigil_layout_platform(req->save.platform), "n64") == 0;
+/* The cartridge platform sigil converts the request's saves for: "n64",
+ * "gb" or "gbc"; NULL for any other platform. */
+static const char *cart_platform(const sigil_sync_request *req) {
+    static const char *const CARTS[] = { "n64", "gb", "gbc" };
+    const char *slug = req->save.platform ? sigil_layout_platform(req->save.platform) : NULL;
+    for (size_t i = 0; slug && i < sizeof(CARTS) / sizeof(CARTS[0]); i++) {
+        if (strcmp(slug, CARTS[i]) == 0) return CARTS[i];
+    }
+    return NULL;
 }
 
-/* Saves kept as plain files: a layout with profiles, or an N64 cartridge. */
+static bool n64_cart(const sigil_sync_request *req) {
+    const char *cart = cart_platform(req);
+    return cart && strcmp(cart, "n64") == 0;
+}
+
+/* Saves kept as plain files: a layout with profiles, or a cartridge's. */
 static bool plain_files(const sigil_sync_request *req, const sigil_layout *layout) {
-    return layout->profiles || n64_cart(req);
+    return layout->profiles || cart_platform(req);
 }
 
 /* The kind for the request: saves kept as plain files need nothing from a
@@ -175,7 +187,7 @@ static const sigil_sync_kind *kind_for(const sigil_sync_request *req, const sigi
                                        sigil_sync_kind *files) {
     if (!plain_files(req, layout)) return sigil_sync_kind_for(req);
     memset(files, 0, sizeof(*files));
-    files->platform = layout->profiles ? layout->platform : "n64";
+    files->platform = layout->profiles ? layout->platform : cart_platform(req);
     files->has_ids = true;
     return req->companion_count ? NULL : files;
 }
@@ -196,6 +208,7 @@ int sigil_collect(const sigil_sync_request *req, sigil_sync_result **out) {
     if (rc == SIGIL_OK) {
         rc = layout->profiles ? sigil_sync_collect_profiles(&x, layout->profiles, r)
            : n64_cart(req)    ? sigil_sync_collect_n64(&x, r)
+           : cart_platform(req) ? sigil_sync_collect_gb(&x, r)
                               : collect_any(&x, r);
     }
     if (rc == SIGIL_OK) rc = finish(&x, r, true);
@@ -366,6 +379,7 @@ int sigil_restore(const sigil_sync_request *req, const uint8_t *unit, size_t uni
     if (rc == SIGIL_OK) {
         rc = layout->profiles ? sigil_sync_restore_profiles(&x, layout->profiles, unit, saves_len, r, local_identity)
            : n64_cart(req)    ? sigil_sync_restore_n64(&x, unit, saves_len, unit_len, r, local_identity)
+           : cart_platform(req) ? sigil_sync_restore_gb(&x, unit, saves_len, unit_len, r, local_identity)
                               : restore_units(&x, unit, saves_len, unit_len, r, local_identity);
     }
     if (rc == SIGIL_OK && req->mode == SIGIL_SYNC_UNMANAGED) {

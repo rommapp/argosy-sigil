@@ -22,7 +22,7 @@ save folder; sigil never searches the drive.
 | PSP | [psp](psp.md) | `psp` | yes | synced |
 | PS Vita | [psvita](psvita.md) | `psvita` | yes | synced |
 | PlayStation 3 | [ps3](ps3.md) | `ps3` | yes | synced |
-| Game Boy, Game Boy Color | [gb](gb.md) | `gb`, `gbc` | header facts | located |
+| Game Boy, Game Boy Color | [gb](gb.md) | `gb`, `gbc` | header facts | synced |
 | Game Boy Advance | [gba](gba.md) | | no | located |
 | Super Nintendo | [snes](snes.md) | `snes` | header facts | located |
 | NES, Famicom Disk System | [fds](fds.md) | `fds` (layout rows) | no | located |

@@ -39,7 +39,7 @@ do it yet) or `n/a` (the system has nothing of that kind).
 | [PSP](docs/platforms/psp.md) | yes | yes | n/a | folder | yes |
 | [PS Vita](docs/platforms/psvita.md) | yes | yes | n/a | folder | yes |
 | [PlayStation 3](docs/platforms/ps3.md) | yes | yes | n/a | folder | yes |
-| [Game Boy / Color](docs/platforms/gb.md) | n/a | yes | n/a | single or multi | no |
+| [Game Boy / Color](docs/platforms/gb.md) | n/a | yes | n/a | single or multi | yes |
 | [Game Boy Advance](docs/platforms/gba.md) | no | yes | n/a | single or multi | no |
 | [Super Nintendo](docs/platforms/snes.md) | n/a | yes | n/a | single or multi | no |
 | [Famicom Disk System](docs/platforms/fds.md) | no | yes | n/a | single | no |
