@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "save_corpus.h"
-#include "mem_root.h"
+#include "legacy_units.h"
 #include "card_saturn.h"
 #include "card_segacd.h"
 #include <stdbool.h>
@@ -2034,6 +2034,117 @@ static void check_segacd_unmanaged(const sigil_sync_result *lunar) {
     free(multi); free(dw); free(blank); free(save); free(small);
 }
 
+/* ---- what Argosy uploaded before it used sigil ----------------------------------- */
+
+/* Restoring `old` and `unit` into empty roots writes the same files. */
+static void expect_same_restore(const char *where, const char *layout, const char *platform, const char *content,
+                                const char *opt_key, const char *opt_value, const uint8_t *old, size_t old_len,
+                                const uint8_t *unit, size_t unit_len) {
+    mem_root from_old = {0}, from_unit = {0};
+    game a, b;
+    make_game(&a, &from_old, layout, platform, content, SIGIL_SYNC_MANAGED);
+    make_game(&b, &from_unit, layout, platform, content, SIGIL_SYNC_MANAGED);
+    if (opt_key) {
+        add_option(&a, opt_key, opt_value);
+        add_option(&b, opt_key, opt_value);
+    }
+    sigil_sync_result *ra = NULL, *rb = NULL;
+    int rc_old = old ? sigil_restore(&a.req, old, old_len, &ra) : SIGIL_ERR_INVALID_ARG;
+    int rc_unit = unit ? sigil_restore(&b.req, unit, unit_len, &rb) : SIGIL_ERR_INVALID_ARG;
+    if (rc_old != SIGIL_OK || rc_unit != SIGIL_OK) {
+        char what[64];
+        snprintf(what, sizeof(what), "restore failed: old %d, unit %d", rc_old, rc_unit);
+        fail(where, what);
+    } else if (!roots_same(&from_old, &from_unit)) {
+        fail(where, "the old upload restores other files than sigil's unit");
+    }
+    sigil_sync_result_free(ra);
+    sigil_sync_result_free(rb);
+    root_free(&from_old);
+    root_free(&from_unit);
+}
+
+/* Argosy uploaded a libretro Saturn or Sega CD save as the one file on disk,
+ * or a flat zip of the files under their on-disk names, gzip and byte
+ * expansion left as they were. */
+static void check_argosy_uploads(const sigil_sync_result *lunar) {
+    size_t int_len = 0, cart_len = 0, duel_len = 0, sf3_len = 0, sf3_cart_len = 0, lunar_len = 0;
+    uint8_t *internal = sample(&g_saturn, "saturn", "rayman-bkr-bcr", "Rayman (USA) (R2)-internal.bkr", &int_len);
+    uint8_t *cart = sample(&g_saturn, "saturn", "rayman-bkr-bcr", "Rayman (USA) (R2)-cart.bcr", &cart_len);
+    uint8_t *duel = sample(&g_saturn, "saturn", "hyper-duel-bkr", NULL, &duel_len);
+    uint8_t *sf3 = sample(&g_saturn, "saturn", "sf3-scn3-bkr", NULL, &sf3_len);
+    uint8_t *sf3_cart = sample(&g_saturn, "saturn", "sf3-scn3-bcr", "Shining Force III Scenario 3 (English v25.1).bcr",
+                               &sf3_cart_len);
+    uint8_t *lunar_vol = segacd("lunar-ecc-brm", &lunar_len);
+    if (!internal || !cart || !duel || !sf3 || !sf3_cart || !lunar_vol) {
+        fail("argosy uploads", "samples missing");
+    } else {
+        mem_root root = {0};
+        root_put(&root, RAYMAN ".srm", internal, int_len);
+        root_put(&root, RAYMAN ".bcr", cart, cart_len);
+        game g;
+        make_game(&g, &root, "mednafen_saturn", "saturn", RAYMAN ".cue", SIGIL_SYNC_MANAGED);
+        sigil_sync_result *unit = NULL;
+        sigil_collect(&g.req, &unit);
+        const char *names[] = { RAYMAN ".srm", RAYMAN ".bcr" };
+        uint8_t *data[] = { internal, cart };
+        size_t lens[] = { int_len, cart_len }, zip_len = 0;
+        uint8_t *zip = legacy_zip(names, data, lens, 2, &zip_len);
+        expect_same_restore("argosy saturn zip", "mednafen_saturn", "saturn", RAYMAN ".cue", NULL, NULL, zip, zip_len,
+                            unit ? unit->data : NULL, unit ? unit->len : 0);
+        free(zip);
+        sigil_sync_result_free(unit);
+        root_free(&root);
+
+        const char *sf3_stem = "Shining Force III Scenario 3 (English v25.1)";
+        char sf3_srm[256], sf3_bcr[256], sf3_cue[256];
+        snprintf(sf3_srm, sizeof(sf3_srm), "%s.srm", sf3_stem);
+        snprintf(sf3_bcr, sizeof(sf3_bcr), "%s.bcr", sf3_stem);
+        snprintf(sf3_cue, sizeof(sf3_cue), "%s.cue", sf3_stem);
+        mem_root gz = {0};
+        root_put(&gz, sf3_srm, sf3, sf3_len);
+        root_put(&gz, sf3_bcr, sf3_cart, sf3_cart_len);
+        make_game(&g, &gz, "mednafen_saturn", "saturn", sf3_cue, SIGIL_SYNC_MANAGED);
+        unit = NULL;
+        sigil_collect(&g.req, &unit);
+        const char *gz_names[] = { sf3_srm, sf3_bcr };
+        uint8_t *gz_data[] = { sf3, sf3_cart };
+        size_t gz_lens[] = { sf3_len, sf3_cart_len };
+        zip = legacy_zip(gz_names, gz_data, gz_lens, 2, &zip_len);
+        expect_same_restore("argosy saturn gzip zip", "mednafen_saturn", "saturn", sf3_cue, NULL, NULL, zip, zip_len,
+                            unit ? unit->data : NULL, unit ? unit->len : 0);
+        free(zip);
+        sigil_sync_result_free(unit);
+        root_free(&gz);
+
+        mem_root single = {0};
+        root_put(&single, "Hyper Duel (Japan).srm", duel, duel_len);
+        make_game(&g, &single, "mednafen_saturn", "saturn", "Hyper Duel (Japan).cue", SIGIL_SYNC_MANAGED);
+        unit = NULL;
+        sigil_collect(&g.req, &unit);
+        expect_same_restore("argosy saturn raw file", "mednafen_saturn", "saturn", "Hyper Duel (Japan).cue", NULL, NULL,
+                            duel, duel_len, unit ? unit->data : NULL, unit ? unit->len : 0);
+        sigil_sync_result_free(unit);
+        root_free(&single);
+
+        expect_same_restore("argosy segacd raw file", "genesis_plus_gx", "segacd", LUNAR, "genesis_plus_gx_system_bram",
+                            "per game", lunar_vol, lunar_len, lunar ? lunar->data : NULL, lunar ? lunar->len : 0);
+        const char *brm_name[] = { LUNAR_BRM };
+        uint8_t *brm_data[] = { lunar_vol };
+        size_t brm_len[] = { lunar_len };
+        zip = legacy_zip(brm_name, brm_data, brm_len, 1, &zip_len);
+        expect_same_restore("argosy segacd zip", "genesis_plus_gx", "segacd", LUNAR, "genesis_plus_gx_system_bram",
+                            "per game", zip, zip_len, lunar ? lunar->data : NULL, lunar ? lunar->len : 0);
+        free(zip);
+    }
+    free(internal);
+    free(cart);
+    free(duel);
+    free(sf3);
+    free(sf3_cart);
+    free(lunar_vol);
+}
+
 int main(void) {
     char path[1024];
     if (corpus_platform_path("saturn", "manifest.tsv", path, sizeof(path)) != 0 || corpus_load(path, &g_saturn) != 0 ||
@@ -2078,6 +2189,7 @@ int main(void) {
     check_segacd_unmanaged_replace();
     check_unreadable_volume(lunar);
     check_corrupt_saves(lunar);
+    check_argosy_uploads(lunar);
     if (lunar) {
         check_faulty_write("segacd faulty write", "genesis_plus_gx", "segacd", LUNAR, "genesis_plus_gx_system_bram",
                            "per game", lunar->data, lunar->len, first_set_byte);

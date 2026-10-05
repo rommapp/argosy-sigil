@@ -188,11 +188,42 @@ const char *sigil_sync_device_name(int device) {
     return device > SIGIL_DEVICE_NONE && device < SIGIL_DEVICE_COUNT ? DEVICE_NAMES[device] : "";
 }
 
-static int device_from_name(const char *name) {
+/* The part of a layout template's file name after its last variable:
+ * ".bcr" for {stem}.bcr, "_cart.brm" for {stem}_{cart_size}_cart.brm, the
+ * whole name for one without variables. */
+static const char *template_tail(const char *template_) {
+    const char *name = strrchr(template_, '/');
+    name = name ? name + 1 : template_;
+    const char *close = strrchr(name, '}');
+    return close ? close + 1 : name;
+}
+
+static void longer_tail(const char *name, const char *template_, int device, size_t *best_len, int *best) {
+    const char *tail = template_tail(template_);
+    size_t n = strlen(name), tn = strlen(tail);
+    if (device != SIGIL_DEVICE_NONE && tn && tn <= n && strcmp(name + n - tn, tail) == 0 && tn > *best_len) {
+        *best_len = tn;
+        *best = device;
+    }
+}
+
+/* A unit member's device, by the name a unit gives it, or else by the file
+ * name the emulator keeps that device under: a zip of files under their
+ * on-disk names, as some clients uploaded before they used sigil's units. */
+static int device_from_name(const sigil_sync_ctx *x, const char *name) {
     for (int d = SIGIL_DEVICE_INTERNAL; d < SIGIL_DEVICE_COUNT; d++) {
         if (DEVICE_NAMES[d][0] && strcmp(DEVICE_NAMES[d], name) == 0) return d;
     }
-    return SIGIL_DEVICE_NONE;
+    const sigil_layout *layout = sigil_layout_find(x->req->save.layout, x->req->save.platform);
+    size_t best_len = 0;
+    int best = SIGIL_DEVICE_NONE;
+    for (size_t i = 0; i < layout->member_count; i++) {
+        longer_tail(name, layout->members[i].template_, layout->members[i].device, &best_len, &best);
+    }
+    for (size_t i = 0; i < layout->shared_count; i++) {
+        longer_tail(name, layout->shared[i].template_, layout->shared[i].device, &best_len, &best);
+    }
+    return best;
 }
 
 /* Volume saves are named by device, as the same name can sit on the internal
@@ -517,7 +548,7 @@ static int unit_saves(const sigil_sync_ctx *x, const uint8_t *unit, size_t len, 
         size_t data_len = zip ? members[v].len : len;
         int device = SIGIL_DEVICE_NONE;
         if (!x->kind->has_ids) {
-            device = zip ? device_from_name(members[v].name) : x->kind->main_device;
+            device = zip ? device_from_name(x, members[v].name) : x->kind->main_device;
             if (device == SIGIL_DEVICE_NONE) { rc = SIGIL_ERR_UNSUPPORTED_FORMAT; break; }
         }
         void *card = NULL;

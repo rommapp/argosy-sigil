@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "save_corpus.h"
-#include "mem_root.h"
+#include "legacy_units.h"
 #include "card_dreamcast.h"
 #include <stdbool.h>
 
@@ -296,6 +296,60 @@ static void check_all_vmus_named(const char *where, const char *prefix) {
 static void check_all_vmus(void) {
     check_all_vmus_named("flycast all VMUs", GAME_ID);
     check_all_vmus_named("flycast all VMUs legacy", STEM);
+}
+
+/* Restores `old` and sigil's own unit collected from `root` into empty
+ * roots under the same option, and wants the same files from both. */
+static void expect_same_restore(const char *where, mem_root *root, const char *opt_value, const uint8_t *old,
+                                size_t old_len) {
+    game g;
+    make_game(&g, root, "flycast", GAME_ID, SIGIL_SYNC_MANAGED);
+    add_option(&g, PER_GAME, opt_value);
+    sigil_sync_result *unit = NULL, *ra = NULL, *rb = NULL;
+    mem_root from_old = {0}, from_unit = {0};
+    game a, b;
+    make_game(&a, &from_old, "flycast", GAME_ID, SIGIL_SYNC_MANAGED);
+    make_game(&b, &from_unit, "flycast", GAME_ID, SIGIL_SYNC_MANAGED);
+    add_option(&a, PER_GAME, opt_value);
+    add_option(&b, PER_GAME, opt_value);
+    if (sigil_collect(&g.req, &unit) != SIGIL_OK || !unit->data) {
+        fail(where, "collect failed");
+    } else if (sigil_restore(&a.req, old, old_len, &ra) != SIGIL_OK || sigil_restore(&b.req, unit->data, unit->len, &rb) != SIGIL_OK) {
+        fail(where, "restore failed");
+    } else if (!roots_same(&from_old, &from_unit)) {
+        fail(where, "the old upload restores other files than sigil's unit");
+    }
+    sigil_sync_result_free(ra);
+    sigil_sync_result_free(rb);
+    sigil_sync_result_free(unit);
+    root_free(&from_old);
+    root_free(&from_unit);
+}
+
+/* Argosy uploaded flycast's per-game A1 as the raw file, and RetroArch's VMUs
+ * as a flat zip under their on-disk names. */
+static void check_argosy_uploads(void) {
+    size_t a1_len = 0, b1_len = 0, zip_len = 0;
+    uint8_t *a1 = sample("gundam-0079-flycast", &a1_len);
+    uint8_t *b1 = sample("vmoooo-vmu", &b1_len);
+    if (!a1 || !b1) { free(a1); free(b1); return; }
+    mem_root one = {0};
+    root_put(&one, GAME_ID ".A1.bin", a1, a1_len);
+    expect_same_restore("argosy dreamcast raw A1", &one, "VMU A1", a1, a1_len);
+    root_free(&one);
+
+    mem_root two = {0};
+    root_put(&two, GAME_ID ".A1.bin", a1, a1_len);
+    root_put(&two, GAME_ID ".B1.bin", b1, b1_len);
+    const char *names[] = { GAME_ID ".A1.bin", GAME_ID ".B1.bin" };
+    uint8_t *data[] = { a1, b1 };
+    size_t lens[] = { a1_len, b1_len };
+    uint8_t *zip = legacy_zip(names, data, lens, 2, &zip_len);
+    if (zip) expect_same_restore("argosy dreamcast zip", &two, "All VMUs", zip, zip_len);
+    free(zip);
+    root_free(&two);
+    free(a1);
+    free(b1);
 }
 
 /* A unit with saves on B1, restored where flycast keeps only A1 per game,
@@ -769,6 +823,7 @@ int main(void) {
 
     check_per_game_a1();
     check_all_vmus();
+    check_argosy_uploads();
     check_a1_only();
     check_no_target();
     check_id_file_wins();
