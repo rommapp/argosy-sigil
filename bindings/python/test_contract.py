@@ -87,6 +87,9 @@ _RESULT_FIELDS = {
     "switch content type": ("switchContentType", "switch_content_type", "SwitchContentType"),
     "title version": ("titleVersion", "title_version", "TitleVersion"),
     "features": ("features", "features", "Features"),
+    "n64 header": ("n64Header", "n64_header", "N64Header"),
+    "n64 md5": ("n64Md5", "n64_md5", "N64MD5"),
+    "n64 md5 in n64 order": ("n64Md5N64", "n64_md5_n64", "N64MD5N64"),
 }
 
 _UNIT_FIELDS = {
@@ -291,6 +294,17 @@ def test_jni_strings_cross_as_standard_utf8():
     jni = JNI.read_text()
     for call in ("GetStringUTFChars", "ReleaseStringUTFChars", "NewStringUTF"):
         assert call not in jni, f"sigil_jni.c calls {call}"
+
+
+def test_the_library_opens_files_by_utf8_path():
+    """sigil takes UTF-8 paths. Windows' fopen and its ...A calls read a path in the ANSI code
+    page, so a game named in Japanese wouldn't open; sigil_fopen and the ...W calls take it."""
+    ansi = re.compile(r"\b(fopen|FindFirstFileA|FindNextFileA|GetFileAttributesA|CreateFileA|chd_open)\s*\(")
+    for source in sorted((ROOT / "src").glob("*.c")) + [ROOT / "cli" / "sigil.c"]:
+        text = re.sub(r"/\*.*?\*/", "", source.read_text(), flags=re.S)
+        if source.name == "io_file.c":
+            text = text.replace("return fopen(path, mode);", "")
+        assert not ansi.search(text), f"{source.relative_to(ROOT)} opens a file by ANSI path"
 
 
 def test_jni_natives_take_the_kotlin_parameters():

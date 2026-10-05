@@ -6,9 +6,12 @@ what isn't covered yet.
 
 Status:
 
-- **synced**: collect and restore move the saves ([sync.md](../sync.md)).
-- **located**: `sigil_save_resolve` names the save files ([save-units.md](../save-units.md)); collect and restore don't cover the system yet.
-- **in development**: sigil may identify the game, but no layout names the saves yet.
+In each status the client says which emulator runs the game and passes its
+save folder; sigil never searches the drive.
+
+- **synced**: collect builds the upload and restore writes it back, taking one game's saves out of a shared memory card or backup RAM file where the emulator keeps one ([sync.md](../sync.md)).
+- **located**: `sigil_save_resolve` names which files in the save folder are the game's ([save-units.md](../save-units.md)); the client uploads them as they are, and collect and restore don't cover the system yet.
+- **in development**: sigil may read the game's id, but no layout names its save files yet.
 
 ## Systems
 
@@ -16,7 +19,7 @@ Status:
 |---|---|---|---|---|
 | PlayStation | [psx](psx.md) | `psx` | yes | synced |
 | PlayStation 2 | [ps2](ps2.md) | `ps2` | yes | synced |
-| PSP | [psp](psp.md) | `psp` | yes | in development |
+| PSP | [psp](psp.md) | `psp` | yes | synced |
 | PS Vita | [psvita](psvita.md) | `psvita` | yes | synced |
 | PlayStation 3 | [ps3](ps3.md) | `ps3` | yes | synced |
 | Game Boy, Game Boy Color | [gb](gb.md) | `gb`, `gbc` | header facts | located |
@@ -25,7 +28,7 @@ Status:
 | NES, Famicom Disk System | [fds](fds.md) | `fds` (layout rows) | no | located |
 | Nintendo DS | [nds](nds.md) | | no | located |
 | Nintendo 3DS | [3ds](3ds.md) | `3ds` | yes | in development |
-| Nintendo 64 | [n64](n64.md) | | no | in development |
+| Nintendo 64 | [n64](n64.md) | `n64` | yes | located |
 | Pokémon Mini | [pokemini](pokemini.md) | | no | located |
 | GameCube | [gamecube](gamecube.md) | `gamecube` | yes | synced |
 | Wii | [wii](wii.md) | `wii` | yes | in development |
@@ -100,6 +103,11 @@ section, fails `bindings/python/test_docs.py`.
 | `dosbox_pure` | [dos](dos.md) | DOSBox Pure | libretro core |
 | `same_cdi` | [cdi](cdi.md) | SAME CDi | libretro core |
 | `nestopia` | [fds](fds.md) | Nestopia, FDS disks | libretro core |
+| `mupen64plus_next` | [n64](n64.md) | Mupen64Plus-Next | libretro core |
+| `parallel_n64` | [n64](n64.md) | ParaLLEl N64 | libretro core |
+| `mupen64plus_standalone` | [n64](n64.md) | mupen64plus, RMG, simple64 | standalone |
+| `m64plus_fz` | [n64](n64.md) | M64Plus FZ | standalone |
+| `project64` | [n64](n64.md) | Project64 | standalone |
 | `eden` | [switch](switch.md) | Eden | standalone |
 | `citron` | [switch](switch.md) | Citron | standalone |
 | `sudachi` | [switch](switch.md) | Sudachi | standalone |
@@ -107,3 +115,6 @@ section, fails `bindings/python/test_docs.py`.
 | `cemu` | [wiiu](wiiu.md) | Cemu | standalone |
 | `vita3k` | [psvita](psvita.md) | Vita3K | standalone |
 | `rpcs3` | [ps3](ps3.md) | RPCS3, aPS3e | standalone |
+| `ppsspp` | [psp](psp.md) | PPSSPP | libretro core |
+| `ppsspp_standalone` | [psp](psp.md) | PPSSPP | standalone |
+| `psp_console` | [psp](psp.md) | PSP games on a PSP, or on a PS Vita (Adrenaline, the PSP emulator) | console |

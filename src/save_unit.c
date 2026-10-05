@@ -128,7 +128,25 @@ typedef struct {
     char dc_vmu_id[sizeof(((sigil_result *)0)->title_id)];
     char disc_id[sizeof(((sigil_result *)0)->title_id)];
     char pcsx_serial[sizeof(((sigil_result *)0)->raw_serial)];
+    char n64_md5_8[9];
+    char n64_md5_lower[sizeof(((sigil_result *)0)->n64_md5)];
 } expand_ctx;
+
+/* The N64 fields of a result new enough to carry them, else NULL. */
+static const sigil_result *n64_result(const sigil_save_request *req) {
+    return req->result && req->result->struct_version >= SIGIL_RESULT_V4 ? req->result : NULL;
+}
+
+/* mupen64plus names a save with the MD5's first eight digits; M64Plus FZ
+ * names the game's folder with the whole MD5 in lowercase. */
+static void n64_md5_forms(const sigil_save_request *req, char md5_8[9], char *lower, size_t lower_cap) {
+    const sigil_result *r = n64_result(req);
+    const char *md5 = r ? r->n64_md5 : "";
+    snprintf(md5_8, 9, "%s", strlen(md5) >= 8 ? md5 : "");
+    size_t n = 0;
+    for (; md5[n] && n + 1 < lower_cap; n++) lower[n] = (char)tolower((unsigned char)md5[n]);
+    lower[n] = '\0';
+}
 
 #define PCSX_CDROM_ID_MAX 9
 
@@ -207,6 +225,7 @@ static void expand_ctx_init(expand_ctx *ctx, const sigil_save_request *req) {
     dc_vmu_id(req, ctx->dc_vmu_id, sizeof(ctx->dc_vmu_id));
     disc_id(req, ctx->disc_id, sizeof(ctx->disc_id));
     pcsx_serial(req, ctx->pcsx_serial, sizeof(ctx->pcsx_serial));
+    n64_md5_forms(req, ctx->n64_md5_8, ctx->n64_md5_lower, sizeof(ctx->n64_md5_lower));
 }
 
 /* A Beetle PSX card index, read under the option prefix of the build the row
@@ -229,6 +248,10 @@ static const char *variable_value(const expand_ctx *ctx, const char *name, size_
     if (len == 7 && strncmp(name, "disc_id", 7) == 0) return ctx->disc_id;
     if (len == 11 && strncmp(name, "pcsx_serial", 11) == 0) return ctx->pcsx_serial;
     if (len == 9 && strncmp(name, "gc_region", 9) == 0) return gc_region(req);
+    if (len == 10 && strncmp(name, "n64_header", 10) == 0) return n64_result(req) ? req->result->n64_header : NULL;
+    if (len == 9 && strncmp(name, "n64_md5_8", 9) == 0) return ctx->n64_md5_8;
+    if (len == 13 && strncmp(name, "n64_md5_lower", 13) == 0) return ctx->n64_md5_lower;
+    if (len == 11 && strncmp(name, "n64_md5_n64", 11) == 0) return n64_result(req) ? req->result->n64_md5_n64 : NULL;
     if (len == 9 && strncmp(name, "cart_size", 9) == 0) {
         const gpgx_cart *cart = gpgx_cart_for(req);
         return cart ? cart->name : NULL;
@@ -327,6 +350,38 @@ static void file_entry_name(const char *path, char *out, size_t cap) {
     out[cap - 1] = '\0';
 }
 
+/* `path` fits `pattern`, where each '*' stands for any run of characters,
+ * none of them '/', so a '*' never reaches into another folder. */
+static bool glob_match(const char *pattern, const char *path) {
+    if (*pattern == '\0') return *path == '\0';
+    if (*pattern == '*') {
+        for (const char *p = path;; p++) {
+            if (glob_match(pattern + 1, p)) return true;
+            if (*p == '\0' || *p == '/') return false;
+        }
+    }
+    return *path == *pattern && glob_match(pattern + 1, path + 1);
+}
+
+static bool member_added(const unit_builder *b, const char *path) {
+    for (size_t i = 0; i < b->member_count; i++) {
+        if (strcmp(b->members[i].path, path) == 0) return true;
+    }
+    return false;
+}
+
+/* Every listed file a template with '*' names. A name sigil can't spell in
+ * full has no file to expect, so nothing is added when none is listed. */
+static void add_matching_members(unit_builder *b, const sigil_save_request *req, const char *pattern, int role) {
+    char entry[SIGIL_SAVE_ENTRY_MAX];
+    for (size_t i = 0; i < req->listing_count; i++) {
+        const char *path = req->listing[i];
+        if (!path || !glob_match(pattern, path) || member_added(b, path)) continue;
+        file_entry_name(path, entry, sizeof(entry));
+        add_member(b, path, entry, role, 1);
+    }
+}
+
 static int collect(const sigil_layout *layout, const sigil_save_request *req,
                    const expand_ctx *ctx, uint32_t features, unit_builder *b) {
     char path[SIGIL_SAVE_PATH_MAX];
@@ -339,6 +394,10 @@ static int collect(const sigil_layout *layout, const sigil_save_request *req,
 
         if (path[strlen(path) - 1] == '/') {
             add_folder_members(b, req, path, lm->role);
+            continue;
+        }
+        if (strchr(path, '*')) {
+            add_matching_members(b, req, path, lm->role);
             continue;
         }
 
@@ -644,7 +703,10 @@ int sigil_save_alternates(const sigil_save_request *req, sigil_save_alternate **
     char path[SIGIL_SAVE_PATH_MAX];
     for (size_t i = 0; i < row_file_count(layout); i++) {
         row_file f = row_file_at(layout, i);
-        if (!expand_template(&ctx, f.template_, path, sizeof(path)) || path[strlen(path) - 1] == '/') continue;
+        if (!expand_template(&ctx, f.template_, path, sizeof(path)) || path[strlen(path) - 1] == '/' ||
+            strchr(path, '*')) {
+            continue;
+        }
         if (!sigil_save_listed(req, path) || taken_now(layout, req, &ctx, path) || already_listed(list, n, path)) {
             continue;
         }

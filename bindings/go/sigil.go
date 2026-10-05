@@ -116,6 +116,7 @@ const (
 	PlatformGB        Platform = C.SIGIL_PLATFORM_GB
 	PlatformGBC       Platform = C.SIGIL_PLATFORM_GBC
 	PlatformSNES      Platform = C.SIGIL_PLATFORM_SNES
+	PlatformN64       Platform = C.SIGIL_PLATFORM_N64
 )
 
 // FeatureRTC marks a cart with a real-time clock; a libretro frontend
@@ -220,6 +221,12 @@ type Result struct {
 	SwitchContentType SwitchContentType
 	TitleVersion      uint32
 	Features          uint32
+	// N64 only: the header name ("" when not plain ASCII) and the ROM's MD5
+	// in .z64 and .n64 byte order, uppercase. Standalone N64 emulators name
+	// saves from them; store them with the result.
+	N64Header string
+	N64MD5    string
+	N64MD5N64 string
 }
 
 // HasRTC reports whether the cart carries a real-time clock.
@@ -228,7 +235,8 @@ func (r *Result) HasRTC() bool { return r.Features&FeatureRTC != 0 }
 // PersistedResult rebuilds a result from stored columns, or builds one for
 // a platform that has no title id. platformSlug selects the save layout.
 // Set RawSerial on the result as well where it was stored: pcsx_rearmed's
-// per-disc cards follow the boot file as written.
+// per-disc cards follow the boot file as written. Set the N64 fields the
+// same way: the standalone N64 emulators name saves from them.
 func PersistedResult(platformSlug, titleID, saveID string, features uint32) *Result {
 	return &Result{
 		TitleID:      titleID,
@@ -400,7 +408,7 @@ func Extract(path string, platform Platform, opts *Options) (*Result, error) {
 	}
 
 	var cresult C.sigil_result
-	cresult.struct_version = C.SIGIL_RESULT_V3
+	cresult.struct_version = C.SIGIL_RESULT_V4
 	rc := C.sigil_extract_from_path(cpath, C.sigil_platform(platform), coptions, &cresult)
 	if err := errFromCode(rc); err != nil {
 		return nil, err
@@ -418,6 +426,9 @@ func Extract(path string, platform Platform, opts *Options) (*Result, error) {
 		SwitchContentType: SwitchContentType(cresult.switch_content_type),
 		TitleVersion:      uint32(cresult.title_version),
 		Features:          uint32(cresult.features),
+		N64Header:         C.GoString(&cresult.n64_header[0]),
+		N64MD5:            C.GoString(&cresult.n64_md5[0]),
+		N64MD5N64:         C.GoString(&cresult.n64_md5_n64[0]),
 	}, nil
 }
 
@@ -816,12 +827,15 @@ func fillSaveRequest(a *cAllocs, creq *C.sigil_save_request, game *Result, core,
 		creq.profile = a.str(profile)
 	}
 	cresult := (*C.sigil_result)(a.alloc(C.sizeof_sigil_result))
-	cresult.struct_version = C.SIGIL_RESULT_V3
+	cresult.struct_version = C.SIGIL_RESULT_V4
 	cresult.features = C.uint32_t(game.Features)
 	cresult.platform = C.sigil_platform(game.Platform)
 	copyChars(cresult.title_id[:], game.TitleID)
 	copyChars(cresult.raw_serial[:], game.RawSerial)
 	copyChars(cresult.save_id[:], game.SaveID)
+	copyChars(cresult.n64_header[:], game.N64Header)
+	copyChars(cresult.n64_md5[:], game.N64MD5)
+	copyChars(cresult.n64_md5_n64[:], game.N64MD5N64)
 
 	creq.struct_version = C.SIGIL_SAVE_REQUEST_V1
 	creq.layout = a.str(core)

@@ -27,16 +27,22 @@ The cgo `#cgo LDFLAGS` in `sigil.go` looks for the static libs at
 `../../build/`; if your CMake build dir is elsewhere, override with
 `CGO_LDFLAGS=-L/your/build/dir ...`.
 
+On Windows, cgo links with gcc, so build sigil with MinGW-w64 from an
+MSYS2 UCRT64 shell, not MSVC
+([docs/building.md](../../docs/building.md#windows)), then run the cmake
+commands above in that shell.
+
 ## Use
 
-[docs/go.md](../../docs/go.md): identify, locate, hash, with what each
-call requires and returns.
+[docs/go.md](../../docs/go.md): identify, locate, hash, sync, with what
+each call requires and returns.
 
 ## Notes
 
 - `Extract` blocks on I/O. Call from a goroutine or worker.
 - `r.Usage` matters: PSP and GameCube are PREFIX platforms, meaning a
   single game corresponds to multiple folders/files. Treating them as
-  EXACT silently misses every save — see the top-level README.
+  EXACT misses every save. [docs/identification.md](../../docs/identification.md)
+  says how to apply `SaveID` for each usage.
 - The cgo build pins to sigil's static libs; once linked, the Go
   binary has no runtime dependency on sigil's `.a`/`.so`.

@@ -5,6 +5,7 @@
 #include "sigil.h"
 #include "sigil_util.h"
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 
 #define SIGIL_NCA_HEADER_SIZE 0xC00
@@ -74,6 +75,19 @@ static inline void sigil_write_be64(uint8_t *p, uint64_t v) {
     sigil_write_be32(p, (uint32_t)(v >> 32));
     sigil_write_be32(p + 4, (uint32_t)v);
 }
+
+/**
+ * fopen for a UTF-8 `path` on every system. Windows' fopen reads the path in
+ * the ANSI code page, so every file sigil opens by name goes through here.
+ */
+FILE *sigil_fopen(const char *path, const char *mode);
+
+#ifdef _WIN32
+#include <wchar.h>
+/** `path` as UTF-16 for the Windows wide calls; NULL when it isn't UTF-8 or
+ *  memory runs out. Free with free(). */
+wchar_t *sigil_wide_path(const char *path);
+#endif
 
 int sigil_io_read_exact(const sigil_io *io, uint64_t off, void *buf, size_t len);
 
@@ -249,6 +263,8 @@ int sigil_extract_gb(const sigil_io *io, const char *filename_hint,
                      const sigil_options *opts, sigil_result *out);
 int sigil_extract_snes(const sigil_io *io, const char *filename_hint,
                        const sigil_options *opts, sigil_result *out);
+int sigil_extract_n64(const sigil_io *io, const char *filename_hint,
+                      const sigil_options *opts, sigil_result *out);
 
 typedef struct {
     uint32_t state[4];
@@ -444,7 +460,7 @@ int sigil_filename_fallback(const char *filename_hint,
 
 static inline void sigil_result_init(sigil_result *r) {
     memset(r, 0, sizeof(*r));
-    r->struct_version = SIGIL_RESULT_V3;
+    r->struct_version = SIGIL_RESULT_V4;
 }
 
 #endif

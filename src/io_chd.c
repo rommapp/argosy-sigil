@@ -13,6 +13,7 @@ static const uint8_t CD_SYNC_PATTERN[12] = {
 };
 
 typedef struct {
+    FILE     *fp;   /* chd_open_file reads through it and leaves closing it to sigil. */
     chd_file *chd;
     uint8_t  *hunk_buffer;
     uint32_t  hunk_bytes;
@@ -72,29 +73,31 @@ static void chd_io_close(void *ctx_) {
     chd_ctx *ctx = (chd_ctx *)ctx_;
     if (!ctx) return;
     if (ctx->chd) chd_close(ctx->chd);
+    if (ctx->fp) fclose(ctx->fp);
     free(ctx->hunk_buffer);
     free(ctx);
 }
 
 sigil_io *sigil_io_open_chd(const char *path) {
     if (!path) return NULL;
-    chd_file *chd = NULL;
-    chd_error err = chd_open(path, CHD_OPEN_READ, NULL, &chd);
-    if (err != CHDERR_NONE) return NULL;
+    chd_ctx *ctx = (chd_ctx *)calloc(1, sizeof(*ctx));
+    if (!ctx) return NULL;
+    ctx->fp = sigil_fopen(path, "rb");
+    if (!ctx->fp) { chd_io_close(ctx); return NULL; }
+    chd_error err = chd_open_file(ctx->fp, CHD_OPEN_READ, NULL, &ctx->chd);
+    if (err != CHDERR_NONE) { ctx->chd = NULL; chd_io_close(ctx); return NULL; }
+    chd_file *chd = ctx->chd;
 
     const chd_header *header = chd_get_header(chd);
     if (!header || header->unitbytes == 0 || header->hunkbytes == 0
         || header->hunkbytes > MAX_HUNK_BYTES) {
-        chd_close(chd);
+        chd_io_close(ctx);
         return NULL;
     }
 
-    chd_ctx *ctx = (chd_ctx *)calloc(1, sizeof(*ctx));
-    if (!ctx) { chd_close(chd); return NULL; }
     ctx->hunk_buffer = (uint8_t *)malloc(header->hunkbytes);
-    if (!ctx->hunk_buffer) { free(ctx); chd_close(chd); return NULL; }
+    if (!ctx->hunk_buffer) { chd_io_close(ctx); return NULL; }
 
-    ctx->chd = chd;
     ctx->hunk_bytes = header->hunkbytes;
     ctx->unit_bytes = header->unitbytes;
     ctx->frames_per_hunk = ctx->hunk_bytes / ctx->unit_bytes;

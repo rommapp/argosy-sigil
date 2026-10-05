@@ -367,7 +367,7 @@ static void zip_io_close(void *ctx) {
 static sigil_io *zip_open_impl(const char *path, const char *suffix,
                                char *out_name, size_t name_cap) {
     if (!path) return NULL;
-    FILE *fp = fopen(path, "rb");
+    FILE *fp = sigil_fopen(path, "rb");
     if (!fp) return NULL;
 
 #if defined(_WIN32)

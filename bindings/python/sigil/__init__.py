@@ -261,6 +261,9 @@ class SigilResult:
     switch_content_type: Literal["unknown", "application", "patch", "addon"]
     title_version: int
     features: int = 0
+    n64_header: str = ""
+    n64_md5: str = ""
+    n64_md5_n64: str = ""
 
     @property
     def has_rtc(self) -> bool:
@@ -268,10 +271,12 @@ class SigilResult:
         return bool(self.features & lib.SIGIL_FEATURE_RTC)
 
     @classmethod
-    def persisted(cls, platform: str, title_id: str, save_id: str, features: int, raw_serial: str = "") -> SigilResult:
+    def persisted(cls, platform: str, title_id: str, save_id: str, features: int, raw_serial: str = "",
+                  n64_header: str = "", n64_md5: str = "", n64_md5_n64: str = "") -> SigilResult:
         """A result rebuilt from stored columns, or built for a platform that has no title id.
 
         ``raw_serial`` names pcsx_rearmed's per-disc cards, which follow the boot file as written.
+        The ``n64_*`` fields name the standalone N64 emulators' saves.
         """
         return cls(
             title_id=title_id,
@@ -284,6 +289,9 @@ class SigilResult:
             switch_content_type="unknown",
             title_version=0,
             features=features,
+            n64_header=n64_header,
+            n64_md5=n64_md5,
+            n64_md5_n64=n64_md5_n64,
         )
 
 
@@ -430,14 +438,14 @@ def extract(
     prod_keys_path: str | os.PathLike[str] | None = None,
     prod_keys_text: str | bytes | None = None,
     header_key: bytes | None = None,
-    filename_fallback: bool = False,
+    filename_fallback: bool = True,
     allow_3ds_homebrew: bool = False,
 ) -> SigilResult:
     """Extract the title ID from a ROM file.
 
     `platform` is a slug ("ps2", "switch", ...); "auto" sniffs from the
-    file extension. Filename fallback is OFF by default, inverting the C
-    default: only binary-derived facts unless explicitly opted in.
+    file extension. When the binary gives nothing, the file name is
+    scanned unless `filename_fallback` is False; `source` reports which.
     """
     keepalive: list[object] = []
 
@@ -479,7 +487,7 @@ def extract(
         opts.support = support
 
     result = ffi.new("sigil_result *")
-    result.struct_version = lib.SIGIL_RESULT_V3
+    result.struct_version = lib.SIGIL_RESULT_V4
 
     rc = lib.sigil_extract_from_path(
         os.fsencode(path), platform_from_slug(platform), opts, result
@@ -498,6 +506,9 @@ def extract(
         switch_content_type=_SWITCH_CONTENT_NAMES.get(result.switch_content_type, "unknown"),
         title_version=int(result.title_version),
         features=int(result.features),
+        n64_header=ffi.string(result.n64_header).decode("utf-8", "replace"),
+        n64_md5=ffi.string(result.n64_md5).decode("utf-8", "replace"),
+        n64_md5_n64=ffi.string(result.n64_md5_n64).decode("utf-8", "replace"),
     )
 
 
@@ -632,12 +643,15 @@ def _fill_save_request(req, keepalive: list[object], game: SigilResult, core: st
     option_items = list((options or {}).items())
 
     result = ffi.new("sigil_result *")
-    result.struct_version = lib.SIGIL_RESULT_V3
+    result.struct_version = lib.SIGIL_RESULT_V4
     result.title_id = game.title_id.encode("utf-8")
     result.raw_serial = game.raw_serial.encode("utf-8")
     result.save_id = game.save_id.encode("utf-8")
     result.platform = platform_from_slug(game.platform) if game.platform else lib.SIGIL_PLATFORM_AUTO
     result.features = game.features
+    result.n64_header = game.n64_header.encode("utf-8")
+    result.n64_md5 = game.n64_md5.encode("utf-8")
+    result.n64_md5_n64 = game.n64_md5_n64.encode("utf-8")
     keepalive.append(result)
 
     req.struct_version = lib.SIGIL_SAVE_REQUEST_V1

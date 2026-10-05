@@ -17,6 +17,11 @@ platform=xbox title_id=TT-027 raw_serial=5454001B save_id=5454001B usage=folder-
 # A Vita dump resolves by content, so it needs no hint
 $ sigil "/path/to/Actual Sunlight [PCSE00695] [USA] [NoNpDrm].zip"
 platform=psvita title_id=PCSE00695 raw_serial=PCSE00695 save_id=PCSE00695 usage=folder-exact source=binary
+
+# An N64 cart prints a second line: the fields standalone emulators name saves from
+$ sigil "/path/to/1080 Snowboarding (Japan, USA) (En,Ja).z64"
+platform=n64 title_id=NTEA raw_serial=NTEA save_id=NTEA usage=file-prefix source=binary experimental=0 content_type=unknown title_version=0 features=-
+n64_header=1080 SNOWBOARDING n64_md5=FA27089C425DBAB99F19245C5C997613 n64_md5_n64=10C93DD78B695CD32B6938534ED0EDD5
 ```
 
 Pass `--platform=auto` (the default) to sniff from the file extension.

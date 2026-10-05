@@ -26,8 +26,8 @@ Sigil.extract(
 
 ```kotlin
 SigilResult(
-    titleId: String,                      // "" on gb, gbc, snes.
-    rawSerial: String,                    // As found in the binary.
+    titleId: String,                      // "" on gb, gbc, snes. A Switch update or DLC gives its game's id.
+    rawSerial: String,                    // As found in the binary; a Switch update's or DLC's own id.
     saveId: String,                       // On-disk name the emulator keys the save by. "" on gb, gbc, snes.
     platformSlug: String,
     source: Source,                       // Binary, Filename.
@@ -37,13 +37,23 @@ SigilResult(
     switchContentType: SwitchContentType, // Unknown, Application, Patch, Addon.
     titleVersion: Long,                   // Switch only.
     features: Int,                        // Bit set. FEATURE_RTC: cart has a clock. hasRtc reads it.
+    n64Header: String,                    // N64 only. The cart's name; "" when not plain ASCII.
+    n64Md5: String,                       // N64 only. The ROM's MD5 in .z64 byte order, uppercase.
+    n64Md5N64: String,                    // N64 only. The same in .n64 byte order, as Project64 hashes it.
 )
 ```
 
-Store `titleId`, `saveId`, `platformSlug`, `features`. Rebuild later, or
-build for a platform sigil cannot extract (Sega CD returns null). Every
-field is passed every time; a new value comes back, nothing is kept
-between calls:
+For an N64 ROM, `extract` reads the whole file to fill the two MD5s; the
+standalone N64 emulators name saves from them.
+
+A Switch XCI or NSP needs keys: without them `extractOrThrow` raises
+`SigilException.NEEDS_KEY`, and with keys that don't open the content (a
+key file older than the dump, or a wrong header key) `KEYS_INCOMPATIBLE`;
+`extract` returns null for both.
+
+Store `titleId`, `saveId`, `rawSerial`, `platformSlug`, `features` and,
+for N64, the three `n64*` fields. Rebuild the result from them later, or
+build one for a platform sigil cannot extract (Sega CD returns null):
 
 ```kotlin
 SigilResult.persisted(
@@ -52,6 +62,9 @@ SigilResult.persisted(
     saveId: String,           // required. Stored saveId, or "" when the platform has none.
     features: Int,            // required. Stored features, or 0.
     rawSerial: String = "",   // optional. Stored rawSerial; pcsx_rearmed's serial cards are named from it.
+    n64Header: String = "",   // optional. The stored N64 fields; the standalone N64 emulators'
+    n64Md5: String = "",      //   saves are named from them.
+    n64Md5N64: String = "",
 ): SigilResult
 ```
 
@@ -101,10 +114,11 @@ than its save-method option. Ask the user, or call again with each
 alternate's `options`; sigil never picks one itself.
 
 On a layout with profiles (`eden`, `citron`, `sudachi`, `yuzu`, `cemu`,
-`vita3k`, `rpcs3`), `saveRoot` may be any folder around the emulator's
-own: its base (the folder holding `nand/`, `mlc01/`, `ux0/` or
-`dev_hdd0/`), a folder above it, or one inside it such as a profile's save
-folder. Sigil re-roots at the base and takes the profile the root lies in.
+`vita3k`, `rpcs3`) and on the PSP layouts (`ppsspp`, `ppsspp_standalone`,
+`psp_console`, which keep no profiles), `saveRoot` may be any folder
+around the emulator's own: its base (the folder holding `nand/`, `mlc01/`,
+`ux0/`, `dev_hdd0/` or `PSP/`), a folder above it, or one inside it such
+as a profile's save folder. Sigil re-roots at the base and takes the profile the root lies in.
 Member paths are then relative to the base, which `saveBase` returns.
 [save-units.md](save-units.md#profiles) has the folders and the profile rules.
 
@@ -166,50 +180,68 @@ that ticked doesn't read as a new save. Most clients never read it.
 
 ## Upload and restore
 
-Upload by `shape`. `Single` sends the member as is. `Multi` zips the
-members flat, each under its `entry`. `Folder` zips the `key` folder so
-entries read `<key>/<file>`. Name the upload `artifact`. Hash rules:
-[save-units.md](save-units.md#hash); each system's layouts:
-[platforms/](platforms/README.md).
-
-Restore by `path`. Unzip a `Multi` artifact so every entry lands at its
-member's `path` under the root. Unzip a `Folder` artifact from the
-root's parent of the key folder. `expected` says where a primary goes
-when the emulator has not created one yet.
-
-## Memory cards
-
-List the saves on a memory card or backup RAM volume: PS1 cards (the raw
-card as `.mcr`, `.mcd` or `.srm`, DexDrive `.gme`, PSP or Vita `.vmp`),
-PS2 `.ps2` file cards, GameCube raw cards, Dreamcast VMUs, and Saturn and
-Sega CD backup RAM.
+`collect` and `restore` (see [Sync](#sync)) build and unpack the
+artifact for you. One round trip, with `romm` and `store` standing for
+your own server client and storage, on `Dispatchers.IO`:
 
 ```kotlin
-Sigil.listCard(
-    path: String,               // required. The card file. Its format is detected from the content.
-): SigilCardListing             // Raises SigilException (unsupported format code) when the file is not
-                                //   a card sigil reads.
+val core = "pcsx_rearmed"
+val content = "Chrono Cross (USA).cue"
+val root = "/storage/emulated/0/RetroArch/saves/psx"
 
-data class SigilCardListing(
-    format: Format,             // Ps1Raw, Ps1Gme, Ps1Vmp, Ps2, GamecubeRaw, DreamcastVmu, SaturnBackup,
-                                //   SegacdBram.
-    totalBlocks: Int,
-    freeBlocks: Int,            // Blocks a new save can use.
-    freeSlots: Int,             // Directory slots a new save can use.
-    corruptCount: Int,          // Saves left out because their block chain is broken.
-    entries: List<SigilCardEntry>,  // Live saves, in directory order.
-    corruptEntries: List<SigilCardEntry>,  // The left-out saves the card still names; blocks is 0.
-)
+// After the game closes: collect, upload what changed, then keep the state.
+val collected = Sigil.collect(game, core, content, root, state = store.state(game))
+val data = collected.data
+if (collected.changed && data != null) {
+    romm.uploadSave(game, collected.artifact, data, collected.contentHash)
+    collected.holding?.let { romm.uploadSave(game, "holding.zip", it, null) }
+    store.setState(game, collected.state)     // only once every upload succeeded
+}
 
-data class SigilCardEntry(
-    name: String,               // As stored on the card, e.g. "BASLUSP01041USCHRO00". Bytes outside
-                                //   printable ASCII, and '%', read as %XX.
-    ownerId: String,            // The game id the save carries, as extract reports it: PS1 and PS2
-                                //   "SLUS-01041", GameCube "47465A45". "" when the format has none.
-    blocks: Int,                // In the card's own block size.
-    firstBlock: Int,
-)
+// Before the next launch: put the server's save back.
+val unit = romm.downloadSave(game)
+val restored = try {
+    Sigil.restore(unit, game, core, content, root, state = store.state(game))
+} catch (e: SigilException) {
+    when (e.code) {
+        // The saves on disk changed since the last sync. Ask the user, then:
+        SigilException.CONFLICT ->
+            Sigil.restore(unit, game, core, content, root, state = store.state(game), overwriteLocal = true)
+        // More than one profile could take the saves. Ask which is theirs:
+        SigilException.AMBIGUOUS ->
+            Sigil.restore(unit, game, core, content, root, state = store.state(game),
+                profile = askUser(e.profiles).id)
+        else -> throw e
+    }
+}
+store.setState(game, restored.state)
 ```
+
+Upload `data` under the name `artifact`; RomM computes the same
+`contentHash`. Pass back the `state` the last call returned every time,
+so sigil can tell a local change from its own last restore.
+
+### Without collect and restore
+
+`locateSaves` doesn't build an upload. It gives you `members`, the files
+that make up the game's save, and you package them yourself:
+
+1. Upload by `shape`. `Single`: send the one member's file as it is.
+   `Multi`: zip the members yourself, each stored at the zip's root
+   under its `entry`. `Folder`: zip the `key` folder so entries read
+   `<key>/<file>`. Name the upload `artifact`.
+2. Compare with RomM by the `contentHash` from step 3; it matches what
+   RomM computes for that upload.
+3. To restore, unpack the artifact yourself. `Single`: write it to the
+   member's `path`. `Multi`: write each zip entry to the `path` of the
+   member with that `entry`. `Folder`: unzip into the key folder's
+   parent. When the emulator hasn't created a primary yet, `expected`
+   gives its `path`.
+
+This path writes whole files, so it can't merge a game's saves into a
+shared memory card or a profile folder the way `restore` does. Use
+`collect` and `restore` wherever they cover the system. Hash rules:
+[save-units.md](save-units.md#hash).
 
 ## Sync
 
@@ -217,8 +249,8 @@ data class SigilCardEntry(
 `restore` puts a unit back and reads it back, removing files where a save
 folder holds a save the unit lacks. PS1 and PS2 memory cards, PCSX2 folder
 cards, GameCube cards and Dolphin's GCI folder, Saturn and Sega CD backup RAM,
-Dreamcast VMUs, and the save folders the yuzu forks, Cemu, Vita3K and RPCS3
-keep per user profile work today. `restore` raises `SigilException`
+Dreamcast VMUs, the save folders the yuzu forks, Cemu, Vita3K and RPCS3
+keep per user profile, and PSP save folders work today. `restore` raises `SigilException`
 with code `SigilException.NOT_FOUND` for a unit holding none of the game's
 saves, and ignores other games' saves inside a unit. The rules every system
 shares are in [sync.md](sync.md); what a unit holds, how Saturn and Sega CD
@@ -302,6 +334,41 @@ when there is one, each line escaped as `SigilCardEntry.name` is.
 | `DAMAGED` | a file the saves are in is damaged; pass `repair = true` once the user agrees |
 | `EXISTS` | Dolphin's GCI folder has no free name for a new save |
 | `IO` | a file the listing holds won't open, or a member's path would leave the root |
+
+## Memory cards
+
+List the saves on a memory card or backup RAM volume: PS1 cards (the raw
+card as `.mcr`, `.mcd` or `.srm`, DexDrive `.gme`, PSP or Vita `.vmp`),
+PS2 `.ps2` file cards, GameCube raw cards, Dreamcast VMUs, and Saturn and
+Sega CD backup RAM. Sync doesn't need it; it's for showing the user
+what a card holds.
+
+```kotlin
+Sigil.listCard(
+    path: String,               // required. The card file. Its format is detected from the content.
+): SigilCardListing             // Raises SigilException with UNSUPPORTED_FORMAT when the file is
+                                //   not a card sigil reads.
+
+data class SigilCardListing(
+    format: Format,             // Ps1Raw, Ps1Gme, Ps1Vmp, Ps2, GamecubeRaw, DreamcastVmu, SaturnBackup,
+                                //   SegacdBram.
+    totalBlocks: Int,
+    freeBlocks: Int,            // Blocks a new save can use.
+    freeSlots: Int,             // Directory slots a new save can use.
+    corruptCount: Int,          // Saves left out because their block chain is broken.
+    entries: List<SigilCardEntry>,         // Live saves, in directory order.
+    corruptEntries: List<SigilCardEntry>,  // The left-out saves the card still names; blocks is 0.
+)
+
+data class SigilCardEntry(
+    name: String,               // As stored on the card, e.g. "BASLUSP01041USCHRO00". Bytes outside
+                                //   printable ASCII, and '%', read as %XX.
+    ownerId: String,            // The game id the save carries, as extract reports it: PS1 and PS2
+                                //   "SLUS-01041", GameCube "47465A45". "" when the format has none.
+    blocks: Int,                // In the card's own block size.
+    firstBlock: Int,
+)
+```
 
 ## Helpers
 

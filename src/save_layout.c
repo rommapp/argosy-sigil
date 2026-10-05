@@ -358,6 +358,58 @@ static const sigil_layout_profiles RPCS3_PROFILES = {
 };
 static const char *const RPCS3_SUBDIRS[] = { "dev_hdd0/home" };
 
+/* mupen64plus 2.6+, RMG and simple64 (mupen64plus-core src/main/main.c
+ * get_save_filename): {goodname[:32]}-{MD5[:8]} from mupen64plus.ini, or the
+ * header name for a ROM the database lacks, so the hash suffix is what sigil
+ * can match. One .mpk holds all four controller paks. */
+static const sigil_layout_member MUPEN64PLUS_MEMBERS[] = {
+    M("*-{n64_md5_8}.eep", PRIMARY),
+    M("*-{n64_md5_8}.sra", PRIMARY),
+    M("*-{n64_md5_8}.fla", PRIMARY),
+    M("*-{n64_md5_8}.mpk", SIDECAR),
+};
+
+/* M64Plus FZ (mupen64plus-ae GamePrefs.java getGameDataPath, setGameDirs):
+ * GameData/{header} {country} {md5}/SramData/, or GameData/{md5}/ where the
+ * file system can't hold that name; the files inside carry FZ's database
+ * name. The client reaches the copy FZ keeps in the user's chosen folder. */
+static const sigil_layout_member M64PLUS_FZ_MEMBERS[] = {
+    M("GameData/*{n64_md5_lower}/SramData/*.eep", PRIMARY),
+    M("GameData/*{n64_md5_lower}/SramData/*.sra", PRIMARY),
+    M("GameData/*{n64_md5_lower}/SramData/*.fla", PRIMARY),
+    M("GameData/*{n64_md5_lower}/SramData/*.mpk", SIDECAR),
+};
+static const char *const M64PLUS_FZ_SUBDIRS[] = { "GameData" };
+
+/* Project64 (N64Rom.cpp SaveRomSettingID, SaveType/Eeprom.cpp and its siblings, Mempak.cpp):
+ * Save/{header}-{MD5 of the .n64-order ROM}/ with "Unique Game Dir" on (the
+ * default), Save/ itself with it off; one .mpk per controller. */
+#define PJ64_UNIQUE(t, r) M_OPT("Save/*-{n64_md5_n64}/" t, r, "Unique Game Dir", "1", true)
+#define PJ64_FLAT(t, r)   M_OPT("Save/{n64_header}" t, r, "Unique Game Dir", "0", false)
+static const sigil_layout_member PROJECT64_MEMBERS[] = {
+    PJ64_UNIQUE("*.eep", PRIMARY), PJ64_UNIQUE("*.sra", PRIMARY), PJ64_UNIQUE("*.fla", PRIMARY),
+    PJ64_UNIQUE("*_Cont_1.mpk", SIDECAR), PJ64_UNIQUE("*_Cont_2.mpk", SIDECAR), PJ64_UNIQUE("*_Cont_3.mpk", SIDECAR),
+    PJ64_UNIQUE("*_Cont_4.mpk", SIDECAR),
+    PJ64_FLAT(".eep", PRIMARY), PJ64_FLAT(".sra", PRIMARY), PJ64_FLAT(".fla", PRIMARY),
+    PJ64_FLAT("_Cont_1.mpk", SIDECAR), PJ64_FLAT("_Cont_2.mpk", SIDECAR), PJ64_FLAT("_Cont_3.mpk", SIDECAR),
+    PJ64_FLAT("_Cont_4.mpk", SIDECAR),
+};
+static const char *const PROJECT64_SUBDIRS[] = { "Save" };
+
+/* PSP games on PPSSPP (Core/Dialog/SavedataParam.cpp, ms0:/PSP/SAVEDATA/),
+ * whose libretro core makes the frontend's save folder the memory stick
+ * (libretro/libretro.cpp), and on a PSP or a Vita's PSP emulator (ux0:pspemu/).
+ * A game names each of its folders with its disc id and a suffix of its own.
+ * Game-data installs (PSPGamedataInstallDialog.cpp) share the folder, the
+ * prefix and the PARAM.SFO category, so they travel with the saves. */
+static const sigil_layout_area PSP_AREAS[] = {
+    { "PSP/SAVEDATA/{save_id}/", "{save_id}/", SIGIL_SAVE_AREA_DEVICE, false, NULL },
+};
+static const sigil_layout_profiles PSP_FOLDERS = {
+    "PSP", 0, NULL, PSP_AREAS, COUNT(PSP_AREAS), NULL, 0, true,
+};
+static const char *const PSP_SUBDIRS[] = { "PSP/SAVEDATA" };
+
 #define ROW_PROFILES(l, p, d, pr) { l, p, NULL, 0, NULL, 0, d, COUNT(d), NULL, &pr }
 
 #define ROW(l, p, m)            { l, p, m, COUNT(m), NULL, 0, NULL, 0 }
@@ -400,6 +452,13 @@ static const sigil_layout LAYOUTS[] = {
     ROW("dosbox_pure", NULL, DOSBOX_PURE_MEMBERS),
     ROW_DIRS("same_cdi", NULL, SAME_CDI_MEMBERS, SAME_CDI_SUBDIRS),
     ROW("nestopia", "fds", NESTOPIA_FDS_MEMBERS),
+    /* mupen64plus_next and parallel_n64 (libretro/libretro_memory.h) keep
+     * EEPROM, four controller paks, SRAM and flash in one 0x48800-byte .srm. */
+    ROW("mupen64plus_next", "n64", SRM_ONLY_MEMBERS),
+    ROW("parallel_n64", "n64", SRM_ONLY_MEMBERS),
+    ROW("mupen64plus_standalone", "n64", MUPEN64PLUS_MEMBERS),
+    ROW_DIRS("m64plus_fz", "n64", M64PLUS_FZ_MEMBERS, M64PLUS_FZ_SUBDIRS),
+    ROW_DIRS("project64", "n64", PROJECT64_MEMBERS, PROJECT64_SUBDIRS),
     ROW_PROFILES("eden", "switch", YUZU_SUBDIRS, YUZU_PROFILES),
     ROW_PROFILES("citron", "switch", YUZU_SUBDIRS, YUZU_PROFILES),
     ROW_PROFILES("sudachi", "switch", YUZU_SUBDIRS, YUZU_PROFILES),
@@ -407,6 +466,9 @@ static const sigil_layout LAYOUTS[] = {
     ROW_PROFILES("cemu", "wiiu", CEMU_SUBDIRS, CEMU_PROFILES),
     ROW_PROFILES("vita3k", "psvita", VITA3K_SUBDIRS, VITA3K_PROFILES),
     ROW_PROFILES("rpcs3", "ps3", RPCS3_SUBDIRS, RPCS3_PROFILES),
+    ROW_PROFILES("ppsspp", "psp", PSP_SUBDIRS, PSP_FOLDERS),
+    ROW_PROFILES("ppsspp_standalone", "psp", PSP_SUBDIRS, PSP_FOLDERS),
+    ROW_PROFILES("psp_console", "psp", PSP_SUBDIRS, PSP_FOLDERS),
 };
 
 const char *sigil_layout_platform(const char *slug) {

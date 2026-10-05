@@ -2,7 +2,29 @@
 #include "sigil.h"
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+
+/* The arguments in UTF-8, as sigil takes paths; Windows hands main() the
+ * ANSI code page, which can't spell most non-Latin file names. */
+static char **utf8_argv(int *argc) {
+    wchar_t **wargv = CommandLineToArgvW(GetCommandLineW(), argc);
+    if (!wargv) return NULL;
+    char **argv = (char **)calloc((size_t)*argc + 1, sizeof(char *));
+    for (int i = 0; argv && i < *argc; i++) {
+        int n = WideCharToMultiByte(CP_UTF8, 0, wargv[i], -1, NULL, 0, NULL, NULL);
+        argv[i] = n > 0 ? (char *)malloc((size_t)n) : NULL;
+        if (!argv[i] || !WideCharToMultiByte(CP_UTF8, 0, wargv[i], -1, argv[i], n, NULL, NULL)) {
+            argv = NULL;
+        }
+    }
+    LocalFree(wargv);
+    return argv;
+}
+#endif
 
 static const char *usage_to_str(sigil_usage u) {
     switch (u) {
@@ -30,14 +52,14 @@ static const char *content_type_to_str(int t) {
 
 static void print_usage(void) {
     fprintf(stderr,
-        "sigil %s — extract platform-native title IDs from ROM files\n"
+        "sigil %s. Reads the platform-native title ID from a ROM file.\n"
         "\n"
         "Usage: sigil [--platform=<slug>] [--prod-keys=<path>] <rom>\n"
         "\n"
         "Options:\n"
         "  --platform=<slug>   Force a platform (psp, psx, ps2, ps3, switch, 3ds,\n"
         "                      wii, wiiu, gamecube, psvita, xbox, xbox360,\n"
-        "                      dreamcast).\n"
+        "                      dreamcast, gb, gbc, snes, n64).\n"
         "                      Default: auto-detect.\n"
         "  --prod-keys=<path>  Switch prod.keys file for NCA decryption.\n"
         "  --help              Show this message.\n",
@@ -45,6 +67,14 @@ static void print_usage(void) {
 }
 
 int main(int argc, char **argv) {
+#ifdef _WIN32
+    argv = utf8_argv(&argc);
+    if (!argv) {
+        fprintf(stderr, "sigil: could not read the command line\n");
+        return 2;
+    }
+    SetConsoleOutputCP(CP_UTF8);
+#endif
     const char *path = NULL;
     sigil_platform hint = SIGIL_PLATFORM_AUTO;
     sigil_support sup = { .struct_version = SIGIL_SUPPORT_V1 };
@@ -96,5 +126,8 @@ int main(int argc, char **argv) {
            usage_to_str(r.usage), source_to_str(r.source), r.experimental,
            content_type_to_str(r.switch_content_type), r.title_version,
            (r.features & SIGIL_FEATURE_RTC) ? "rtc" : "-");
+    if (r.platform == SIGIL_PLATFORM_N64) {
+        printf("n64_header=%s n64_md5=%s n64_md5_n64=%s\n", r.n64_header, r.n64_md5, r.n64_md5_n64);
+    }
     return 0;
 }

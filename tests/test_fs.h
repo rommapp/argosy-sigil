@@ -2,8 +2,9 @@
 #ifndef SIGIL_TEST_FS_H
 #define SIGIL_TEST_FS_H
 
-/* Folder access for the tests on Windows and POSIX alike: list a folder,
- * make one, make a fresh temporary one, and remove a tree. */
+/* Folder access for the tests on Windows and POSIX alike: open a file, list a
+ * folder, make one, make a fresh temporary one, and remove a tree. Paths are
+ * UTF-8 everywhere, as sigil takes them. */
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -16,49 +17,81 @@ typedef bool (*test_dir_fn)(void *ctx, const char *name, bool is_dir);
 #ifdef _WIN32
 #include <windows.h>
 
+#define TEST_PATH_CAP 1024
+
+static bool test_wide(const char *utf8, wchar_t *out) {
+    return MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8, -1, out, TEST_PATH_CAP) > 0;
+}
+
+static bool test_utf8(const wchar_t *wide, char *out, size_t cap) {
+    return WideCharToMultiByte(CP_UTF8, 0, wide, -1, out, (int)cap, NULL, NULL) > 0;
+}
+
+static FILE *test_fopen(const char *path, const char *mode) {
+    wchar_t wpath[TEST_PATH_CAP], wmode[16];
+    if (!test_wide(path, wpath) || !MultiByteToWideChar(CP_UTF8, 0, mode, -1, wmode, 16)) return NULL;
+    return _wfopen(wpath, wmode);
+}
+
 /* 0, or -1 when `dir` can't be listed. */
 static int test_dir_each(const char *dir, test_dir_fn fn, void *ctx) {
-    char pattern[1024];
+    char pattern[TEST_PATH_CAP];
+    wchar_t wpattern[TEST_PATH_CAP];
     snprintf(pattern, sizeof(pattern), "%s\\*", dir);
-    WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA(pattern, &fd);
+    if (!test_wide(pattern, wpattern)) return -1;
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(wpattern, &fd);
     if (h == INVALID_HANDLE_VALUE) return -1;
     do {
-        const char *name = fd.cFileName;
+        char name[TEST_PATH_CAP];
+        if (!test_utf8(fd.cFileName, name, sizeof(name))) continue;
         if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
         if (!fn(ctx, name, (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)) break;
-    } while (FindNextFileA(h, &fd));
+    } while (FindNextFileW(h, &fd));
     FindClose(h);
     return 0;
 }
 
 static int test_make_dir(const char *path) {
-    return CreateDirectoryA(path, NULL) || GetLastError() == ERROR_ALREADY_EXISTS ? 0 : -1;
+    wchar_t wpath[TEST_PATH_CAP];
+    if (!test_wide(path, wpath)) return -1;
+    return CreateDirectoryW(wpath, NULL) || GetLastError() == ERROR_ALREADY_EXISTS ? 0 : -1;
 }
 
 /* The system's folder for temporary files, with no trailing separator. */
 static const char *test_temp_root(void) {
-    static char base[MAX_PATH];
-    DWORD n = GetTempPathA(sizeof(base), base);
-    if (n == 0 || n >= sizeof(base)) return ".";
-    if (base[n - 1] == '\\' || base[n - 1] == '/') base[n - 1] = '\0';
-    return base;
+    static char base[TEST_PATH_CAP];
+    wchar_t wbase[MAX_PATH + 1];
+    DWORD n = GetTempPathW(MAX_PATH + 1, wbase);
+    if (n == 0 || n > MAX_PATH) return ".";
+    if (wbase[n - 1] == L'\\' || wbase[n - 1] == L'/') wbase[n - 1] = L'\0';
+    return test_utf8(wbase, base, sizeof(base)) ? base : ".";
 }
 
 static int test_temp_dir(char *out, size_t cap) {
     for (unsigned tries = 0; tries < 100; tries++) {
+        wchar_t wout[TEST_PATH_CAP];
         snprintf(out, cap, "%s\\sigil-test-%lu-%u", test_temp_root(), (unsigned long)GetCurrentProcessId(), tries);
-        if (CreateDirectoryA(out, NULL)) return 0;
+        if (test_wide(out, wout) && CreateDirectoryW(wout, NULL)) return 0;
     }
     return -1;
 }
 
-static int test_remove_file(const char *path) { return DeleteFileA(path) ? 0 : -1; }
-static int test_remove_empty_dir(const char *path) { return RemoveDirectoryA(path) ? 0 : -1; }
+static int test_remove_file(const char *path) {
+    wchar_t wpath[TEST_PATH_CAP];
+    return test_wide(path, wpath) && DeleteFileW(wpath) ? 0 : -1;
+}
+
+static int test_remove_empty_dir(const char *path) {
+    wchar_t wpath[TEST_PATH_CAP];
+    return test_wide(path, wpath) && RemoveDirectoryW(wpath) ? 0 : -1;
+}
 #else
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+static FILE *test_fopen(const char *path, const char *mode) { return fopen(path, mode); }
 
 static int test_dir_each(const char *dir, test_dir_fn fn, void *ctx) {
     DIR *dp = opendir(dir);

@@ -675,6 +675,54 @@ func TestRawSerialNamesPcsxSerialCards(t *testing.T) {
 	}
 }
 
+func n64Rom() []byte {
+	rom := make([]byte, 0x1000)
+	copy(rom, []byte{0x80, 0x37, 0x12, 0x40})
+	copy(rom[0x20:], "1080 SNOWBOARDING   ")
+	copy(rom[0x3B:], "NTEA")
+	return rom
+}
+
+func TestExtractReadsTheN64FieldsStandaloneEmulatorsNameSavesBy(t *testing.T) {
+	rom := n64Rom()
+	path := filepath.Join(t.TempDir(), "1080.z64")
+	if err := os.WriteFile(path, rom, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	n64Order := make([]byte, len(rom))
+	for i := 0; i < len(rom); i += 4 {
+		n64Order[i], n64Order[i+1], n64Order[i+2], n64Order[i+3] = rom[i+3], rom[i+2], rom[i+1], rom[i]
+	}
+	r, err := Extract(path, PlatformAuto, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.TitleID != "NTEA" || r.N64Header != "1080 SNOWBOARDING" || r.N64MD5 != strings.ToUpper(md5hex(rom)) ||
+		r.N64MD5N64 != strings.ToUpper(md5hex(n64Order)) {
+		t.Errorf("result = %+v", r)
+	}
+}
+
+func TestAStoredN64ResultFindsTheStandaloneSaves(t *testing.T) {
+	game := PersistedResult("n64", "NTEA", "NTEA", 0)
+	game.N64Header = "1080 SNOWBOARDING"
+	game.N64MD5 = "FA27089C425DBAB99F19245C5C997613"
+	game.N64MD5N64 = "10C93DD78B695CD32B6938534ED0EDD5"
+	listing := []string{
+		"1080 Snowboarding (JU) [!]-FA27089C.eep", "Other-12345678.eep",
+		"Save/1080 SNOWBOARDING-10C93DD78B695CD32B6938534ED0EDD5/1080 SNOWBOARDING.eep",
+	}
+	for core, want := range map[string]string{"mupen64plus_standalone": listing[0], "project64": listing[2]} {
+		located, err := LocateSaves(game, core, "1080.z64", &LocateOptions{Listing: listing})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(located.Members) != 1 || located.Members[0].Path != want {
+			t.Errorf("%s members = %+v", core, located.Members)
+		}
+	}
+}
+
 func TestLocateReadsNoFilesAndHashFillsTheHashes(t *testing.T) {
 	root := t.TempDir()
 	srm := bytes.Repeat([]byte{1, 2, 3}, 64)

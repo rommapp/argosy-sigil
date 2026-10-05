@@ -128,7 +128,7 @@ static void cso_io_close(void *ctx_) {
 
 sigil_io *sigil_io_open_cso(const char *path) {
     if (!path) return NULL;
-    FILE *fp = fopen(path, "rb");
+    FILE *fp = sigil_fopen(path, "rb");
     if (!fp) return NULL;
 
     uint8_t hdr[CSO_HEADER_SIZE];

@@ -10,11 +10,24 @@ other games' saves.
 
 ## What it handles
 
-| System | Reads the id | Finds saves | Syncs saves |
+The client always tells sigil which emulator runs the game and where that
+emulator keeps its saves; sigil never searches the drive. From there:
+
+- **Game id**: sigil reads the platform's own id out of the ROM.
+- **Names the save files**: sigil knows which files in that save folder are
+  this game's, for each emulator it lists. The client uploads them as they
+  are ([members](docs/c.md#without-collect-and-restore)).
+- **Builds the upload**: sigil packs the game's saves into the unit that
+  goes to RomM and writes a downloaded one back, conflicts included
+  ([sync](docs/sync.md)). Where the emulator keeps every game on one
+  memory card or backup RAM file, this is what takes one game's saves out
+  of the card and puts them back without touching the others.
+
+| System | Game id | Names the save files | Builds the upload |
 |---|---|---|---|
 | [PlayStation](docs/platforms/psx.md) | yes | yes | yes |
 | [PlayStation 2](docs/platforms/ps2.md) | yes | yes | yes |
-| [PSP](docs/platforms/psp.md) | yes | | |
+| [PSP](docs/platforms/psp.md) | yes | yes | yes |
 | [PS Vita](docs/platforms/psvita.md) | yes | yes | yes |
 | [PlayStation 3](docs/platforms/ps3.md) | yes | yes | yes |
 | [Game Boy / Color](docs/platforms/gb.md) | header facts | yes | |
@@ -34,7 +47,7 @@ other games' saves.
 | [Xbox](docs/platforms/xbox.md) | yes | | |
 | [Xbox 360](docs/platforms/xbox360.md) | yes | | |
 | [Arcade](docs/platforms/arcade.md), [Neo Geo](docs/platforms/neogeo.md), [Neo Geo Pocket](docs/platforms/ngp.md), [PC Engine](docs/platforms/pce.md), [WonderSwan](docs/platforms/wonderswan.md), [Lynx](docs/platforms/lynx.md), [Jaguar](docs/platforms/jaguar.md), [Pokémon Mini](docs/platforms/pokemini.md), [3DO](docs/platforms/3do.md), [DOS](docs/platforms/dos.md), [CD-i](docs/platforms/cdi.md) | | yes | |
-| [Nintendo 64](docs/platforms/n64.md) | | in development | |
+| [Nintendo 64](docs/platforms/n64.md) | yes | yes | |
 
 [docs/platforms/](docs/platforms/README.md) lists every system, the
 emulators each one covers, and the ones still in development. Formats and

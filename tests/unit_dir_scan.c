@@ -58,7 +58,7 @@ static void put_sfo(const char *root, const char *dir, const char *name, const c
     snprintf(path, sizeof(path), "%s/%s/%s", root, dir, name);
     uint8_t buf[256];
     size_t n = build_sfo(buf, title_id);
-    FILE *f = fopen(path, "wb");
+    FILE *f = test_fopen(path, "wb");
     if (!f) { fail(path, "could not write"); return; }
     fwrite(buf, 1, n, f);
     fclose(f);
@@ -69,11 +69,15 @@ static void put_sfo(const char *root, const char *dir, const char *name, const c
  * sit in folders that sort before the title's own and in several branches,
  * so a depth-first walk meets one first. Two more sit as deep as the title's
  * own, under names that sort after it: the smaller path wins a tie. A folder
- * at the top carries the file's name and is not the file. */
-static void check(const char *label, sigil_platform platform, const char *name, const char *own_dir,
-                  const char *own_id) {
+ * at the top carries the file's name and is not the file. The dump sits in
+ * `folder` under a fresh temporary folder, UTF-8 like every path sigil takes. */
+static void check(const char *label, sigil_platform platform, const char *folder, const char *name,
+                  const char *own_dir, const char *own_id) {
+    char temp[1024];
+    if (test_temp_dir(temp, sizeof(temp)) != 0) { fail(label, "no temporary folder"); return; }
     char root[1024];
-    if (test_temp_dir(root, sizeof(root)) != 0) { fail(label, "no temporary folder"); return; }
+    snprintf(root, sizeof(root), "%s/%s", temp, folder);
+    if (test_make_dir(root) != 0) { fail(label, "could not make the dump folder"); test_remove_tree(temp); return; }
     const char *decoys[] = { "a/savedata/AAAA00001", "b/savedata/BBBB00002", "0/x", "PS3_GAME/USRDIR/TROPDIR/a",
                              "zz", "zy" };
     for (size_t i = 0; i < sizeof(decoys) / sizeof(decoys[0]); i++) put_sfo(root, decoys[i], name, "ZZZZ99999");
@@ -87,12 +91,18 @@ static void check(const char *label, sigil_platform platform, const char *name, 
         snprintf(msg, sizeof(msg), "rc=%d title_id='%s' (want '%s')", rc, rc == SIGIL_OK ? r.title_id : "", own_id);
         fail(label, msg);
     }
-    test_remove_tree(root);
+    test_remove_tree(temp);
 }
 
+/* "ペルソナ" [Persona] and "é": three- and two-byte UTF-8, which Windows' ANSI
+ * file calls can't open. */
+#define NON_ASCII_FOLDER "\xe3\x83\x9a\xe3\x83\xab\xe3\x82\xbd\xe3\x83\x8a \xc3\xa9"
+
 int main(void) {
-    check("vita folder", SIGIL_PLATFORM_PSVITA, "param.sfo", "sce_sys", "PCSE00123");
-    check("ps3 folder", SIGIL_PLATFORM_PS3, "PARAM.SFO", "PS3_GAME", "BLUS30443");
+    check("vita folder", SIGIL_PLATFORM_PSVITA, "dump", "param.sfo", "sce_sys", "PCSE00123");
+    check("ps3 folder", SIGIL_PLATFORM_PS3, "dump", "PARAM.SFO", "PS3_GAME", "BLUS30443");
+    check("ps3 folder named in UTF-8", SIGIL_PLATFORM_PS3, NON_ASCII_FOLDER, "PARAM.SFO", "PS3_GAME",
+          "BLUS30443");
     if (g_fails) {
         fprintf(stderr, "%d failure(s)\n", g_fails);
         return 1;

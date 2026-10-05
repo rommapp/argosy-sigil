@@ -2,11 +2,11 @@
 #include "sigil_internal.h"
 #include <stdlib.h>
 #include <stdio.h>
-#include <sys/stat.h>
 #ifdef _WIN32
 #include <windows.h>
 #else
 #include <dirent.h>
+#include <sys/stat.h>
 #endif
 
 #define SIGIL_VERSION_STRING "0.1.0-dev"
@@ -38,6 +38,7 @@ static const platform_slug PLATFORM_SLUGS[] = {
     { SIGIL_PLATFORM_GB,       "gb"       },
     { SIGIL_PLATFORM_GBC,      "gbc"      },
     { SIGIL_PLATFORM_SNES,     "snes"     },
+    { SIGIL_PLATFORM_N64,      "n64"      },
 };
 static const size_t PLATFORM_SLUG_COUNT = sizeof(PLATFORM_SLUGS) / sizeof(PLATFORM_SLUGS[0]);
 
@@ -173,6 +174,9 @@ static sigil_platform sniff_from_extension(const char *filename) {
     if (strcmp(ext, "gbc") == 0)   return SIGIL_PLATFORM_GBC;
     if (strcmp(ext, "sfc") == 0)   return SIGIL_PLATFORM_SNES;
     if (strcmp(ext, "smc") == 0)   return SIGIL_PLATFORM_SNES;
+    if (strcmp(ext, "z64") == 0)   return SIGIL_PLATFORM_N64;
+    if (strcmp(ext, "v64") == 0)   return SIGIL_PLATFORM_N64;
+    if (strcmp(ext, "n64") == 0)   return SIGIL_PLATFORM_N64;
 
     /* `Game.xiso.iso` is a real convention in Xbox sets, and the trailing
      * `.iso` alone would throw away what the name already states. */
@@ -217,12 +221,6 @@ static sigil_io *open_io_for_platform(const char *path, sigil_platform p) {
     return sigil_io_open_file(path);
 }
 
-static bool path_is_directory(const char *path) {
-    struct stat st;
-    if (stat(path, &st) != 0) return false;
-    return S_ISDIR(st.st_mode);
-}
-
 /* Calls `fn` for each entry of `dir` but . and .., with its full path. */
 typedef void (*dir_entry_fn)(void *ctx, const char *child, const char *name, bool is_dir);
 
@@ -231,25 +229,42 @@ static bool is_dot_entry(const char *name) {
 }
 
 #ifdef _WIN32
+static bool path_is_directory(const char *path) {
+    wchar_t *wpath = sigil_wide_path(path);
+    DWORD attrs = wpath ? GetFileAttributesW(wpath) : INVALID_FILE_ATTRIBUTES;
+    free(wpath);
+    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY);
+}
+
 static int for_each_entry(const char *dir, dir_entry_fn fn, void *ctx) {
     char pattern[1024];
     int pn = snprintf(pattern, sizeof(pattern), "%s\\*", dir);
     if (pn <= 0 || (size_t)pn >= sizeof(pattern)) return SIGIL_ERR_IO;
-    WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA(pattern, &fd);
+    wchar_t *wpattern = sigil_wide_path(pattern);
+    if (!wpattern) return SIGIL_ERR_IO;
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(wpattern, &fd);
+    free(wpattern);
     if (h == INVALID_HANDLE_VALUE) return SIGIL_ERR_IO;
     do {
-        const char *name = fd.cFileName;
+        char name[MAX_PATH * 3];
+        if (!WideCharToMultiByte(CP_UTF8, 0, fd.cFileName, -1, name, (int)sizeof(name), NULL, NULL)) continue;
         if (is_dot_entry(name)) continue;
         char child[1024];
         int n = snprintf(child, sizeof(child), "%s\\%s", dir, name);
         if (n <= 0 || (size_t)n >= sizeof(child)) continue;
         fn(ctx, child, name, (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0);
-    } while (FindNextFileA(h, &fd));
+    } while (FindNextFileW(h, &fd));
     FindClose(h);
     return SIGIL_OK;
 }
 #else
+static bool path_is_directory(const char *path) {
+    struct stat st;
+    if (stat(path, &st) != 0) return false;
+    return S_ISDIR(st.st_mode);
+}
+
 static int for_each_entry(const char *dir, dir_entry_fn fn, void *ctx) {
     DIR *dp = opendir(dir);
     if (!dp) return SIGIL_ERR_IO;
@@ -344,6 +359,7 @@ static int dispatch(const sigil_io *io, const char *filename_hint,
         return rc;
     }
     case SIGIL_PLATFORM_SNES:     return sigil_extract_snes(io, filename_hint, opts, out);
+    case SIGIL_PLATFORM_N64:      return sigil_extract_n64(io, filename_hint, opts, out);
     default:                       return SIGIL_ERR_UNKNOWN_PLATFORM;
     }
 }

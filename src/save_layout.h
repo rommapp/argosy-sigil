@@ -84,12 +84,13 @@ typedef struct {
     const char *legacy;      /* an older unit's name for the folder, {profile} standing for any id, or NULL */
 } sigil_layout_area;
 
-/* A layout whose saves are folders kept per user profile. */
+/* A layout whose saves are folders, kept per user profile when it has an
+ * account area. */
 typedef struct {
     const char              *top;           /* the folder of the emulator's base every template starts in */
-    int                      format;        /* sigil_profiles_format */
+    int                      format;        /* sigil_profiles_format; 0 with no profiles */
     const char              *list;          /* the profile list file, or the template naming one file per
-                                               profile, relative to the base */
+                                               profile, relative to the base; NULL with no profiles */
     const sigil_layout_area *areas;
     size_t                   area_count;
     const char *const       *ignored;       /* files the emulator keeps in a save folder for itself: never

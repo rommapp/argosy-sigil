@@ -241,7 +241,7 @@ static bool layout_path(const sigil_layout_profiles *row, const char *path, size
             *at = i;
             const char *templates[SIGIL_PROFILES_MAX + 1];
             size_t count = 0;
-            templates[count++] = row->list;
+            if (row->list) templates[count++] = row->list;
             for (size_t a = 0; a < row->area_count && count < SIGIL_PROFILES_MAX + 1; a++) {
                 templates[count++] = row->areas[a].template_;
             }
@@ -476,6 +476,7 @@ static void folder_profiles(sigil_profile_root *p) {
 
 static bool list_reachable(const sigil_profile_root *p) {
     char lead[SIGIL_SAVE_PATH_MAX], path[SIGIL_SAVE_PATH_MAX];
+    if (!p->row->list) return false;
     size_t n = literal_lead(p->row->list);
     if (n >= sizeof(lead)) return false;
     memcpy(lead, p->row->list, n);

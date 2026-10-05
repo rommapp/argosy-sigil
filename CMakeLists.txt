@@ -132,6 +132,7 @@ set(SIGIL_SOURCES
     src/io_raw_cd.c
     src/gb.c
     src/snes.c
+    src/n64.c
     src/md5.c
     src/sha1.c
     src/psp_sfo.c
@@ -187,6 +188,9 @@ target_link_libraries(sigil PRIVATE sigil_chdr sigil_zlib sigil_zstd sigil_aes)
 if(SIGIL_BUILD_CLI)
     add_executable(sigil_cli cli/sigil.c)
     target_link_libraries(sigil_cli PRIVATE sigil)
+    if(WIN32)
+        target_link_libraries(sigil_cli PRIVATE shell32)
+    endif()
     set_target_properties(sigil_cli PROPERTIES OUTPUT_NAME sigil)
 endif()
 
