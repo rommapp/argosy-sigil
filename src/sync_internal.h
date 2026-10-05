@@ -287,6 +287,13 @@ int sigil_sync_check_folder_card(const sigil_sync_ctx *x, const sigil_sync_card_
                                  sigil_sync_result *r);
 /** Writes folder card `f`: its superblock when needed, the folders the restore rewrites, and removals. */
 int sigil_sync_write_folder_card(const sigil_sync_ctx *x, const sigil_sync_card_file *f);
+/**
+ * A card holding the save folders of a zip of them, as a client uploaded them before it used sigil's
+ * units: members <folder>/<path>, or <card>.ps2/<folder>/<path>. SIGIL_ERR_UNSUPPORTED_FORMAT when a
+ * folder doesn't pack.
+ */
+int sigil_sync_folder_zip_card(const sigil_sync_ctx *x, const sigil_zip_member *members, size_t count, void **card,
+                               int *format);
 
 /* ---- volumes (sync_volumes.c) ------------------------------------------------- */
 

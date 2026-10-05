@@ -8,7 +8,7 @@
 #include "sigil_internal.h"
 #include <stdbool.h>
 
-#define LEGACY_ZIP_MAX 8
+#define LEGACY_ZIP_MAX 32
 
 /* A zip of `n` files under the names given, bytes as given. */
 static uint8_t *legacy_zip(const char *const *names, uint8_t *const *data, const size_t *lens, size_t n, size_t *len) {

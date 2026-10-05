@@ -24,6 +24,20 @@ restore writes each file back in the emulator's form (gzip, byte
 expansion), and a file the emulator hasn't created yet in the form and
 size its layout row names.
 
+### Units from before sigil
+
+Restore also reads the shapes clients uploaded before they used sigil's
+units, and writes the save exactly as it would from sigil's own unit. The
+next collect then gives the save in sigil's form; upload that.
+
+| System | Shape restore reads |
+|---|---|
+| PS1 | a raw card, or a flat zip of cards under any names (Beetle's `{stem}.0.mcr` and `{stem}.1.mcr`) |
+| PS2 | a zip of PCSX2 save folders, `<folder>/<file>`, or the same under `<card>.ps2/` |
+| GameCube | a raw `.gci`, or a flat zip of `.gci` files; of two files with one identity, the first by name, as Dolphin loads a folder |
+| Saturn, Sega CD, Dreamcast | a raw volume file as the emulator stored it (gzip and byte expansion included), or a flat zip of them under their on-disk names, each matched to its volume by the layout's file names |
+| Wii U | a zip naming the account folder by its id (`<save_id>/user/80000001/`) |
+
 ## Whose saves
 
 A game's saves are the ones carrying one of its ids, on its own card and on

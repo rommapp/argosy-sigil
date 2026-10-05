@@ -147,6 +147,59 @@ int sigil_sync_load_folder_card(const sigil_sync_ctx *x, const char *dir, sigil_
     return SIGIL_OK;
 }
 
+/* The save folder a zip member sits in and its path inside the folder, for a
+ * zip of PCSX2 save folders: <folder>/<path>, or <card>.ps2/<folder>/<path>
+ * when the zip was taken at the card. False for the card's own files and a
+ * member outside any folder. */
+static bool folder_member(const char *name, char folder[SIGIL_CARD_NAME_MAX], const char **path) {
+    const char *slash = strchr(name, '/');
+    if (slash && slash - name > 4 && strncmp(slash - 4, ".ps2", 4) == 0) {
+        name = slash + 1;
+        slash = strchr(name, '/');
+    }
+    if (!slash || slash == name || (size_t)(slash - name) >= SIGIL_CARD_NAME_MAX || !slash[1]) return false;
+    snprintf(folder, SIGIL_CARD_NAME_MAX, "%.*s", (int)(slash - name), name);
+    *path = slash + 1;
+    return true;
+}
+
+int sigil_sync_folder_zip_card(const sigil_sync_ctx *x, const sigil_zip_member *members, size_t count, void **card,
+                               int *format) {
+    int rc = x->kind->blank(card, format, SIGIL_DEVICE_NONE, 0, SIGIL_FORM_RAW, NULL);
+    sigil_ps2_folder_file *files = rc == SIGIL_OK ? calloc(count + 1, sizeof(*files)) : NULL;
+    bool *done = rc == SIGIL_OK ? calloc(count + 1, sizeof(*done)) : NULL;
+    if (rc == SIGIL_OK && (!files || !done)) rc = SIGIL_ERR_OOM;
+    for (size_t i = 0; i < count && rc == SIGIL_OK; i++) {
+        char folder[SIGIL_CARD_NAME_MAX], other[SIGIL_CARD_NAME_MAX];
+        const char *path = NULL;
+        if (done[i] || !folder_member(members[i].name, folder, &path)) continue;
+        size_t n = 0;
+        for (size_t k = i; k < count && rc == SIGIL_OK; k++) {
+            const char *in = NULL;
+            if (done[k] || !folder_member(members[k].name, other, &in) || strcmp(other, folder) != 0) continue;
+            done[k] = true;
+            if (strlen(in) >= PS2_FOLDER_PATH_MAX) { rc = SIGIL_ERR_UNSUPPORTED_FORMAT; break; }
+            snprintf(files[n].path, PS2_FOLDER_PATH_MAX, "%s", in);
+            files[n].data = members[k].data;
+            files[n].len = members[k].len;
+            n++;
+        }
+        sigil_ps2_save save;
+        if (rc == SIGIL_OK) rc = sigil_ps2_pack(folder, files, n, &save);
+        if (rc == SIGIL_OK) {
+            rc = sigil_ps2_inject((sigil_ps2_card *)*card, &save);
+            sigil_ps2_save_free(&save);
+        }
+    }
+    free(files);
+    free(done);
+    if (rc != SIGIL_OK && *card) {
+        x->kind->free_card(*card);
+        *card = NULL;
+    }
+    return rc;
+}
+
 /* The restore rewrites save folder `name`: it is the game's, or a
  * companion's the restore carries a unit for. */
 static bool rewritten(const sigil_sync_ctx *x, const char *name) {

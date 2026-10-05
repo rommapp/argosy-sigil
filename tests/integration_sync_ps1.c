@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "save_corpus.h"
-#include "mem_root.h"
+#include "legacy_units.h"
 #include "card_ps1.h"
 #include <stdbool.h>
 
@@ -461,6 +461,80 @@ static uint8_t *card_of(const uint8_t *const *mcs, const size_t *len, size_t cou
         if (sigil_ps1_inject(out, mcs[i], len[i]) != SIGIL_OK) { free(out); return NULL; }
     }
     return out;
+}
+
+#define XENO_STEM "Xenogears (USA) (Disc 1)"
+
+static void beetle_two_cards(game *g) {
+    g->options[0] = (sigil_save_option){ "beetle_psx_hw_use_mednafen_memcard0_method", "mednafen" };
+    g->options[1] = (sigil_save_option){ "beetle_psx_hw_enable_memcard1", "enabled" };
+    g->req.save.options = g->options;
+    g->req.save.option_count = 2;
+}
+
+/* Argosy uploaded a PS1 game's per-game card raw, or Beetle's two cards as a
+ * flat zip under their on-disk names: both restore as sigil's unit does. */
+static void check_argosy_uploads(void) {
+    size_t len = 0, moved_len = 0;
+    uint8_t *card = sample("xenogears-full-mcd", &len);
+    sigil_card_listing *l = NULL;
+    if (!card || sigil_ps1_card_list(card, SIGIL_CARD_FORMAT_PS1_RAW, &l) != SIGIL_OK || l->entry_count < 2) {
+        free(card);
+        sigil_card_listing_free(l);
+        return;
+    }
+    const char *moved_name = l->entries[l->entry_count - 1].name;
+    uint8_t *moved = extract_named(card, moved_name, &moved_len);
+    uint8_t *slot1 = moved ? card_with(card, moved_name, NULL, 0) : NULL;
+    const uint8_t *one[1] = { moved };
+    uint8_t *slot2 = moved ? card_of(one, &moved_len, 1) : NULL;
+    if (!slot1 || !slot2) {
+        fail("argosy ps1", "setup failed");
+    } else {
+        mem_root root = {0};
+        root_put(&root, XENO_STEM ".0.mcr", slot1, PS1_CARD_SIZE);
+        root_put(&root, XENO_STEM ".1.mcr", slot2, PS1_CARD_SIZE);
+        game g;
+        make_game(&g, &root, "mednafen_psx_hw", XENO_STEM ".cue", "SLUS-00664", XENOGEARS, 2);
+        beetle_two_cards(&g);
+        sigil_sync_result *unit = NULL;
+        const char *names[] = { XENO_STEM ".0.mcr", XENO_STEM ".1.mcr" };
+        uint8_t *data[] = { slot1, slot2 };
+        size_t lens[] = { PS1_CARD_SIZE, PS1_CARD_SIZE }, zip_len = 0;
+        uint8_t *zip = legacy_zip(names, data, lens, 2, &zip_len);
+        if (sigil_collect(&g.req, &unit) != SIGIL_OK || !unit->data || !zip) {
+            fail("argosy ps1", "collect failed");
+        } else {
+            const uint8_t *olds[] = { zip, card };
+            const size_t old_lens[] = { zip_len, len };
+            const char *labels[] = { "argosy ps1 zip of two cards", "argosy ps1 raw card" };
+            for (size_t i = 0; i < 2; i++) {
+                mem_root from_old = {0}, from_unit = {0};
+                game a, b;
+                make_game(&a, &from_old, "mednafen_psx_hw", XENO_STEM ".cue", "SLUS-00664", XENOGEARS, 2);
+                make_game(&b, &from_unit, "mednafen_psx_hw", XENO_STEM ".cue", "SLUS-00664", XENOGEARS, 2);
+                beetle_two_cards(&a);
+                beetle_two_cards(&b);
+                sigil_sync_result *ra = NULL, *rb = NULL;
+                int rc_old = sigil_restore(&a.req, olds[i], old_lens[i], &ra);
+                int rc_unit = sigil_restore(&b.req, unit->data, unit->len, &rb);
+                if (rc_old != SIGIL_OK || rc_unit != SIGIL_OK) fail(labels[i], "restore failed");
+                else if (!roots_same(&from_old, &from_unit)) fail(labels[i], "restores other files than sigil's unit");
+                sigil_sync_result_free(ra);
+                sigil_sync_result_free(rb);
+                root_free(&from_old);
+                root_free(&from_unit);
+            }
+        }
+        free(zip);
+        sigil_sync_result_free(unit);
+        root_free(&root);
+    }
+    free(slot1);
+    free(slot2);
+    free(moved);
+    free(card);
+    sigil_card_listing_free(l);
 }
 
 #define MML2_CARD "Mega Man Legends 2 (USA).srm"
@@ -1084,6 +1158,7 @@ int main(void) {
     check_conflict_rules();
     check_unit_rules();
     check_restore_to_slot_2();
+    check_argosy_uploads();
     check_faulty_writes(first);
     check_unreadable_card();
     check_wrapped_cards();

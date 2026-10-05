@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "save_corpus.h"
-#include "mem_root.h"
+#include "legacy_units.h"
 #include "card_ps2.h"
 #include "sync_internal.h"
 #include <stdbool.h>
@@ -532,6 +532,54 @@ static size_t files_under(mem_root *root, const char *prefix) {
 
 /* PCSX2's folder card: the game's save folders pack into the same unit a
  * file card gives, and other games' folders stay out. */
+/* Argosy uploaded a PCSX2 folder card's save folders as a zip rooted at the
+ * folder names, and older archives rooted at the card: both restore as
+ * sigil's 8 MB unit does. */
+static void check_argosy_uploads(const sigil_sync_result *first) {
+    mem_root root = {0};
+    put_superblock(&root, CARD1);
+    if (!first || !put_sample_folder(&root, CARD1, "ace-combat-04-aethersx2")) {
+        fail("argosy ps2", "setup failed");
+        root_free(&root);
+        return;
+    }
+    /* Shape 0: <folder>/<file>, the card's superblock left out. Shape 1: Mcd001.ps2/<folder>/<file>
+     * with the superblock, as the card sits on disk. */
+    const char *names[2][LEGACY_ZIP_MAX];
+    uint8_t *data[2][LEGACY_ZIP_MAX];
+    size_t lens[2][LEGACY_ZIP_MAX], n[2] = { 0, 0 };
+    for (size_t i = 0; i < root.count && n[1] < LEGACY_ZIP_MAX; i++) {
+        const char *in_card = root.files[i].path + strlen("memcards/");
+        names[1][n[1]] = in_card;
+        data[1][n[1]] = root.files[i].data;
+        lens[1][n[1]++] = root.files[i].len;
+        if (strstr(in_card, "_pcsx2_superblock")) continue;
+        names[0][n[0]] = in_card + strlen("Mcd001.ps2/");
+        data[0][n[0]] = root.files[i].data;
+        lens[0][n[0]++] = root.files[i].len;
+    }
+    const char *labels[2] = { "argosy ps2 folders", "argosy ps2 folders rooted at the card" };
+    for (int shape = 0; shape < 2; shape++) {
+        size_t zip_len = 0;
+        uint8_t *zip = legacy_zip(names[shape], data[shape], lens[shape], n[shape], &zip_len);
+        mem_root from_old = {0}, from_unit = {0};
+        game a, b;
+        make_standalone(&a, &from_old, "Ace Combat 04 (USA).iso", "SLUS-20152");
+        make_standalone(&b, &from_unit, "Ace Combat 04 (USA).iso", "SLUS-20152");
+        sigil_sync_result *ra = NULL, *rb = NULL;
+        int rc_old = zip ? sigil_restore(&a.req, zip, zip_len, &ra) : SIGIL_ERR_OOM;
+        int rc_unit = sigil_restore(&b.req, first->data, first->len, &rb);
+        if (rc_old != SIGIL_OK || rc_unit != SIGIL_OK) fail(labels[shape], "restore failed");
+        else if (!roots_same(&from_old, &from_unit)) fail(labels[shape], "restores other files than sigil's unit");
+        sigil_sync_result_free(ra);
+        sigil_sync_result_free(rb);
+        root_free(&from_old);
+        root_free(&from_unit);
+        free(zip);
+    }
+    root_free(&root);
+}
+
 static void check_folder_collect(const sigil_sync_result *first) {
     mem_root root = {0};
     put_superblock(&root, CARD1);
@@ -1509,6 +1557,7 @@ int main(void) {
     check_broken_own_save(first);
     check_restore_foreign_unit();
     check_folder_collect(first);
+    check_argosy_uploads(first);
     check_folder_restore(first);
     check_unopenable_folder_file(first);
     check_folder_damage(first);

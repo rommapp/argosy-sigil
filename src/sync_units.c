@@ -541,6 +541,41 @@ static int file_unit_saves(const sigil_sync_ctx *x, const uint8_t *unit, size_t 
     return rc == SIGIL_ERR_EXISTS ? SIGIL_ERR_UNSUPPORTED_FORMAT : rc;
 }
 
+/* A zip on a card platform, as clients uploaded before they used sigil's
+ * units: each member at the top is a card (Beetle PSX's two), and members
+ * inside folders are PCSX2 save folders, packed onto one card. */
+static int card_zip_saves(const sigil_sync_ctx *x, const uint8_t *unit, size_t len, size_t who,
+                          sigil_sync_saves *out) {
+    sigil_zip_member *members = NULL;
+    size_t count = 0;
+    int rc = sigil_zip_read_mem(unit, len, SYNC_MAX_UNIT_MEMBER, &members, &count);
+    bool folders = false;
+    for (size_t i = 0; i < count && rc == SIGIL_OK; i++) {
+        if (strchr(members[i].name, '/')) {
+            folders = true;
+            continue;
+        }
+        void *card = NULL;
+        int format = 0;
+        rc = sigil_sync_load_bytes(x->kind, members[i].data, members[i].len, SIGIL_DEVICE_NONE, &card, &format);
+        if (rc != SIGIL_OK) break;
+        rc = sigil_sync_add_card_saves(x, card, format, SIGIL_DEVICE_NONE, SIZE_MAX, who, out);
+        x->kind->free_card(card);
+    }
+    if (rc == SIGIL_OK && folders) {
+        void *card = NULL;
+        int format = 0;
+        rc = x->kind->folder_cards ? sigil_sync_folder_zip_card(x, members, count, &card, &format)
+                                   : SIGIL_ERR_UNSUPPORTED_FORMAT;
+        if (rc == SIGIL_OK) {
+            rc = sigil_sync_add_card_saves(x, card, format, SIGIL_DEVICE_NONE, SIZE_MAX, who, out);
+            x->kind->free_card(card);
+        }
+    }
+    sigil_zip_members_free(members, count);
+    return rc;
+}
+
 /* Adds the saves of the unit that `who` takes to `out`, every volume's
  * device noted. Saves of other games in a card platform's unit are left
  * out, since the unit speaks only for its own game. `sizes` receives each
@@ -548,13 +583,14 @@ static int file_unit_saves(const sigil_sync_ctx *x, const uint8_t *unit, size_t 
 static int unit_saves(const sigil_sync_ctx *x, const uint8_t *unit, size_t len, size_t who, sigil_sync_saves *out,
                       size_t sizes[SIGIL_DEVICE_COUNT]) {
     size_t before = out->count;
-    if (x->kind->save_files) {
-        int rc = file_unit_saves(x, unit, len, who, out);
+    bool is_zip = len >= 4 && sigil_read_le32(unit) == 0x04034b50u;
+    if (x->kind->save_files || (x->kind->has_ids && is_zip)) {
+        int rc = x->kind->save_files ? file_unit_saves(x, unit, len, who, out) : card_zip_saves(x, unit, len, who, out);
         return rc == SIGIL_OK && out->count == before ? SIGIL_ERR_NOT_FOUND : rc;
     }
     sigil_zip_member *members = NULL;
     size_t count = 0;
-    bool zip = !x->kind->has_ids && len >= 4 && sigil_read_le32(unit) == 0x04034b50u;
+    bool zip = !x->kind->has_ids && is_zip;
     int rc = SIGIL_OK;
     if (zip) rc = sigil_zip_read_mem(unit, len, SYNC_MAX_UNIT_MEMBER, &members, &count);
     size_t volumes = zip ? count : 1;
