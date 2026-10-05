@@ -12,7 +12,6 @@
  * reached, but it is no longer the only path. */
 
 #define VITA_SFO_MAX_BYTES (256u * 1024u)
-#define VITA_SFO_MAGIC     0x46535000u  /* "\0PSF" little-endian */
 
 int sigil_extract_psvita(const sigil_io *io, const char *filename_hint,
                          const sigil_options *opts, sigil_result *out) {
@@ -31,7 +30,7 @@ int sigil_extract_psvita(const sigil_io *io, const char *filename_hint,
                  * instead of coming back cut to a folder name the game never used. */
                 char save_dir[sizeof(out->save_id) + 1] = {0};
                 if (got > 0
-                    && sigil_read_le32(buf) == VITA_SFO_MAGIC
+                    && sigil_read_le32(buf) == SIGIL_SFO_MAGIC
                     && sigil_sfo_get_string(buf, (size_t)got, "TITLE_ID",
                                             title_id, sizeof(title_id)) == SIGIL_OK
                     && title_id[0] != '\0'

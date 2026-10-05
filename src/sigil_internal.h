@@ -207,6 +207,8 @@ int sigil_cnf_parse_boot(const uint8_t *cnf, size_t len,
                          const char *boot_key,
                          char raw[32], char canonical[32]);
 
+#define SIGIL_SFO_MAGIC 0x46535000u  /* "\0PSF" read little-endian */
+
 int sigil_sfo_get_string(const uint8_t *data, size_t len,
                          const char *key,
                          char *out, size_t out_cap);

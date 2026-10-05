@@ -62,10 +62,17 @@ The unit is a zip of the game's save folders, each under its own name
 `PARAM.SFO` stay valid. The rules for folder layouts are in
 [sync](../sync.md) and [profiles](../save-units.md#profiles).
 
+Game-data installs share `PSP/SAVEDATA/` and the game's prefix. Every
+save's `PARAM.SFO` carries `SAVEDATA_PARAMS` and `SAVEDATA_FILE_LIST`; an
+install's carries neither. A folder whose `PARAM.SFO` reads as an SFO
+holding neither key is left out of the unit, and restore never removes it.
+A folder with no `PARAM.SFO`, or one that won't open or parse, stays with
+the saves. Telling them apart reads the file, so locate without `open`
+keeps every folder that starts with the game's id.
+
 ## Open items
 
 - `psp_console` is not yet confirmed on a live PSP or Adrenaline: copy a game's folders off, check their names start with the disc id sigil reads, then restore to a stick without them and load the save in the game.
-- Game-data installs sit in `PSP/SAVEDATA/` under the same prefix and `PARAM.SFO` category as saves, so they travel with them and can make a unit large.
 - A game picks its folder names at run time; one that saves under another title's id is not found. A client that knows the id can set `save_id` to it on the result it passes to collect and restore.
 - A sequel reading its prequel's folders is not synced as a companion.
 - PPSSPP's default memory stick root per OS is unconfirmed.

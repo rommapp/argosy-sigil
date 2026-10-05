@@ -97,6 +97,8 @@ typedef struct {
                                                collected, never removed */
     size_t                   ignored_count;
     bool                     prefix;        /* {save_id} takes every folder whose name starts with it */
+    bool                     savedata_only; /* a folder whose PARAM.SFO holds neither SAVEDATA_PARAMS nor
+                                               SAVEDATA_FILE_LIST is installed game data, not a save */
 } sigil_layout_profiles;
 
 typedef struct {

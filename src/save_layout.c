@@ -400,13 +400,14 @@ static const char *const PROJECT64_SUBDIRS[] = { "Save" };
  * whose libretro core makes the frontend's save folder the memory stick
  * (libretro/libretro.cpp), and on a PSP or a Vita's PSP emulator (ux0:pspemu/).
  * A game names each of its folders with its disc id and a suffix of its own.
- * Game-data installs (PSPGamedataInstallDialog.cpp) share the folder, the
- * prefix and the PARAM.SFO category, so they travel with the saves. */
+ * Game-data installs (PSPGamedataInstallDialog.cpp) share the folder and the
+ * prefix; their PARAM.SFO lacks the hash keys every save's carries
+ * (SavedataParam.cpp), which is how they are left out. */
 static const sigil_layout_area PSP_AREAS[] = {
     { "PSP/SAVEDATA/{save_id}/", "{save_id}/", SIGIL_SAVE_AREA_DEVICE, false, NULL },
 };
 static const sigil_layout_profiles PSP_FOLDERS = {
-    "PSP", 0, NULL, PSP_AREAS, COUNT(PSP_AREAS), NULL, 0, true,
+    "PSP", 0, NULL, PSP_AREAS, COUNT(PSP_AREAS), NULL, 0, true, true,
 };
 static const char *const PSP_SUBDIRS[] = { "PSP/SAVEDATA" };
 

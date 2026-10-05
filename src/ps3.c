@@ -12,7 +12,6 @@
  * (MainActivity.java:1008) and so does this. */
 
 #define PS3_SFO_MAX_BYTES (256u * 1024u)
-#define PS3_SFO_MAGIC     0x46535000u  /* "\0PSF" little-endian */
 
 #define PS3_GAME_DIR      "PS3_GAME"
 #define PS3_SFO_NAME      "PARAM.SFO"
@@ -90,7 +89,7 @@ int sigil_extract_ps3(const sigil_io *io, const char *filename_hint,
 
     uint8_t magic[4];
     bool is_bare_sfo = sigil_io_read_exact(io, 0, magic, sizeof(magic)) == SIGIL_OK
-                       && sigil_read_le32(magic) == PS3_SFO_MAGIC;
+                       && sigil_read_le32(magic) == SIGIL_SFO_MAGIC;
 
     if (!is_bare_sfo) {
         int rc = ps3_find_sfo_in_iso(io, &sfo_off, &sfo_len);

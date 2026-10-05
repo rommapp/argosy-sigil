@@ -574,6 +574,26 @@ int sigil_profile_root_open(const sigil_save_request *req, const sigil_layout_pr
 
 /* ---- files ---------------------------------------------------------------------- */
 
+/* `folder` (relative to the base, ending in '/') holds installed game data:
+ * its PARAM.SFO reads as an SFO and carries neither key a save's does. A
+ * folder without one, or whose one won't open or parse, stays a save. */
+static bool game_data_install(const sigil_profile_root *p, const char *folder) {
+    char sfo_path[SIGIL_SAVE_PATH_MAX];
+    if (snprintf(sfo_path, sizeof(sfo_path), "%sPARAM.SFO", folder) >= (int)sizeof(sfo_path)) return false;
+    uint8_t *sfo = NULL;
+    size_t len = 0;
+    if (read_root_file(p, sfo_path, &sfo, &len) != SIGIL_OK || !sfo) {
+        free(sfo);
+        return false;
+    }
+    size_t off = 0, size = 0;
+    bool install = len >= 4 && sigil_read_le32(sfo) == SIGIL_SFO_MAGIC &&
+                   sigil_sfo_find(sfo, len, "SAVEDATA_PARAMS", &off, &size) != SIGIL_OK &&
+                   sigil_sfo_find(sfo, len, "SAVEDATA_FILE_LIST", &off, &size) != SIGIL_OK;
+    free(sfo);
+    return install;
+}
+
 /* The area folder `base_path` lies in for `profile`, with the file's name in the unit. */
 static const sigil_layout_area *area_of(const sigil_profile_root *p, const char *profile, const char *base_path,
                                         char entry[SIGIL_SAVE_ENTRY_MAX]) {
@@ -585,6 +605,11 @@ static const sigil_layout_area *area_of(const sigil_profile_root *p, const char 
         if (!in_folder(area->template_, base_path, &v, &rest) || !save_id_fits(p, v.save_id)) continue;
         if (area->area == SIGIL_SAVE_AREA_ACCOUNT && strcmp(v.profile, profile) != 0) continue;
         if (ignored(p->row, rest) || rest[strlen(rest) - 1] == '/') return NULL;
+        char folder[SIGIL_SAVE_PATH_MAX];
+        if (p->row->savedata_only && expand(area->template_, &v, "", folder, sizeof(folder)) &&
+            game_data_install(p, folder)) {
+            return NULL;
+        }
         return expand(area->entry, &v, rest, entry, SIGIL_SAVE_ENTRY_MAX) ? area : NULL;
     }
     return NULL;

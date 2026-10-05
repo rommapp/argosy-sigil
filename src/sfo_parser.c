@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "sigil_internal.h"
 
-#define SFO_MAGIC 0x46535000u  /* "\0PSF" little-endian */
-
 int sigil_sfo_find(const uint8_t *data, size_t len, const char *key, size_t *offset, size_t *size) {
     if (!data || !key || !offset || !size) return SIGIL_ERR_INVALID_ARG;
     if (len < 20) return SIGIL_ERR_NOT_FOUND;
@@ -12,7 +10,7 @@ int sigil_sfo_find(const uint8_t *data, size_t len, const char *key, size_t *off
     uint32_t data_table_start = sigil_read_le32(data + 12);
     uint32_t entries          = sigil_read_le32(data + 16);
 
-    if (magic != SFO_MAGIC) return SIGIL_ERR_NOT_FOUND;
+    if (magic != SIGIL_SFO_MAGIC) return SIGIL_ERR_NOT_FOUND;
     if (key_table_start >= len || data_table_start >= len) return SIGIL_ERR_NOT_FOUND;
     if ((size_t)entries * 16 + 20 > len) return SIGIL_ERR_NOT_FOUND;
 

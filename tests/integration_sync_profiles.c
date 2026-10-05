@@ -788,6 +788,91 @@ static void check_rpcs3(void) {
 
 /* ---- PSP -------------------------------------------------------------------------- */
 
+/* A PARAM.SFO holding one empty string entry per key. */
+static size_t build_sfo(uint8_t *buf, size_t cap, const char *const *keys, size_t count) {
+    size_t key_table = 20 + count * 16, key_len = 0;
+    for (size_t i = 0; i < count; i++) key_len += strlen(keys[i]) + 1;
+    size_t data_table = key_table + ((key_len + 3) & ~(size_t)3);
+    size_t len = data_table + count * 4;
+    if (len > cap) return 0;
+    memset(buf, 0, len);
+    memcpy(buf, "\0PSF", 4);
+    sigil_write_le32(buf + 4, 0x00000101);
+    sigil_write_le32(buf + 8, (uint32_t)key_table);
+    sigil_write_le32(buf + 12, (uint32_t)data_table);
+    sigil_write_le32(buf + 16, (uint32_t)count);
+    size_t key_off = 0;
+    for (size_t i = 0; i < count; i++) {
+        uint8_t *e = buf + 20 + i * 16;
+        e[0] = (uint8_t)key_off;
+        e[1] = (uint8_t)(key_off >> 8);
+        e[2] = 0x04;
+        e[3] = 0x02;
+        sigil_write_le32(e + 4, 1);
+        sigil_write_le32(e + 8, 4);
+        sigil_write_le32(e + 12, (uint32_t)(i * 4));
+        memcpy(buf + key_table + key_off, keys[i], strlen(keys[i]) + 1);
+        key_off += strlen(keys[i]) + 1;
+    }
+    return len;
+}
+
+static void put_sfo(mem_root *root, const char *path, const char *const *keys, size_t count) {
+    uint8_t sfo[512];
+    size_t len = build_sfo(sfo, sizeof(sfo), keys, count);
+    if (len) root_put(root, path, sfo, len);
+}
+
+/* PPSSPP's savedata utility writes both keys into every save's PARAM.SFO;
+ * its game-data installer writes neither (PSPGamedataInstallDialog.cpp). A
+ * folder whose PARAM.SFO is missing or isn't an SFO stays with the saves. */
+static void check_psp_game_data(void) {
+    static const char *const save_keys[] = { "CATEGORY", "SAVEDATA_FILE_LIST", "SAVEDATA_PARAMS", "TITLE" };
+    static const char *const one_key[] = { "CATEGORY", "SAVEDATA_PARAMS" };
+    static const char *const install_keys[] = { "CATEGORY", "SAVEDATA_DIRECTORY", "TITLE" };
+    mem_root root = {0};
+    put_sfo(&root, "PSP/SAVEDATA/ULUS10064DATA00/PARAM.SFO", save_keys, 4);
+    put_text(&root, "PSP/SAVEDATA/ULUS10064DATA00/DATA.BIN", "save");
+    put_sfo(&root, "PSP/SAVEDATA/ULUS10064SYS/PARAM.SFO", one_key, 2);
+    put_sfo(&root, "PSP/SAVEDATA/ULUS10064INSTALL/PARAM.SFO", install_keys, 3);
+    put_text(&root, "PSP/SAVEDATA/ULUS10064INSTALL/DISC.DAT", "installed disc data");
+    put_text(&root, "PSP/SAVEDATA/ULUS10064NOSFO/DATA.BIN", "no sfo");
+    put_text(&root, "PSP/SAVEDATA/ULUS10064TEXT/PARAM.SFO", "SAVEDATA_PARAMS is only text here");
+    game g;
+    make_game(&g, &root, "ppsspp", "psp", "ULUS10064");
+    sigil_sync_result *r = NULL;
+    expect_rc("psp game data collect", collect(&g, &r), SIGIL_OK);
+    if (!unit_all(r, "ULUS10064", "INSTALL", 5) || !unit_has(r, "ULUS10064NOSFO/DATA.BIN") ||
+        !unit_has(r, "ULUS10064TEXT/PARAM.SFO") || !unit_has(r, "ULUS10064SYS/PARAM.SFO")) {
+        fail("psp game data collect", "the install folder travels, or a save folder doesn't");
+    }
+    keep_state(&g, r);
+
+    const char *const unit[] = { "ULUS10064DATA00/DATA.BIN", "played" };
+    sigil_sync_result *only_data = unit_of(unit, 1);
+    sigil_sync_result *w = NULL;
+    g.req.overwrite_local = 1;
+    expect_rc("psp game data restore", restore(&g, only_data, &w), SIGIL_OK);
+    if (!root_holds(&root, "PSP/SAVEDATA/ULUS10064INSTALL/DISC.DAT", "installed disc data")) {
+        fail("psp game data restore", "restore removed the install folder");
+    }
+    if (root_holds(&root, "PSP/SAVEDATA/ULUS10064NOSFO/DATA.BIN", "no sfo")) {
+        fail("psp game data restore", "a save folder the unit lacks stayed");
+    }
+    sigil_sync_result_free(w);
+    unit_of_free(only_data);
+
+    sigil_save_unit *located = NULL;
+    g.req.save.listing_count = root.count;
+    expect_rc("psp game data locate", sigil_save_resolve(&g.req.save, &located), SIGIL_OK);
+    for (size_t i = 0; located && i < located->member_count; i++) {
+        if (strstr(located->members[i].path, "INSTALL")) fail("psp game data locate", "the install folder is a member");
+    }
+    sigil_save_unit_free(located);
+    sigil_sync_result_free(r);
+    root_free(&root);
+}
+
 /* A memory stick: PPSSPP's, a PSP's ms0:/ or Adrenaline's ux0:pspemu/. */
 static void psp_stick(mem_root *root, const char *at) {
     char path[SIGIL_SAVE_PATH_MAX];
@@ -1086,6 +1171,7 @@ int main(void) {
     check_vita3k();
     check_rpcs3();
     check_psp();
+    check_psp_game_data();
     check_save_base();
     check_resolve();
     check_list_profiles();
