@@ -83,6 +83,9 @@ section, fails `bindings/python/test_docs.py`.
 | `mednafen_psx` | [psx](psx.md) | Beetle PSX | libretro core |
 | `pcsx_rearmed` | [psx](psx.md) | PCSX ReARMed | libretro core |
 | `vita_pops` | [psx](psx.md) | PS1 Classics on a PSP or PS Vita (POPS, Adrenaline) | console |
+| `swanstation` | [psx](psx.md) | SwanStation | libretro core |
+| `duckstation` | [psx](psx.md) | DuckStation | standalone |
+| `armsx1` | [psx](psx.md) | ARMSX1 | standalone |
 | `pcsx2` | [ps2](ps2.md) | LRPS2 | libretro core |
 | `pcsx2_standalone` | [ps2](ps2.md) | PCSX2, AetherSX2, NetherSX2, ARMSX2 | standalone |
 | `mednafen_saturn` | [saturn](saturn.md) | Beetle Saturn | libretro core |
@@ -112,9 +115,14 @@ section, fails `bindings/python/test_docs.py`.
 | `citron` | [switch](switch.md) | Citron | standalone |
 | `sudachi` | [switch](switch.md) | Sudachi | standalone |
 | `yuzu` | [switch](switch.md) | yuzu | standalone |
+| `lemon` | [switch](switch.md) | Lemon | standalone |
+| `skyline` | [switch](switch.md) | Skyline | standalone |
+| `strato` | [switch](switch.md) | Strato | standalone |
 | `cemu` | [wiiu](wiiu.md) | Cemu | standalone |
 | `vita3k` | [psvita](psvita.md) | Vita3K | standalone |
-| `rpcs3` | [ps3](ps3.md) | RPCS3, aPS3e | standalone |
+| `rpcs3` | [ps3](ps3.md) | RPCS3 | standalone |
+| `aps3e` | [ps3](ps3.md) | aPS3e | standalone |
+| `armsx3` | [ps3](ps3.md) | ARMSX3 | standalone |
 | `ppsspp` | [psp](psp.md) | PPSSPP | libretro core |
 | `ppsspp_standalone` | [psp](psp.md) | PPSSPP | standalone |
 | `psp_console` | [psp](psp.md) | PSP games on a PSP, or on a PS Vita (Adrenaline, the PSP emulator) | console |

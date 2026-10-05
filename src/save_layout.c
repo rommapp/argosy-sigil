@@ -201,6 +201,49 @@ static const sigil_layout_shared PCSX_REARMED_SHARED[] = {
     S_OPT("pcsx-card2.mcd", "pcsx_rearmed_memcard2", "shared", true),
 };
 
+/* SwanStation (libretro/swanstation libretro_host_interface.cpp, system.cpp):
+ * slot 1 is the frontend's .srm in Libretro mode, the default; either slot can
+ * be a card the core writes in the save folder, named by the disc's code
+ * (PerGame) or the content's stem (PerGameTitle), or one every game shares. */
+#define SWAN_OPT "swanstation_MemoryCards_"
+static const sigil_layout_member SWANSTATION_MEMBERS[] = {
+    M_OPT("{stem}.srm", PRIMARY, SWAN_OPT "Card1Type", "Libretro", true),
+    M_OPT("{title_id}_1.mcd", PRIMARY, SWAN_OPT "Card1Type", "PerGame", false),
+    M_OPT("{stem}_1.mcd", PRIMARY, SWAN_OPT "Card1Type", "PerGameTitle", false),
+    M_OPT("{title_id}_2.mcd", SIDECAR, SWAN_OPT "Card2Type", "PerGame", false),
+    M_OPT("{stem}_2.mcd", SIDECAR, SWAN_OPT "Card2Type", "PerGameTitle", false),
+};
+static const sigil_layout_shared SWANSTATION_SHARED[] = {
+    S_OPT("duckstation_shared_card_1.mcd", SWAN_OPT "Card1Type", "Shared", false),
+    S_OPT("duckstation_shared_card_2.mcd", SWAN_OPT "Card2Type", "Shared", false),
+};
+
+/* DuckStation (stenzek/duckstation settings.cpp, system.cpp), rooted at the
+ * data folder holding memcards/: [MemoryCards] Card1Type defaults to
+ * PerGameTitle, which names the card after the game database's title and
+ * after the file's stem only for a game the database lacks; PerGame names it
+ * by serial and PerGameFileTitle by stem. Card2Type defaults to None. */
+#define DUCK_CARD(slot, role, title_default)                                                     \
+    M_OPT("memcards/{stem}_" slot ".mcd", role, "Card" slot "Type", "PerGameTitle", title_default), \
+    M_OPT("memcards/{title_id}_" slot ".mcd", role, "Card" slot "Type", "PerGame", false),         \
+    M_OPT("memcards/{stem}_" slot ".mcd", role, "Card" slot "Type", "PerGameFileTitle", false)
+static const sigil_layout_member DUCKSTATION_MEMBERS[] = {
+    DUCK_CARD("1", PRIMARY, true),
+    DUCK_CARD("2", SIDECAR, false),
+};
+static const sigil_layout_shared DUCKSTATION_SHARED[] = {
+    S_OPT("memcards/shared_card_1.mcd", "Card1Type", "Shared", false),
+    S_OPT("memcards/shared_card_2.mcd", "Card2Type", "Shared", false),
+};
+static const char *const DUCKSTATION_SUBDIRS[] = { "memcards" };
+
+/* ARMSX1 (ARMSX2/ARMSX1 frontend/main.cpp): two 128 KiB cards every game
+ * shares, directly in the app's private files folder. */
+static const sigil_layout_shared ARMSX1_SHARED[] = {
+    S("slot1.mcd"),
+    S("slot2.mcd"),
+};
+
 /* PS1 classics on a PSP, and on a Vita through its PSP emulator (official
  * PS1 Classics and Adrenaline): PSP/SAVEDATA/<DISC_ID>/ under ms0:/ or
  * ux0:pspemu/, slot 1 in SCEVMC0.VMP and slot 2 in SCEVMC1.VMP. DISC_ID is the
@@ -320,6 +363,21 @@ static const char *const YUZU_SUBDIRS[] = {
     "nand/user/save/0000000000000000", "nand/system/save/8000000000000010/su/avators",
 };
 
+/* Skyline and its continuation Strato (services/fssrv/IFileSystemProxy.cpp,
+ * services/account/IAccountServiceForApplication.h): yuzu's tree under
+ * switch/nand/, with one user every game runs as and no profile list. A unit
+ * names its folders as the yuzu forks' does. */
+static const sigil_layout_area SKYLINE_AREAS[] = {
+    { "switch/nand/user/save/0000000000000000/{profile}/{save_id}/", "{save_id}/", SIGIL_SAVE_AREA_ACCOUNT, false,
+      NULL },
+    { "switch/nand/user/save/0000000000000000/00000000000000000000000000000000/{save_id}/", "device/{save_id}/",
+      SIGIL_SAVE_AREA_DEVICE, false, NULL },
+};
+static const sigil_layout_profiles SKYLINE_PROFILES = {
+    "switch", 0, NULL, SKYLINE_AREAS, COUNT(SKYLINE_AREAS), NULL, 0, false, false, "00000000000000000000000000000001",
+};
+static const char *const SKYLINE_SUBDIRS[] = { "switch/nand/user/save/0000000000000000" };
+
 /* Cemu (src/Cafe/TitleList/SaveInfo.cpp, Account.cpp): the mlc's
  * usr/save/00050000/<title low>/ holds meta/, user/<persistent id>/ per
  * account and user/common/ for every account. Cemu writes meta/ again when
@@ -430,6 +488,9 @@ static const sigil_layout LAYOUTS[] = {
     ROW_SHARED("mednafen_psx", NULL, BEETLE_PSX_MEMBERS, BEETLE_PSX_SHARED),
     ROW_SHARED("pcsx_rearmed", NULL, PCSX_REARMED_MEMBERS, PCSX_REARMED_SHARED),
     ROW_DIRS("vita_pops", "psx", VITA_POPS_MEMBERS, VITA_POPS_SUBDIRS),
+    ROW_SHARED("swanstation", "psx", SWANSTATION_MEMBERS, SWANSTATION_SHARED),
+    ROW_FULL("duckstation", "psx", DUCKSTATION_MEMBERS, DUCKSTATION_SHARED, DUCKSTATION_SUBDIRS),
+    { "armsx1", "psx", NULL, 0, ARMSX1_SHARED, COUNT(ARMSX1_SHARED), NULL, 0, NULL },
     ROW_SHARED("pcsx2", NULL, LRPS2_MEMBERS, LRPS2_SHARED),
     { "pcsx2_standalone", "ps2", NULL, 0, PCSX2_STANDALONE_SHARED, COUNT(PCSX2_STANDALONE_SHARED),
       PCSX2_STANDALONE_SUBDIRS, COUNT(PCSX2_STANDALONE_SUBDIRS), NULL },
@@ -464,9 +525,15 @@ static const sigil_layout LAYOUTS[] = {
     ROW_PROFILES("citron", "switch", YUZU_SUBDIRS, YUZU_PROFILES),
     ROW_PROFILES("sudachi", "switch", YUZU_SUBDIRS, YUZU_PROFILES),
     ROW_PROFILES("yuzu", "switch", YUZU_SUBDIRS, YUZU_PROFILES),
+    ROW_PROFILES("lemon", "switch", YUZU_SUBDIRS, YUZU_PROFILES),
+    ROW_PROFILES("skyline", "switch", SKYLINE_SUBDIRS, SKYLINE_PROFILES),
+    ROW_PROFILES("strato", "switch", SKYLINE_SUBDIRS, SKYLINE_PROFILES),
     ROW_PROFILES("cemu", "wiiu", CEMU_SUBDIRS, CEMU_PROFILES),
     ROW_PROFILES("vita3k", "psvita", VITA3K_SUBDIRS, VITA3K_PROFILES),
     ROW_PROFILES("rpcs3", "ps3", RPCS3_SUBDIRS, RPCS3_PROFILES),
+    /* aPS3e (aenu1/aps3e) and ARMSX3 keep RPCS3's tree under their config/ folder, user 00000001. */
+    ROW_PROFILES("aps3e", "ps3", RPCS3_SUBDIRS, RPCS3_PROFILES),
+    ROW_PROFILES("armsx3", "ps3", RPCS3_SUBDIRS, RPCS3_PROFILES),
     ROW_PROFILES("ppsspp", "psp", PSP_SUBDIRS, PSP_FOLDERS),
     ROW_PROFILES("ppsspp_standalone", "psp", PSP_SUBDIRS, PSP_FOLDERS),
     ROW_PROFILES("psp_console", "psp", PSP_SUBDIRS, PSP_FOLDERS),

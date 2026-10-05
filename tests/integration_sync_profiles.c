@@ -786,6 +786,55 @@ static void check_rpcs3(void) {
     root_free(&root);
 }
 
+/* ---- Skyline and Strato ----------------------------------------------------------- */
+
+#define SKY_SAVES "switch/nand/user/save/0000000000000000/"
+#define SKY_USER  "00000000000000000000000000000001"
+#define SKY_TITLE "0100ABCD12345000"
+
+/* One user every game runs as, no profile list: a save collects under the
+ * yuzu forks' names and restores into a data folder that has no user folder
+ * yet, and a yuzu-fork unit restores here unchanged. */
+static void check_skyline(void) {
+    mem_root root = {0};
+    put_text(&root, SKY_SAVES SKY_USER "/" SKY_TITLE "/save.bin", "account");
+    put_text(&root, SKY_SAVES "00000000000000000000000000000000/" SKY_TITLE "/shared.bin", "device");
+    game g;
+    make_game(&g, &root, "strato", "switch", SKY_TITLE);
+    sigil_sync_result *r = NULL;
+    expect_rc("strato collect", collect(&g, &r), SIGIL_OK);
+    if (!r || strcmp(r->profile, SKY_USER) != 0) fail("strato collect", "the fixed user");
+    if (!unit_has(r, SKY_TITLE "/save.bin") || !unit_has(r, "device/" SKY_TITLE "/shared.bin")) {
+        fail("strato collect", "unit names");
+    }
+
+    mem_root fresh = {0};
+    game t;
+    make_game(&t, &fresh, "skyline", "switch", SKY_TITLE);
+    sigil_sync_result *w = NULL;
+    expect_rc("skyline restore to a fresh folder", restore(&t, r, &w), SIGIL_OK);
+    if (!root_holds(&fresh, SKY_SAVES SKY_USER "/" SKY_TITLE "/save.bin", "account")) {
+        fail("skyline restore to a fresh folder", "account save");
+    }
+    sigil_sync_result_free(w);
+
+    const char *const yuzu_unit[] = { SKY_TITLE "/save.bin", "from eden" };
+    sigil_sync_result *eden = unit_of(yuzu_unit, 1);
+    mem_root other = {0};
+    make_game(&t, &other, "strato", "switch", SKY_TITLE);
+    w = NULL;
+    expect_rc("yuzu-fork unit into strato", restore(&t, eden, &w), SIGIL_OK);
+    if (!root_holds(&other, SKY_SAVES SKY_USER "/" SKY_TITLE "/save.bin", "from eden")) {
+        fail("yuzu-fork unit into strato", "account save");
+    }
+    sigil_sync_result_free(w);
+    unit_of_free(eden);
+    sigil_sync_result_free(r);
+    root_free(&other);
+    root_free(&fresh);
+    root_free(&root);
+}
+
 /* ---- PSP -------------------------------------------------------------------------- */
 
 /* A PARAM.SFO holding one empty string entry per key. */
@@ -1172,6 +1221,7 @@ int main(void) {
     check_rpcs3();
     check_psp();
     check_psp_game_data();
+    check_skyline();
     check_save_base();
     check_resolve();
     check_list_profiles();

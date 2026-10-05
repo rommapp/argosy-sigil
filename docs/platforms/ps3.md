@@ -37,6 +37,7 @@ enumerate by prefix. PKG and encrypted-EBOOT inputs are not supported.
 | Layout | Files (role, option) | Shared | Verified |
 |---|---|---|---|
 | `rpcs3` | folders per profile: `dev_hdd0/home/{profile}/savedata/<every folder starting with {save_id}>/` | | emulator source |
+| `aps3e`, `armsx3` | as `rpcs3`, rooted at the app's `config/` folder (aPS3e: `files/aps3e/config/`; ARMSX3: `files/config/` or the folder the user picked), user `00000001` | | emulator source |
 
 The layout lists `dev_hdd0/home`, which `sigil_save_layout_subdirs()`
 names. The row matches `ps3` only. RPCS3 keeps a game's saves per user

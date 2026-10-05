@@ -67,6 +67,8 @@ error falls through to the file-name source when the caller sets
 | Layout | Files (role, option) | Shared | Verified |
 |---|---|---|---|
 | `eden`, `citron`, `sudachi`, `yuzu` | folders per profile, see Profiles: `nand/user/save/0000000000000000/{profile}/{save_id}/` account, `.../00000000000000000000000000000000/{save_id}/` device | | emulator source; on device (Eden and Citron on Android) |
+| `lemon` | as the yuzu forks; Lemon is an Eden fork | | emulator source |
+| `skyline`, `strato` | `switch/nand/user/save/0000000000000000/00000000000000000000000000000001/{save_id}/` account, `.../00000000000000000000000000000000/{save_id}/` device; one fixed user, no profile list | | emulator source |
 
 The layouts list `nand/user/save/0000000000000000` and
 `nand/system/save/8000000000000010/su/avators`, which
@@ -108,4 +110,6 @@ the profile's folder.
 sigil has no layout for Ryubing or for the yuzu forks' newer layout, and reads no NACP.
 
 - Ryubing (the live Ryujinx fork) names save folders by an allocated id from `imkvdb.arc`, so its restore needs that lookup, and a title it has never booted has no folder yet.
+- Lemon moves to the newer layout (`user/save/account/<uuid>/<TITLEID>/0`) when that folder exists, and lets the user move its NAND folder; the `lemon` row knows the default yuzu tree only.
+- Skyline's source is no longer published; its row follows the last version visible in Strato's history (May 2023).
 - Whether Mario Kart 8 Deluxe keeps a real device save, or only a copy of account data in the device folder, is not shown. The game's control data (NACP) declares its device save size and would settle it; reading the NACP needs more of the user's keys than sigil uses today.

@@ -558,7 +558,8 @@ int sigil_profile_root_open(const sigil_save_request *req, const sigil_layout_pr
     }
 
     int rc = SIGIL_OK;
-    if (!list_reachable(p)) folder_profiles(p);
+    if (row->fixed_profile) add_profile(p, row->fixed_profile, "");
+    else if (!list_reachable(p)) folder_profiles(p);
     else if (row->format == SIGIL_PROFILES_YUZU) rc = yuzu_profiles(p);
     else rc = file_profiles(p);
     if (rc != SIGIL_OK) return rc;

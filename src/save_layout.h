@@ -99,6 +99,7 @@ typedef struct {
     bool                     prefix;        /* {save_id} takes every folder whose name starts with it */
     bool                     savedata_only; /* a folder whose PARAM.SFO holds neither SAVEDATA_PARAMS nor
                                                SAVEDATA_FILE_LIST is installed game data, not a save */
+    const char              *fixed_profile; /* the one profile an emulator with no list always uses, or NULL */
 } sigil_layout_profiles;
 
 typedef struct {

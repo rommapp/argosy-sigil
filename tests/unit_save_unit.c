@@ -478,6 +478,14 @@ static void test_option_values(void) {
     };
     static const char *const FDS[] = { "G.srm", "G.sav", "G.ups", "G.ips" };
     static const char *const N64[] = { "G.srm", "G.rtc", "G.eep" };
+    static const char *const SWAN[] = {
+        "G.srm", "G_1.mcd", "G_2.mcd", "SLUS-00664_1.mcd", "SLUS-00664_2.mcd", "duckstation_shared_card_1.mcd",
+        "duckstation_shared_card_2.mcd",
+    };
+    static const char *const DUCK[] = {
+        "memcards/G_1.mcd", "memcards/G_2.mcd", "memcards/SLUS-00664_1.mcd", "memcards/SLUS-00664_2.mcd",
+        "memcards/shared_card_1.mcd", "memcards/shared_card_2.mcd", "memcards/Other_1.mcd",
+    };
     static const char *const POPS[] = {
         "PSP/SAVEDATA/SLUS01040/SCEVMC0.VMP", "PSP/SAVEDATA/SLUS01040/SCEVMC1.VMP", "PSP/SAVEDATA/SLUS01040/PARAM.SFO",
         "PSP/SAVEDATA/SLUS-01040/SCEVMC0.VMP",
@@ -606,6 +614,25 @@ static void test_option_values(void) {
           { 0 } },
         { "fds ips", "nestopia", "fds", "G.fds", { { "nestopia_fds_savefile_format", "ips" } }, L(FDS), { "G.ips" },
           { 0 } },
+        { "swanstation default", "swanstation", "psx", "G.cue", { { 0 } }, L(SWAN), { "G.srm" }, { 0 }, "SLUS-00664" },
+        { "swanstation per game", "swanstation", "psx", "G.cue", { { "swanstation_MemoryCards_Card1Type", "PerGame" } },
+          L(SWAN), { "SLUS-00664_1.mcd" }, { 0 }, "SLUS-00664" },
+        { "swanstation per title", "swanstation", "psx", "G.cue",
+          { { "swanstation_MemoryCards_Card1Type", "PerGameTitle" } }, L(SWAN), { "G_1.mcd" }, { 0 }, "SLUS-00664" },
+        { "swanstation slot 2", "swanstation", "psx", "G.cue", { { "swanstation_MemoryCards_Card2Type", "PerGame" } },
+          L(SWAN), { "G.srm", "SLUS-00664_2.mcd" }, { 0 }, "SLUS-00664" },
+        { "swanstation shared", "swanstation", "psx", "G.cue",
+          { { "swanstation_MemoryCards_Card1Type", "Shared" }, { "swanstation_MemoryCards_Card2Type", "Shared" } },
+          L(SWAN), { 0 }, { "duckstation_shared_card_1.mcd", "duckstation_shared_card_2.mcd" }, "SLUS-00664" },
+        { "duckstation default", "duckstation", "psx", "G.cue", { { 0 } }, L(DUCK), { "memcards/G_1.mcd" }, { 0 },
+          "SLUS-00664" },
+        { "duckstation per game", "duckstation", "psx", "G.cue", { { "Card1Type", "PerGame" }, { "Card2Type", "PerGame" } },
+          L(DUCK), { "memcards/SLUS-00664_1.mcd", "memcards/SLUS-00664_2.mcd" }, { 0 }, "SLUS-00664" },
+        { "duckstation file title", "duckstation", "psx", "G.cue", { { "Card1Type", "PerGameFileTitle" } }, L(DUCK),
+          { "memcards/G_1.mcd" }, { 0 }, "SLUS-00664" },
+        { "duckstation shared", "duckstation", "psx", "G.cue", { { "Card1Type", "Shared" } }, L(DUCK), { 0 },
+          { "memcards/shared_card_1.mcd" }, "SLUS-00664" },
+        { "armsx1", "armsx1", "psx", "G.cue", { { 0 } }, L(SWAN), { 0 }, { 0 }, "SLUS-00664" },
         { "mupen64plus_next", "mupen64plus_next", "n64", "G.z64", { { 0 } }, L(N64), { "G.srm" }, { 0 } },
         { "parallel_n64", "parallel_n64", "n64", "G.z64", { { 0 } }, L(N64), { "G.srm" }, { 0 } },
         { "vita pops", "vita_pops", "psx", "Vagrant Story (USA).cue", { { 0 } }, L(POPS),

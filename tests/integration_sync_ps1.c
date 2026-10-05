@@ -463,6 +463,41 @@ static uint8_t *card_of(const uint8_t *const *mcs, const size_t *len, size_t cou
     return out;
 }
 
+/* DuckStation's PerGame card, named by the disc's code under memcards/,
+ * collects and goes back to that name in an empty data folder. */
+static void check_duckstation(void) {
+    size_t len = 0;
+    uint8_t *card = sample("xenogears-full-mcd", &len);
+    if (!card) return;
+    mem_root root = {0};
+    root_put(&root, "memcards/SLUS-00664_1.mcd", card, len);
+    game g;
+    make_game(&g, &root, "duckstation", "Xenogears (USA) (Disc 1).cue", "SLUS-00664", XENOGEARS, 2);
+    g.options[0] = (sigil_save_option){ "Card1Type", "PerGame" };
+    g.req.save.options = g.options;
+    g.req.save.option_count = 1;
+    sigil_sync_result *unit = NULL, *r = NULL;
+    if (sigil_collect(&g.req, &unit) != SIGIL_OK || !unit->data) {
+        fail("duckstation", "collect failed");
+    } else {
+        check_unit_entries("duckstation", unit->data, unit->len, "xenogears-full-mcd", XENOGEARS, 2);
+        mem_root empty = {0};
+        game fresh;
+        make_game(&fresh, &empty, "duckstation", "Xenogears (USA) (Disc 1).cue", "SLUS-00664", XENOGEARS, 2);
+        fresh.options[0] = g.options[0];
+        fresh.req.save.options = fresh.options;
+        fresh.req.save.option_count = 1;
+        if (sigil_restore(&fresh.req, unit->data, unit->len, &r) != SIGIL_OK || !root_find(&empty, "memcards/SLUS-00664_1.mcd")) {
+            fail("duckstation", "restore didn't write the card DuckStation reads");
+        }
+        root_free(&empty);
+    }
+    sigil_sync_result_free(r);
+    sigil_sync_result_free(unit);
+    root_free(&root);
+    free(card);
+}
+
 #define XENO_STEM "Xenogears (USA) (Disc 1)"
 
 static void beetle_two_cards(game *g) {
@@ -1159,6 +1194,7 @@ int main(void) {
     check_unit_rules();
     check_restore_to_slot_2();
     check_argosy_uploads();
+    check_duckstation();
     check_faulty_writes(first);
     check_unreadable_card();
     check_wrapped_cards();
