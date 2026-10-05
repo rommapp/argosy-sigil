@@ -150,15 +150,47 @@ static bool placed_twice(const incoming_unit *u, size_t i) {
     return false;
 }
 
+/* Switch titles that keep their save on the device rather than the account.
+ * Argosy's uploads from before it used sigil hold one folder rooted at
+ * <title>/, and for these titles that folder is the device save
+ * (argosy-launcher SwitchSaveHandler DEVICE_SAVE_TITLE_IDS). */
+static const char *const SWITCH_DEVICE_TITLES[] = {
+    "01006F8002326000", "0100D2F00D5C0000", "01000320000CC000", "01002FF008C24000", "0100C4B0034B2000",
+    "01009AB0034E0000", "01001E9003502000", "0100165003504000", "0100C1800A9B6000",
+};
+
+/* The unit is such an upload: a Switch device-save title with no device/ member. */
+static bool argosy_device_unit(const sigil_sync_ctx *x, const profile_sync *s, const incoming_unit *u) {
+    if (!x->kind->platform || strcmp(x->kind->platform, "switch") != 0) return false;
+    bool listed = false;
+    for (size_t i = 0; i < sizeof(SWITCH_DEVICE_TITLES) / sizeof(SWITCH_DEVICE_TITLES[0]) && !listed; i++) {
+        listed = strcasecmp(SWITCH_DEVICE_TITLES[i], s->root.save_id) == 0;
+    }
+    for (size_t i = 0; i < u->count && listed; i++) {
+        if (strncmp(u->members[i].name, "device/", 7) == 0) return false;
+    }
+    return listed;
+}
+
 /* Reads the unit and places each member, before anything is written. A
  * member no folder of the game takes, or one with no folder the root
  * reaches, is SIGIL_ERR_NO_TARGET; an account member with several profiles
  * and none picked is SIGIL_ERR_AMBIGUOUS; one whose path leaves the root is
  * SIGIL_ERR_IO; two members for one file are SIGIL_ERR_UNSUPPORTED_FORMAT. */
-static int read_unit(const profile_sync *s, const uint8_t *unit, size_t len, incoming_unit *u, sigil_sync_result *r) {
+static int read_unit(const sigil_sync_ctx *x, const profile_sync *s, const uint8_t *unit, size_t len,
+                     incoming_unit *u, sigil_sync_result *r) {
     memset(u, 0, sizeof(*u));
     int rc = sigil_zip_read_mem(unit, len, PROFILE_MAX_MEMBER, &u->members, &u->count);
     if (rc != SIGIL_OK) return rc;
+    if (argosy_device_unit(x, s, u)) {
+        for (size_t i = 0; i < u->count; i++) {
+            char named[sizeof(u->members[i].name)];
+            if (snprintf(named, sizeof(named), "device/%s", u->members[i].name) >= (int)sizeof(named)) {
+                return SIGIL_ERR_UNSUPPORTED_FORMAT;
+            }
+            memcpy(u->members[i].name, named, sizeof(named));
+        }
+    }
     u->paths = calloc(u->count ? u->count : 1, SIGIL_SAVE_PATH_MAX);
     u->areas = (int *)calloc(u->count ? u->count : 1, sizeof(*u->areas));
     u->parts = (sigil_named_md5 *)calloc(u->count ? u->count : 1, sizeof(*u->parts));
@@ -286,7 +318,7 @@ int sigil_sync_restore_profiles(sigil_sync_ctx *x, const sigil_layout_profiles *
     memset(&u, 0, sizeof(u));
     memset(&l, 0, sizeof(l));
     int rc = open_sync(x, row, &s, r);
-    if (rc == SIGIL_OK) rc = read_unit(&s, unit, len, &u, r);
+    if (rc == SIGIL_OK) rc = read_unit(x, &s, unit, len, &u, r);
     if (rc == SIGIL_OK) rc = read_local(x, &s, &l);
     bool already = false;
     if (rc == SIGIL_OK) {

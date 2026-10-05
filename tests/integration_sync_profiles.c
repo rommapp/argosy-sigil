@@ -835,6 +835,38 @@ static void check_skyline(void) {
     root_free(&root);
 }
 
+/* Argosy's uploads from before it used sigil hold one folder rooted at
+ * <title>/. For the titles that keep their save on the device it is the
+ * device save; for every other title, the account save. */
+static void check_switch_argosy_uploads(void) {
+    const char *const acnh[] = { "01006F8002326000/main.dat", "island" };
+    sigil_sync_result *old = unit_of(acnh, 1);
+    mem_root root = {0};
+    game g;
+    make_game(&g, &root, "strato", "switch", "01006F8002326000");
+    sigil_sync_result *w = NULL;
+    expect_rc("argosy switch device title", restore(&g, old, &w), SIGIL_OK);
+    if (!root_holds(&root, SKY_SAVES "00000000000000000000000000000000/01006F8002326000/main.dat", "island")) {
+        fail("argosy switch device title", "not the device save");
+    }
+    sigil_sync_result_free(w);
+    unit_of_free(old);
+    root_free(&root);
+
+    const char *const other[] = { SKY_TITLE "/main.dat", "progress" };
+    old = unit_of(other, 1);
+    memset(&root, 0, sizeof(root));
+    make_game(&g, &root, "strato", "switch", SKY_TITLE);
+    w = NULL;
+    expect_rc("argosy switch other title", restore(&g, old, &w), SIGIL_OK);
+    if (!root_holds(&root, SKY_SAVES SKY_USER "/" SKY_TITLE "/main.dat", "progress")) {
+        fail("argosy switch other title", "not the account save");
+    }
+    sigil_sync_result_free(w);
+    unit_of_free(old);
+    root_free(&root);
+}
+
 /* ---- Ryujinx ---------------------------------------------------------------------- */
 
 #define RYU_INDEX "bis/system/save/8000000000000000/0/imkvdb.arc"
@@ -1368,6 +1400,7 @@ int main(void) {
     check_psp();
     check_psp_game_data();
     check_skyline();
+    check_switch_argosy_uploads();
     check_ryujinx();
     check_3ds();
     check_save_base();
