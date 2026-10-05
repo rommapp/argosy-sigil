@@ -69,6 +69,10 @@ own. It does not fit a standalone emulator missing from the table: the
 default row names a `.srm` the emulator never writes, so locate finds
 nothing and restore writes a file the emulator doesn't read.
 
+`libretro` names the default row on purpose, for every call: a client
+can keep a core on it after the core gets a row of its own, until the
+client is ready for the new row's units. No row ever takes that id.
+
 Every layout id `src/save_layout.c` defines, and the page that documents
 it. A layout id without a row here, or missing from its page's Save layouts
 section, fails `bindings/python/test_docs.py`.

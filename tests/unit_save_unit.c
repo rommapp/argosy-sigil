@@ -633,6 +633,8 @@ static void test_option_values(void) {
         { "duckstation shared", "duckstation", "psx", "G.cue", { { "Card1Type", "Shared" } }, L(DUCK), { 0 },
           { "memcards/shared_card_1.mcd" }, "SLUS-00664" },
         { "armsx1", "armsx1", "psx", "G.cue", { { 0 } }, L(SWAN), { 0 }, { 0 }, "SLUS-00664" },
+        { "libretro names the default row", "libretro", "psx", "G.cue",
+          { { "swanstation_MemoryCards_Card1Type", "PerGame" } }, L(SWAN), { "G.srm" }, { 0 }, "SLUS-00664" },
         { "mupen64plus_next", "mupen64plus_next", "n64", "G.z64", { { 0 } }, L(N64), { "G.srm" }, { 0 } },
         { "parallel_n64", "parallel_n64", "n64", "G.z64", { { 0 } }, L(N64), { "G.srm" }, { 0 } },
         { "vita pops", "vita_pops", "psx", "Vagrant Story (USA).cue", { { 0 } }, L(POPS),
