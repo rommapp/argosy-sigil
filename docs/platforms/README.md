@@ -80,6 +80,10 @@ section, fails `bindings/python/test_docs.py`.
 | Layout | Page | Emulator | Kind |
 |---|---|---|---|
 | `vba_next` | [gba](gba.md) | VBA Next | libretro core |
+| `mgba_standalone` | [gb](gb.md) | mGBA | standalone |
+| `vbam_standalone` | [gb](gb.md) | VBA-M | standalone |
+| `sameboy_standalone` | [gb](gb.md) | SameBoy | standalone |
+| `gearboy_standalone` | [gb](gb.md) | Gearboy | standalone |
 | `gpsp` | [gba](gba.md) | gpSP | libretro core |
 | `bsnes` | [snes](snes.md) | bsnes | libretro core |
 | `genesis_plus_gx` | [segacd](segacd.md) | Genesis Plus GX, Sega CD games | libretro core |

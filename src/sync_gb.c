@@ -62,16 +62,25 @@ static bool clock_cart(const sigil_sync_request *req) {
 }
 
 /* Cart RAM sizes are multiples of 512 bytes; standalone mGBA, VBA-M, SameBoy
- * and Gearboy append the clock to the .sav. The footer's length, or 0. */
+ * and Gearboy append the clock to the .sav, and write the clock alone for a
+ * cart with a clock and no RAM. The footer's length, or 0. */
 static size_t footer_of(size_t len) {
     if (len % 512 == 0) return 0;
-    if (len > 48 && (len - 48) % 512 == 0) return 48;
-    if (len > 44 && (len - 44) % 512 == 0) return 44;
+    if (len >= 48 && (len - 48) % 512 == 0) return 48;
+    if (len >= 44 && (len - 44) % 512 == 0) return 44;
     return 0;
 }
 
-/* Takes RAM, with a clock footer when it has one. */
-static int take_ram(gb_save *s, const uint8_t *data, size_t len) {
+/* The pairing a .sav's 48-byte clock footer uses: mGBA's own, VBA's for
+ * VBA-M, SameBoy, Gearboy and a .sav from an emulator sigil doesn't know. */
+static sigil_gb_clock_format footer_format(const char *layout) {
+    return layout && strcmp(layout, "mgba_standalone") == 0 ? SIGIL_GB_CLOCK_MGBA : SIGIL_GB_CLOCK_VBA;
+}
+
+/* Takes RAM, with a clock footer in `pairing` when it has one. An empty file
+ * (mGBA leaves one for a cart without RAM) holds no save. */
+static int take_ram(gb_save *s, const uint8_t *data, size_t len, sigil_gb_clock_format pairing) {
+    if (!len) return SIGIL_OK;
     size_t footer = footer_of(len);
     free(s->ram);
     s->ram_len = len - footer;
@@ -80,7 +89,7 @@ static int take_ram(gb_save *s, const uint8_t *data, size_t len) {
     memcpy(s->ram, data, s->ram_len);
     if (!footer) return SIGIL_OK;
     bool lossy = false;
-    sigil_gb_clock_format format = footer == 48 ? SIGIL_GB_CLOCK_VBA : SIGIL_GB_CLOCK_VBA32;
+    sigil_gb_clock_format format = footer == 48 ? pairing : SIGIL_GB_CLOCK_VBA32;
     s->has_clock = sigil_gb_clock_read(format, data + s->ram_len, footer, 0, &s->clock, &lossy) == SIGIL_OK;
     return SIGIL_OK;
 }
@@ -127,7 +136,7 @@ static int read_local(const sigil_sync_request *req, const gb_files *f, gb_save 
     int rc = SIGIL_OK;
     if (f->ram_present) {
         rc = sigil_sync_read_file(req, f->ram, GB_MAX_RAM + 64, &data, &len);
-        if (rc == SIGIL_OK) rc = take_ram(s, data, len);
+        if (rc == SIGIL_OK) rc = take_ram(s, data, len, footer_format(req->save.layout));
         free(data);
     }
     if (rc == SIGIL_OK && f->rtc_present) {
@@ -205,7 +214,7 @@ static int read_unit(const uint8_t *unit, size_t len, size_t received_len, gb_sa
     if (len < 4 || sigil_read_le32(unit) != 0x04034b50u) {
         sigil_md5_of(unit, received_len, r->content_hash);
         r->shape = SIGIL_SAVE_SHAPE_SINGLE;
-        return len ? take_ram(s, unit, len) : SIGIL_ERR_NOT_FOUND;
+        return len ? take_ram(s, unit, len, SIGIL_GB_CLOCK_VBA) : SIGIL_ERR_NOT_FOUND;
     }
     sigil_zip_member *members = NULL;
     size_t count = 0;
@@ -217,7 +226,7 @@ static int read_unit(const uint8_t *unit, size_t len, size_t received_len, gb_sa
         snprintf(parts[i].name, sizeof(parts[i].name), "%s", m->name);
         sigil_md5_of(m->data, m->len, parts[i].md5);
         if (strcmp(m->name, GB_SRAM_NAME) == 0 || ends_with(m->name, ".srm") || ends_with(m->name, ".sav")) {
-            rc = take_ram(s, m->data, m->len);
+            rc = take_ram(s, m->data, m->len, SIGIL_GB_CLOCK_VBA);
         } else if (strcmp(m->name, GB_CLOCK_NAME) == 0) {
             rc = take_clock(s, SIGIL_GB_CLOCK_VBA, m->data, m->len);
         } else if (ends_with(m->name, ".rtc")) {
@@ -249,6 +258,23 @@ static int target_clock(const sigil_sync_request *req, const gb_files *f, const 
     return core_clock(req->save.layout);
 }
 
+/* The bytes of the RAM file: the RAM alone, or on a .sav for a clock cart
+ * the RAM and the clock in the emulator's footer, the unit's clock or else
+ * the one already there. A cart without a clock never gets a footer: VBA-M
+ * stops saving a cart whose file runs past its RAM. */
+static int ram_file(const sigil_sync_request *req, const char *path, const gb_save *in, const gb_save *local,
+                    uint8_t **out, size_t *len) {
+    const gb_save *timed = in->has_clock ? in : local->has_clock ? local : NULL;
+    bool footer = ends_with(path, ".sav") && clock_cart(req) && timed;
+    *len = in->ram_len + (footer ? 48 : 0);
+    *out = (uint8_t *)malloc(*len ? *len : 1);
+    if (!*out) return SIGIL_ERR_OOM;
+    memcpy(*out, in->ram, in->ram_len);
+    bool lossy = false;
+    return footer ? sigil_gb_clock_write(footer_format(req->save.layout), &timed->clock, *out + in->ram_len, &lossy)
+                  : SIGIL_OK;
+}
+
 int sigil_sync_restore_gb(sigil_sync_ctx *x, const uint8_t *unit, size_t len, size_t received_len,
                           sigil_sync_result *r, char local_identity[33]) {
     gb_save in, local;
@@ -272,9 +298,13 @@ int sigil_sync_restore_gb(sigil_sync_ctx *x, const uint8_t *unit, size_t len, si
         snprintf(r->problem, sizeof(r->problem), "%s", GB_SRAM_NAME);
         rc = SIGIL_ERR_NO_TARGET;
     }
-    if (rc == SIGIL_OK && !already && !sigil_sync_file_holds(x->req, f.ram, in.ram, in.ram_len)) {
-        rc = sigil_sync_put(x->req, f.ram, in.ram, in.ram_len);
+    uint8_t *file = NULL;
+    size_t file_len = 0;
+    if (rc == SIGIL_OK && !already) rc = ram_file(x->req, f.ram, &in, &local, &file, &file_len);
+    if (rc == SIGIL_OK && !already && !sigil_sync_file_holds(x->req, f.ram, file, file_len)) {
+        rc = sigil_sync_put(x->req, f.ram, file, file_len);
     }
+    free(file);
     int format = rc == SIGIL_OK && !already ? target_clock(x->req, &f, &in) : -1;
     if (format >= 0) {
         uint8_t clock[64];

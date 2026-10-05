@@ -297,6 +297,15 @@ static const sigil_layout_member MELONDS_MEMBERS[] = {
     M("{stem}.sav", PRIMARY),
 };
 
+/* Standalone mGBA, VBA-M, SameBoy and Gearboy keep a GB or GBC cart's RAM in
+ * {stem}.sav with the MBC3 clock appended (mGBA mbc.c, VBA-M gb.cpp, SameBoy
+ * Core/gb.c, Gearboy MBC3MemoryRule.cpp). mGBA, VBA-M and SameBoy save
+ * beside the ROM unless a save folder is set; Gearboy saves in its own
+ * folder by default. The root is whichever folder holds the .sav. */
+static const sigil_layout_member SAV_MEMBERS[] = {
+    M("{stem}.sav", PRIMARY),
+};
+
 static const sigil_layout_member FBNEO_MEMBERS[] = {
     M("fbneo/{romset}.fs", PRIMARY),
     M("fbneo/{romset}.nv", SIDECAR),
@@ -519,6 +528,10 @@ static const sigil_layout LIBRETRO_DEFAULT = ROW("libretro", NULL, LIBRETRO_DEFA
 
 static const sigil_layout LAYOUTS[] = {
     ROW("vba_next", NULL, SRM_ONLY_MEMBERS),
+    ROW("mgba_standalone", NULL, SAV_MEMBERS),
+    ROW("vbam_standalone", NULL, SAV_MEMBERS),
+    ROW("sameboy_standalone", NULL, SAV_MEMBERS),
+    ROW("gearboy_standalone", NULL, SAV_MEMBERS),
     ROW("gpsp", NULL, SRM_ONLY_MEMBERS),
     ROW("bsnes", "snes", BSNES_SNES_MEMBERS),
     ROW_REGION("genesis_plus_gx", "segacd", GPGX_SEGACD_MEMBERS, GPGX_SEGACD_SHARED, "genesis_plus_gx_region_detect"),

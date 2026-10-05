@@ -31,9 +31,20 @@ Rows from the [layout table](../save-units.md). The default row applies to any c
 |---|---|---|---|
 | default | `{stem}.srm` primary; `{stem}.rtc` rtc | | emulator source |
 | `vba_next`, `gpsp` | `{stem}.srm` primary | | emulator source |
+| `mgba_standalone`, `vbam_standalone`, `sameboy_standalone`, `gearboy_standalone` | `{stem}.sav` primary: the RAM, then the clock on a clock cart | | emulator source |
 
 `vba_next` and `gpsp` expose no clock region, so their rows have no
 `.rtc`.
+
+The standalone emulators keep the clock at the end of the `.sav` in the
+48-byte VBA layout: VBA-M, SameBoy and Gearboy pair the time with the
+current registers, mGBA with the latched ones. None writes a separate
+`.rtc`. mGBA, VBA-M and SameBoy save beside the ROM unless a save folder
+is set (mGBA `savegamePath`, VBA-M `BatteryDir`; SameBoy has no setting).
+Gearboy saves in its own folder by default (`SaveFilesDirOption`), its
+preferences folder unless set to the ROM's. Pass whichever folder holds
+the `.sav` as the save root. mGBA leaves an empty `.sav` for a cart
+without RAM; it holds no save.
 
 ## RetroArch behaviour
 
@@ -82,14 +93,19 @@ else the core's. For a core sigil has no format for and no `.rtc` there,
 it writes the RAM alone. A unit without `clock.rtc` leaves the clock on
 disk as it is.
 
-Restore also reads a `.sav` with the clock appended (mGBA, VBA-M, SameBoy
-and Gearboy standalone), and a zip of an emulator's `.srm` and `.rtc`, as
-clients uploaded before sigil.
+On the standalone rows restore writes one `.sav`: the RAM, and on a clock
+cart the unit's clock in the emulator's footer, or the clock already there
+when the unit has none. A cart without a clock never gets a footer, since
+VBA-M stops saving a cart whose file runs past its RAM.
+
+Restore also reads a `.sav` with the clock appended and a zip of an
+emulator's `.srm` and `.rtc`, as clients uploaded before sigil.
 
 ## Open items
 
 - A clock format can't hold all of the neutral clock: gambatte drops halt and carry, Mesen2 the latched registers, TGB Dual the wall time. Restore writes what the format holds and doesn't report what it dropped.
-- Standalone emulators (mGBA, VBA-M, SameBoy, Gearboy) have no layout rows; restore reads their `.sav` but can't write one.
+- RAM size differs between emulators for a cart whose header says 2 KiB (mGBA and Gearboy keep 8 KiB, SameBoy and VBA-M 2 KiB) and for MBC2 (mGBA packs it into 256 bytes, VBA-M and SameBoy keep 512). The same progress then gives a different unit per emulator; sigil doesn't convert between them.
+- HuC3, TAMA5 and TPP1 clocks are left in the RAM file as each emulator wrote them, not converted.
 - RetroArch's RZIP-compressed saves aren't read.
 
 - Pizza Boy A/C: closed source, format and RTC handling unknown.

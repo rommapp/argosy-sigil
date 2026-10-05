@@ -289,6 +289,150 @@ static void check_clock_cart_without_clock(void) {
     free(rtc);
 }
 
+/* Standalone mGBA, VBA-M, SameBoy and Gearboy: one .sav, the clock appended
+ * on a clock cart in each one's pairing, nothing appended otherwise. */
+static void check_standalone(void) {
+    static const char *const LAYOUTS[] = { "mgba_standalone", "vbam_standalone", "sameboy_standalone", "gearboy_standalone" };
+    size_t ram_len = 0, rtc_len = 0, sav_len = 0;
+    uint8_t *ram = corpus_sample(&g_gbc, "gbc", "crystal-mgba", CRYSTAL ".srm", &ram_len);
+    uint8_t *rtc = corpus_sample(&g_gbc, "gbc", "crystal-mgba", CRYSTAL ".rtc", &rtc_len);
+    uint8_t *sav = corpus_sample(&g_gbc, "gbc", "crystal-sav-footer-constructed", NULL, &sav_len);
+    if (!ram || !rtc || !sav) {
+        free(ram);
+        free(rtc);
+        free(sav);
+        return;
+    }
+    mem_root pair = {0};
+    root_put(&pair, CRYSTAL ".srm", ram, ram_len);
+    root_put(&pair, CRYSTAL ".rtc", rtc, rtc_len);
+    sigil_sync_result *unit = collect_crystal(&pair, "mgba");
+    sigil_gb_clock want;
+    bool lossy = false;
+    sigil_gb_clock_read(SIGIL_GB_CLOCK_MGBA, rtc, rtc_len, 0, &want, &lossy);
+
+    mem_root vbam = {0};
+    root_put(&vbam, CRYSTAL ".sav", sav, sav_len);
+    sigil_sync_result *from_sav = collect_crystal(&vbam, "vbam_standalone");
+    sigil_gb_clock have;
+    if (!unit || !from_sav || strcmp(from_sav->identity_hash, unit->identity_hash) != 0 || !unit_clock(from_sav, &have) ||
+        clock_base(&have) != clock_base(&want)) {
+        fail("vba-m .sav", "collect gives the same RAM and clock as the mGBA core's pair");
+    }
+    sigil_sync_result_free(from_sav);
+
+    for (size_t i = 0; unit && i < sizeof(LAYOUTS) / sizeof(LAYOUTS[0]); i++) {
+        mem_root root = {0};
+        int rc = 0;
+        sigil_sync_result *w = restore_crystal(&root, LAYOUTS[i], unit->data, unit->len, &rc);
+        mem_file *f = root_find(&root, CRYSTAL ".sav");
+        uint8_t footer[48];
+        sigil_gb_clock_write(i == 0 ? SIGIL_GB_CLOCK_MGBA : SIGIL_GB_CLOCK_VBA, &want, footer, &lossy);
+        if (rc != SIGIL_OK || !f || f->len != ram_len + 48 || memcmp(f->data, ram, ram_len) != 0 ||
+            memcmp(f->data + ram_len, footer, 48) != 0 || root.count != 1) {
+            fail(LAYOUTS[i], "the .sav is the RAM and the clock in the emulator's footer, nothing else");
+        }
+        sigil_sync_result *back = collect_crystal(&root, LAYOUTS[i]);
+        if (!back || strcmp(back->identity_hash, unit->identity_hash) != 0 || !unit_clock(back, &have) ||
+            clock_base(&have) != clock_base(&want)) {
+            fail(LAYOUTS[i], "collects back other saves");
+        }
+        sigil_sync_result_free(back);
+        sigil_sync_result_free(w);
+        root_free(&root);
+    }
+
+    /* mGBA's footer pairs the time with the latched registers, both ways. */
+    uint8_t *latched_sav = (uint8_t *)malloc(sav_len);
+    memcpy(latched_sav, sav, sav_len);
+    sigil_write_le32(latched_sav + ram_len + 20, 7);
+    mem_root mgba = {0};
+    root_put(&mgba, CRYSTAL ".sav", latched_sav, sav_len);
+    sigil_sync_result *paired = collect_crystal(&mgba, "mgba_standalone");
+    if (!unit_clock(paired, &have) || have.seconds != 7) fail("mgba .sav", "the latched registers aren't read as the clock");
+    mem_root again = {0};
+    int rc_again = 0;
+    sigil_sync_result *wa = paired ? restore_crystal(&again, "mgba_standalone", paired->data, paired->len, &rc_again) : NULL;
+    mem_file *fa = root_find(&again, CRYSTAL ".sav");
+    if (rc_again != SIGIL_OK || !fa || fa->len != sav_len || sigil_read_le32(fa->data + ram_len + 20) != 7) {
+        fail("mgba .sav", "the clock isn't written back in mGBA's latched slot");
+    }
+    sigil_sync_result_free(wa);
+    sigil_sync_result_free(paired);
+    root_free(&again);
+    root_free(&mgba);
+    free(latched_sav);
+
+    /* A unit without a clock keeps the footer on disk. */
+    mem_root kept = {0};
+    uint8_t *older = (uint8_t *)malloc(sav_len);
+    memcpy(older, sav, sav_len);
+    older[0x100] ^= 0x5A;
+    root_put(&kept, CRYSTAL ".sav", older, sav_len);
+    free(older);
+    sigil_named_md5 part = { "save.sram", "" };
+    sigil_md5_of(ram, ram_len, part.md5);
+    sigil_zip_member bare = { "save.sram", ram, ram_len };
+    uint8_t *zip = NULL;
+    size_t zip_len = 0;
+    sigil_zip_store(&bare, 1, &zip, &zip_len);
+    int rc = 0;
+    sigil_sync_result *w = restore_crystal(&kept, "sameboy_standalone", zip, zip_len, &rc);
+    mem_file *f = root_find(&kept, CRYSTAL ".sav");
+    if (rc != SIGIL_OK || !f || f->len != sav_len || memcmp(f->data, sav, sav_len) != 0) {
+        fail("sameboy .sav, no clock in the unit", "the RAM written, the clock on disk kept");
+    }
+    sigil_sync_result_free(w);
+    free(zip);
+    root_free(&kept);
+
+    /* A .sav with a clock, restored for a cart the request says has none, loses the footer. */
+    mem_root plain = {0};
+    game p;
+    make_game(&p, &plain, "vbam_standalone", "gbc", CRYSTAL ".gbc", false);
+    w = NULL;
+    f = NULL;
+    if (sigil_restore(&p.req, sav, sav_len, &w) != SIGIL_OK || !(f = root_find(&plain, CRYSTAL ".sav")) ||
+        f->len != ram_len) {
+        fail("vba-m .sav, cart without a clock", "a clock footer written for a cart without a clock");
+    }
+    sigil_sync_result_free(w);
+    root_free(&plain);
+    root_free(&vbam);
+    sigil_sync_result_free(unit);
+    root_free(&pair);
+    free(ram);
+    free(rtc);
+    free(sav);
+
+    /* A cart without a clock gets no footer; mGBA's empty .sav for a cart without RAM is no save. */
+    size_t len = 0;
+    uint8_t *blue = corpus_sample(&g_gb, "gb", "pokemon-blue-mgba", NULL, &len);
+    if (blue) {
+        mem_root root = {0};
+        game g;
+        make_game(&g, &root, "vbam_standalone", "gb", "Pokemon Blue.gb", false);
+        g.req.overwrite_local = 1;
+        sigil_sync_result *r = NULL;
+        mem_file *b = NULL;
+        if (sigil_restore(&g.req, blue, len, &r) != SIGIL_OK || !(b = root_find(&root, "Pokemon Blue.sav")) ||
+            b->len != len || memcmp(b->data, blue, len) != 0) {
+            fail("vba-m .sav, no clock", "the .sav is the RAM alone");
+        }
+        sigil_sync_result_free(r);
+        root_free(&root);
+        free(blue);
+    }
+    mem_root empty = {0};
+    root_put(&empty, "Tetris.sav", (const uint8_t *)"", 0);
+    game t;
+    make_game(&t, &empty, "mgba_standalone", "gb", "Tetris.gb", false);
+    sigil_sync_result *none = NULL;
+    if (sigil_collect(&t.req, &none) != SIGIL_OK || none->data) fail("mgba empty .sav", "an empty .sav gave a unit");
+    sigil_sync_result_free(none);
+    root_free(&empty);
+}
+
 /* A save changed since the last sync stops the restore until the user agrees. */
 static void check_conflict(void) {
     size_t len = 0;
@@ -358,6 +502,7 @@ int main(void) {
     check_plain_cart();
     check_clock_cart();
     check_clock_cart_without_clock();
+    check_standalone();
     check_conflict();
     check_hardcore_upload();
     corpus_free(&g_gb);
