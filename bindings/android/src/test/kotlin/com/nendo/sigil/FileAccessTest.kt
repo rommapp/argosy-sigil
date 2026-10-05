@@ -5,6 +5,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 
@@ -90,7 +91,10 @@ class FileAccessTest {
         assertNotNull("collect found no saves through the caller's access", data)
 
         val to = MemoryAccess()
-        Sigil.restore(data!!, cross, "pcsx_rearmed", "Chrono Cross.cue", "mem:/target", fileAccess = to)
+        val json = """{"h":true,"v":1}""".toByteArray()
+        val marker = json + byteArrayOf(json.size.toByte(), 0, 0, 0) + "ARGOSY".toByteArray() + byteArrayOf(1, 0)
+        val restored = Sigil.restore(data!! + marker, cross, "pcsx_rearmed", "Chrono Cross.cue", "mem:/target", fileAccess = to)
+        assertTrue("restore didn't report Argosy's hardcore marker", restored.hardcoreMarker)
         val written = to.files["Chrono Cross.srm"]
         assertNotNull("restore wrote nothing through the caller's access", written)
 

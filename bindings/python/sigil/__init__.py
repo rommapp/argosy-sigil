@@ -400,6 +400,7 @@ class SigilSyncResult:
     profiles: tuple[SigilProfile, ...] = ()   # every profile the emulator lists
     profile: str = ""                         # the profile whose saves were taken or written
     alternates: tuple[SigilSaveAlternate, ...] = ()  # files other option values would take
+    hardcore_marker: bool = False  # restore: the unit ended in Argosy's legacy hardcore marker, left out of the saves
 
 
 def _raise_error(code: int) -> None:
@@ -913,6 +914,7 @@ def _sync(
             profiles=_profiles(r),
             profile=_text(r.profile),
             alternates=_alternates(r),
+            hardcore_marker=bool(r.hardcore_marker),
         )
     finally:
         lib.sigil_sync_result_free(r)

@@ -59,6 +59,7 @@ android {
             val hostLib = providers.gradleProperty("sigilHostJniDir")
                 .getOrElse(file("../../build/bindings").absolutePath)
             test.systemProperty("java.library.path", hostLib)
+            test.inputs.files(fileTree(hostLib) { include("*sigil-jni*") }).withPropertyName("sigilHostJni")
         }
     }
 }

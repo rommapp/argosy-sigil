@@ -158,6 +158,13 @@ int sigil_sync_put(const sigil_sync_request *req, const char *path, const uint8_
 /** Removes `path` through the request; SIGIL_ERR_IO when that fails or
  *  `path` would leave the save root. */
 int sigil_sync_drop(const sigil_sync_request *req, const char *path);
+/**
+ * The length of `unit` without the hardcore marker Argosy appended to
+ * uploads before it used sigil ({"h":true,...}, the JSON's length as a
+ * little-endian u32, "ARGOSY" 01 00); `len` when it has none. `*marked` is
+ * true when it had one.
+ */
+size_t sigil_sync_unmarked_len(const uint8_t *unit, size_t len, bool *marked);
 
 enum { SYNC_OWN_GAME, SYNC_OWN_OTHER, SYNC_OWN_NONE, SYNC_OWN_COMPANION };
 

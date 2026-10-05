@@ -111,6 +111,7 @@ _SYNC_FIELDS = {
     "holding": ("holding", "holding", "Holding"),
     "unowned": ("unowned", "unowned", "Unowned"),
     "restore again": ("restoreAgain", "restore_again", "RestoreAgain"),
+    "hardcore marker": ("hardcoreMarker", "hardcore_marker", "HardcoreMarker"),
     "state": ("state", "state", "State"),
     "conflict": ("CONFLICT = -9", "SigilConflictError", "ErrConflict "),
     "companions": ("companions", "companions", "Companions"),

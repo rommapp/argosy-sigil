@@ -540,10 +540,15 @@ static void check_argosy_uploads(void) {
         if (sigil_collect(&g.req, &unit) != SIGIL_OK || !unit->data || !zip) {
             fail("argosy ps1", "collect failed");
         } else {
-            const uint8_t *olds[] = { zip, card };
-            const size_t old_lens[] = { zip_len, len };
-            const char *labels[] = { "argosy ps1 zip of two cards", "argosy ps1 raw card" };
-            for (size_t i = 0; i < 2; i++) {
+            /* Hardcore uploads end in Argosy's marker: restore leaves it out and reports it. */
+            size_t marked_zip_len = 0, marked_card_len = 0;
+            uint8_t *marked_zip = with_hardcore_marker(zip, zip_len, &marked_zip_len);
+            uint8_t *marked_card = with_hardcore_marker(card, len, &marked_card_len);
+            const uint8_t *olds[] = { zip, card, marked_zip, marked_card };
+            const size_t old_lens[] = { zip_len, len, marked_zip_len, marked_card_len };
+            const char *labels[] = { "argosy ps1 zip of two cards", "argosy ps1 raw card",
+                                     "argosy ps1 hardcore zip", "argosy ps1 hardcore raw card" };
+            for (size_t i = 0; i < 4; i++) {
                 mem_root from_old = {0}, from_unit = {0};
                 game a, b;
                 make_game(&a, &from_old, "mednafen_psx_hw", XENO_STEM ".cue", "SLUS-00664", XENOGEARS, 2);
@@ -555,11 +560,15 @@ static void check_argosy_uploads(void) {
                 int rc_unit = sigil_restore(&b.req, unit->data, unit->len, &rb);
                 if (rc_old != SIGIL_OK || rc_unit != SIGIL_OK) fail(labels[i], "restore failed");
                 else if (!roots_same(&from_old, &from_unit)) fail(labels[i], "restores other files than sigil's unit");
+                else if (ra->hardcore_marker != (i >= 2) || rb->hardcore_marker) fail(labels[i], "hardcore_marker");
+                else if (strcmp(ra->identity_hash, rb->identity_hash) != 0) fail(labels[i], "identity differs");
                 sigil_sync_result_free(ra);
                 sigil_sync_result_free(rb);
                 root_free(&from_old);
                 root_free(&from_unit);
             }
+            free(marked_zip);
+            free(marked_card);
         }
         free(zip);
         sigil_sync_result_free(unit);

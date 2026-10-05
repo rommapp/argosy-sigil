@@ -314,6 +314,7 @@ class SigilSyncResult(
     profiles: List<SigilProfile>,   // Layouts with profiles: every profile the emulator lists.
     profile: String,            // The profile whose saves were taken or written; "" for none.
     alternates: List<SigilSaveAlternate>, // Listed files other option values would take, as on SigilSaveUnit.
+    hardcoreMarker: Boolean,    // Restore: the unit ended in Argosy's legacy hardcore marker.
 )
 
 data class SigilProfile(

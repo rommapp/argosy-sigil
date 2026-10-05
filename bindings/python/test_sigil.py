@@ -223,6 +223,22 @@ def test_restore_writes_the_unit_and_refuses_over_unsynced_changes(tmp_path):
         sigil.restore(unit.data, _CROSS, "pcsx_rearmed", "Chrono Cross.cue", target)
     forced = sigil.restore(unit.data, _CROSS, "pcsx_rearmed", "Chrono Cross.cue", target, overwrite_local=True)
     assert forced.identity_hash == unit.identity_hash
+    assert not forced.hardcore_marker
+
+
+def test_restore_leaves_out_and_reports_argosys_hardcore_marker(tmp_path):
+    source, plain, target = tmp_path / "source", tmp_path / "plain", tmp_path / "target"
+    for d in (source, plain, target):
+        d.mkdir()
+    (source / "Chrono Cross.srm").write_bytes(_ps1_card([("BASLUSP01041CROSS", 2)]))
+    unit = sigil.collect(_CROSS, "pcsx_rearmed", "Chrono Cross.cue", source)
+    assert unit.data is not None
+    json = b'{"h":true,"v":1}'
+    marked = unit.data + json + len(json).to_bytes(4, "little") + b"ARGOSY\x01\x00"
+    sigil.restore(unit.data, _CROSS, "pcsx_rearmed", "Chrono Cross.cue", plain)
+    restored = sigil.restore(marked, _CROSS, "pcsx_rearmed", "Chrono Cross.cue", target)
+    assert restored.hardcore_marker
+    assert (target / "Chrono Cross.srm").read_bytes() == (plain / "Chrono Cross.srm").read_bytes()
 
 
 _MC01 = Path(__file__).resolve().parents[2] / "tests/fixtures/saves/ps2/files/mymc-mc01/mc01.ps2"

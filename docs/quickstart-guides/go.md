@@ -343,6 +343,7 @@ type SyncResult struct {
     Profiles     []Profile         // Layouts with profiles: every profile the emulator lists.
     Profile      string            // The profile whose saves were taken or written; "" for none.
     Alternates   []SaveAlternate   // Listed files other option values would take, as on SaveUnit.
+    HardcoreMarker bool            // Restore: the unit ended in Argosy's legacy hardcore marker.
 }
 ```
 

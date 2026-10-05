@@ -5,6 +5,7 @@ package sigil
 import (
 	"bytes"
 	"crypto/md5"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"os"
@@ -299,8 +300,35 @@ func TestRestoreWritesTheUnitAndRefusesOverUnsyncedChanges(t *testing.T) {
 		t.Fatalf("err = %v, want ErrConflict", err)
 	}
 	forced, err := Restore(unit.Data, chronoCross, "pcsx_rearmed", "Chrono Cross.cue", target, &SyncOptions{OverwriteLocal: true})
-	if err != nil || forced.IdentityHash != unit.IdentityHash {
+	if err != nil || forced.IdentityHash != unit.IdentityHash || forced.HardcoreMarker {
 		t.Fatalf("forced restore = %+v, %v", forced, err)
+	}
+}
+
+func TestRestoreLeavesOutAndReportsArgosysHardcoreMarker(t *testing.T) {
+	source, plain, target := t.TempDir(), t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "Chrono Cross.srm"), ps1Card([]cardSave{{"BASLUSP01041CROSS", 2}}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unit, err := Collect(chronoCross, "pcsx_rearmed", "Chrono Cross.cue", source, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	json := []byte(`{"h":true,"v":1}`)
+	marked := append(append([]byte{}, unit.Data...), json...)
+	marked = binary.LittleEndian.AppendUint32(marked, uint32(len(json)))
+	marked = append(marked, "ARGOSY\x01\x00"...)
+	if _, err := Restore(unit.Data, chronoCross, "pcsx_rearmed", "Chrono Cross.cue", plain, nil); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := Restore(marked, chronoCross, "pcsx_rearmed", "Chrono Cross.cue", target, nil)
+	if err != nil || !restored.HardcoreMarker {
+		t.Fatalf("restore = %+v, %v", restored, err)
+	}
+	want, _ := os.ReadFile(filepath.Join(plain, "Chrono Cross.srm"))
+	got, err := os.ReadFile(filepath.Join(target, "Chrono Cross.srm"))
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("the card differs from the unmarked unit's: %v", err)
 	}
 }
 

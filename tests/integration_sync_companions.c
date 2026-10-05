@@ -3,7 +3,7 @@
  * card or volume as a companion. Companion saves go on with the game's own,
  * stay out of the game's unit, and come back as the companion's own unit. */
 #include "save_corpus.h"
-#include "mem_root.h"
+#include "legacy_units.h"
 #include "card_ps1.h"
 #include "card_saturn.h"
 #include <stdbool.h>
@@ -207,6 +207,22 @@ static void check_ps1(void) {
             if (!f || ps1_saves_of(f->data, f->len, MML1) != 1 || ps1_saves_of(f->data, f->len, MML2) != 1) {
                 fail("ps1 companions", "the card doesn't hold the game's save and the companion's");
             }
+
+            /* A companion unit uploaded with Argosy's hardcore marker restores without it. */
+            sigil_sync_result marked = *first;
+            marked.data = with_hardcore_marker(first->data, first->len, &marked.len);
+            mem_root from_marked = {0};
+            game h;
+            make_game(&h, &from_marked, "pcsx_rearmed", "psx", SIGIL_PLATFORM_PSX, MML2_CUE, MML2);
+            with_companion(&h, MML1, &marked);
+            sigil_sync_result *m = NULL;
+            if (sigil_restore(&h.req, second->data, second->len, &m) != SIGIL_OK || !roots_same(&from_marked, &root)) {
+                fail("ps1 companions", "a companion unit with the hardcore marker restores other files");
+            }
+            sigil_sync_result_free(m);
+            root_free(&from_marked);
+            free(marked.data);
+
             refresh(&g, &root);
             g.req.state = r->state;
             g.req.state_len = r->state_len;

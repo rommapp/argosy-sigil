@@ -308,6 +308,7 @@ SigilSyncResult(
     profiles: tuple[SigilProfile, ...],   # Layouts with profiles: every profile the emulator lists.
     profile: str,               # The profile whose saves were taken or written; "" for none.
     alternates: tuple[SigilSaveAlternate, ...],  # Listed files other option values would take, as on SigilSaveUnit.
+    hardcore_marker: bool,      # Restore: the unit ended in Argosy's legacy hardcore marker.
 )
 
 SigilProfile(

@@ -621,7 +621,8 @@ int sigil_sync_request_saves(const sigil_sync_ctx *x, const uint8_t *unit, size_
     int rc = unit_saves(x, unit, len, SYNC_WHO_GAME, out, sizes);
     for (size_t c = 0; c < x->req->companion_count && rc == SIGIL_OK; c++) {
         const sigil_sync_companion *k = &x->req->companions[c];
-        if (k->unit) rc = unit_saves(x, k->unit, k->unit_len, c, out, sizes);
+        bool marked = false;
+        if (k->unit) rc = unit_saves(x, k->unit, sigil_sync_unmarked_len(k->unit, k->unit_len, &marked), c, out, sizes);
     }
     for (size_t i = 0; i < out->count && rc == SIGIL_OK && x->kind->foreign; i++) {
         const sigil_sync_save *o = &out->items[i];

@@ -275,6 +275,8 @@ data class SigilCardListing(
  * [companions] has one entry per request companion, in request order.
  * [profiles] lists every profile the emulator lists on a layout with profiles, and [profile] is
  * the one whose saves were taken or written.
+ * [hardcoreMarker] is true after a restore whose unit ended in the hardcore marker Argosy appended to
+ * uploads before it used sigil; restore left the marker out of the saves.
  */
 class SigilSyncResult(
     val artifact: String,
@@ -290,7 +292,8 @@ class SigilSyncResult(
     val companions: List<SigilCompanionResult>,
     val profiles: List<SigilProfile>,
     val profile: String,
-    val alternates: List<SigilSaveAlternate>
+    val alternates: List<SigilSaveAlternate>,
+    val hardcoreMarker: Boolean
 ) {
     val shape: SigilSaveUnit.Shape get() = SigilSaveUnit.Shape.fromCode(shapeCode)
 }

@@ -442,6 +442,7 @@ typedef struct {
     char profile[64];                 /* The profile whose saves collect took or restore wrote. */
     sigil_save_alternate *alternates; /* Listed files other option values would take, as on the unit. */
     size_t alternate_count;
+    int hardcore_marker;              /* restore: the unit ended in Argosy's legacy hardcore marker. */
 } sigil_sync_result;
 
 typedef struct {

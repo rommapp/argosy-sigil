@@ -548,6 +548,9 @@ typedef struct {
                                                   when none is picked */
     sigil_save_alternate *alternates;          /* files other option values would take; see sigil_save_alternate */
     size_t    alternate_count;
+    int       hardcore_marker;                 /* restore: 1 when the unit ended in the hardcore marker Argosy
+                                                  appended to uploads before it used sigil. Restore leaves the
+                                                  marker out of the saves; content_hash still covers it */
 } sigil_sync_result;
 
 /* Gathers the game's saves into one unit. Returns SIGIL_ERR_DAMAGED as restore does, and

@@ -289,9 +289,30 @@ static void restored_artifact(const sigil_sync_ctx *x, const sigil_sync_saves *i
     else snprintf(r->artifact, sizeof(r->artifact), "%s", sigil_sync_device_name(incoming->items[0].device));
 }
 
-/* Restore on a card or volume platform. */
-static int restore_units(sigil_sync_ctx *x, const uint8_t *unit, size_t unit_len, sigil_sync_result *r,
-                         char local_identity[33]) {
+#define MARKER_JSON_MAX 1024u
+
+size_t sigil_sync_unmarked_len(const uint8_t *unit, size_t len, bool *marked) {
+    static const uint8_t MAGIC[] = { 'A', 'R', 'G', 'O', 'S', 'Y', 0x01, 0x00 };
+    static const char HARDCORE[] = "\"h\":true";
+    *marked = false;
+    size_t tail = sizeof(MAGIC) + 4;
+    if (len < tail || memcmp(unit + len - sizeof(MAGIC), MAGIC, sizeof(MAGIC)) != 0) return len;
+    uint32_t json = sigil_read_le32(unit + len - tail);
+    if (json > MARKER_JSON_MAX || json > len - tail) return len;
+    const uint8_t *start = unit + len - tail - json;
+    bool hardcore = false;
+    for (size_t i = 0; i + sizeof(HARDCORE) - 1 <= json && !hardcore; i++) {
+        hardcore = memcmp(start + i, HARDCORE, sizeof(HARDCORE) - 1) == 0;
+    }
+    if (!hardcore) return len;
+    *marked = true;
+    return len - tail - json;
+}
+
+/* Restore on a card or volume platform. `received_len` is the unit's length
+ * as it came, Argosy's hardcore marker included, which RomM's hash covers. */
+static int restore_units(sigil_sync_ctx *x, const uint8_t *unit, size_t unit_len, size_t received_len,
+                         sigil_sync_result *r, char local_identity[33]) {
     const sigil_sync_kind *kind = x->kind;
     sigil_sync_saves incoming;
     sigil_sync_saves_init(&incoming, kind);
@@ -299,7 +320,7 @@ static int restore_units(sigil_sync_ctx *x, const uint8_t *unit, size_t unit_len
     int rc = sigil_sync_request_saves(x, unit, unit_len, &incoming, sizes, r);
     if (rc == SIGIL_OK) rc = sigil_sync_identity_of(&incoming, r->identity_hash);
     if (rc == SIGIL_OK) {
-        sigil_md5_of(unit, unit_len, r->content_hash);
+        sigil_md5_of(unit, received_len, r->content_hash);
         bool zip = (!kind->has_ids || kind->save_files) && sigil_read_le32(unit) == 0x04034b50u;
         r->shape = zip ? SIGIL_SAVE_SHAPE_MULTI : SIGIL_SAVE_SHAPE_SINGLE;
         rc = kind->has_ids ? restore_with_ids(x, &incoming, r, local_identity)
@@ -326,9 +347,12 @@ int sigil_restore(const sigil_sync_request *req, const uint8_t *unit, size_t uni
     if (rc == SIGIL_OK) rc = sigil_save_alternates(&req->save, &r->alternates, &r->alternate_count);
 
     char local_identity[33] = "";
+    bool marked = false;
+    size_t saves_len = sigil_sync_unmarked_len(unit, unit_len, &marked);
+    if (r) r->hardcore_marker = marked;
     if (rc == SIGIL_OK) {
-        rc = layout->profiles ? sigil_sync_restore_profiles(&x, layout->profiles, unit, unit_len, r, local_identity)
-                              : restore_units(&x, unit, unit_len, r, local_identity);
+        rc = layout->profiles ? sigil_sync_restore_profiles(&x, layout->profiles, unit, saves_len, r, local_identity)
+                              : restore_units(&x, unit, saves_len, unit_len, r, local_identity);
     }
     if (rc == SIGIL_OK && req->mode == SIGIL_SYNC_UNMANAGED) {
         char both[80];

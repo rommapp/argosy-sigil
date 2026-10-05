@@ -1158,7 +1158,21 @@ static void check_3ds(void) {
     w = NULL;
     expect_rc("3ds argosy upload", restore(&t, old, &w), SIGIL_OK);
     if (!roots_same(&from_old, &fresh)) fail("3ds argosy upload", "restores other files than sigil's unit");
+    if (!w || w->hardcore_marker) fail("3ds argosy upload", "hardcore_marker");
     sigil_sync_result_free(w);
+
+    /* A hardcore upload ends in Argosy's marker: restore leaves it out and reports it. */
+    sigil_sync_result marked = {0};
+    marked.data = with_hardcore_marker(old->data, old->len, &marked.len);
+    mem_root from_marked = {0};
+    make_game(&t, &from_marked, "azahar", "3ds", "00040000/00113200");
+    w = NULL;
+    expect_rc("3ds hardcore upload", restore(&t, &marked, &w), SIGIL_OK);
+    if (!roots_same(&from_marked, &fresh)) fail("3ds hardcore upload", "restores other files than sigil's unit");
+    if (!w || !w->hardcore_marker) fail("3ds hardcore upload", "hardcore_marker");
+    sigil_sync_result_free(w);
+    free(marked.data);
+    root_free(&from_marked);
     unit_of_free(old);
 
     sigil_sync_result_free(r);

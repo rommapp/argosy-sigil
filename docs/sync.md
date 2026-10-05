@@ -39,6 +39,7 @@ next collect then gives the save in sigil's form; upload that.
 | Saturn, Sega CD, Dreamcast | a raw volume file as the emulator stored it (gzip and byte expansion included), or a flat zip of them under their on-disk names, each matched to its volume by the layout's file names |
 | Wii U | a zip naming the account folder by its id (`<save_id>/user/80000001/`) |
 | 3DS | a zip rooted at `data/` and `extdata/` |
+| Any | any of the above, or sigil's own unit, ending in the hardcore marker Argosy appended (`{"h":true,...}`, its length as a little-endian u32, then `ARGOSY` 01 00). Restore leaves the marker out of the saves, companion units included, and sets `hardcore_marker`; `content_hash` still covers it |
 | Switch | one folder rooted at `<title>/`: the device save for the titles that keep theirs on the device (Animal Crossing: New Horizons, Nintendo Switch Sports, 1-2-Switch, Ring Fit Adventure, the four Labo kits, Go Vacation), the account save for any other |
 
 ## Whose saves

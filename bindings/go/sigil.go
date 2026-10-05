@@ -1168,6 +1168,9 @@ type SyncResult struct {
 	Profiles     []Profile         // Layouts with profiles: every profile the emulator lists.
 	Profile      string            // The profile whose saves were taken or written.
 	Alternates   []SaveAlternate   // Files other option values would take.
+	// Restore: the unit ended in the hardcore marker Argosy appended to
+	// uploads before it used sigil. Restore left it out of the saves.
+	HardcoreMarker bool
 }
 
 func goProfiles(cres *C.sigil_sync_result) []Profile {
@@ -1259,15 +1262,16 @@ func runSync(unit []byte, game *Result, core, contentPath, saveRoot string, opts
 		return nil, err
 	}
 	out := &SyncResult{
-		Artifact:     C.GoString(&cres.artifact[0]),
-		Shape:        SaveShape(cres.shape),
-		ContentHash:  C.GoString(&cres.content_hash[0]),
-		IdentityHash: C.GoString(&cres.identity_hash[0]),
-		Changed:      cres.changed != 0,
-		RestoreAgain: cres.restore_again != 0,
-		Profiles:     goProfiles(cres),
-		Profile:      C.GoString(&cres.profile[0]),
-		Alternates:   goAlternates(cres.alternates, cres.alternate_count),
+		Artifact:       C.GoString(&cres.artifact[0]),
+		Shape:          SaveShape(cres.shape),
+		ContentHash:    C.GoString(&cres.content_hash[0]),
+		IdentityHash:   C.GoString(&cres.identity_hash[0]),
+		Changed:        cres.changed != 0,
+		RestoreAgain:   cres.restore_again != 0,
+		Profiles:       goProfiles(cres),
+		Profile:        C.GoString(&cres.profile[0]),
+		Alternates:     goAlternates(cres.alternates, cres.alternate_count),
+		HardcoreMarker: cres.hardcore_marker != 0,
 	}
 	if cres.data != nil {
 		out.Data = C.GoBytes(unsafe.Pointer(cres.data), C.int(cres.len))
