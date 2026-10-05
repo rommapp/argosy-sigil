@@ -93,6 +93,32 @@ jobs:
           CGO_ENABLED: "1"
         run: ctest --test-dir build --output-on-failure
 
+  kotlin-jvm:
+    # The Kotlin binding's JVM tests, against the JNI library built for the runner's JDK.
+    name: Kotlin binding (JVM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Build the host JNI library
+        run: |
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DSIGIL_BUILD_TESTS=OFF -DSIGIL_BUILD_JNI_HOST=ON
+          cmake --build build --target sigil_jni_host
+
+      - name: JVM tests
+        run: gradle -p tests/kotlin :sigil:testDebugUnitTest
+
   contract:
     name: cross-language contract
     runs-on: ubuntu-latest

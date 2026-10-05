@@ -37,3 +37,7 @@ tests/*.log
 bindings/android/build/
 bindings/android/.cxx/
 bindings/android/.gradle/
+tests/kotlin/.gradle/
+tests/kotlin/build/
+tests/kotlin/.kotlin/
+tests/kotlin/local.properties

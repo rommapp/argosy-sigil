@@ -95,9 +95,10 @@ states its status, and every relative link and anchor in the README and
 The Kotlin binding's JVM tests (`bindings/android/src/test`) run on this
 machine against the JNI library built for the host JDK. Build it with
 `-DSIGIL_BUILD_JNI_HOST=ON`, which puts `libsigil-jni` in
-`build/bindings/`. Then run `:sigil:testDebugUnitTest` from a Gradle
-project that includes `bindings/android` as `:sigil`, passing
-`-PsigilHostJniDir=<that folder>` when the build folder isn't `build/`.
+`build/bindings/`. Then run `gradle -p tests/kotlin :sigil:testDebugUnitTest`
+(Gradle 8.9 or later, with `ANDROID_HOME` set), passing
+`-PsigilHostJniDir=<that folder>` when the build folder isn't `build/`. CI
+runs the same on Linux.
 
 ## Testing
 
