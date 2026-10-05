@@ -371,19 +371,19 @@ SIGIL_API int  sigil_save_hash(sigil_save_unit *unit, sigil_save_open_fn open, v
  * what to list. Returns the count written to `out` (at most `cap`). */
 SIGIL_API size_t sigil_save_layout_subdirs(const char *layout, const char **out, size_t cap);
 
-/* The emulator's base folder for `path` on a layout with profiles: `path`
- * cut above the layout's top folder (Eden's nand/, Cemu's mlc01/, Vita3K's
- * ux0/, RPCS3's dev_hdd0/, a PSP memory stick's PSP/) when `path` lies inside
- * it, else `path` itself.
+/* The emulator's base folder for `path` on a folder layout: `path` cut above
+ * the layout's top folder (Eden's nand/, Ryujinx's bis/, Cemu's mlc01/,
+ * Vita3K's ux0/, RPCS3's dev_hdd0/, a PSP memory stick's PSP/, Azahar's
+ * sdmc/) when `path` lies inside it, else `path` itself.
  * `profile` gets the profile folder `path` lies in, or "". Separators are
  * kept as given; a trailing one is dropped. On other layouts `base` is
  * `path`. SIGIL_ERR_INVALID_ARG when either buffer is too small. */
 SIGIL_API int sigil_save_base(const char *layout, const char *path, char *base, size_t base_cap, char *profile,
                               size_t profile_cap);
 
-/* The top folder of the emulator's base on a layout with profiles ("nand",
- * "mlc01", "ux0", "dev_hdd0", "PSP"), for a caller looking under a save root for the
- * base; NULL on other layouts. */
+/* The top folder of the emulator's base on a folder layout ("nand", "bis",
+ * "mlc01", "ux0", "dev_hdd0", "PSP", "sdmc", ...), for a caller looking under
+ * a save root for the base; NULL on other layouts. */
 SIGIL_API const char *sigil_save_layout_top(const char *layout);
 
 /* The profiles the emulator lists under the request's root, for a client to

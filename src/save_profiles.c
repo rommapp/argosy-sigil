@@ -31,15 +31,26 @@ static char *var_slot(folder_vars *v, const char *t, size_t n, size_t *cap) {
     return NULL;
 }
 
+/* The length of the first `segments` segments of `p`, '/'s between them included. */
+static size_t segments_len(const char *p, size_t segments) {
+    size_t n = strcspn(p, "/");
+    for (size_t s = 1; s < segments && p[n] == '/' && p[n + 1]; s++) n += 1 + strcspn(p + n + 1, "/");
+    return n;
+}
+
 /* Walks `template_` and `path` a segment at a time, binding each variable to
- * the segment it stands for, until either runs out. `*t_end` and `*p_end` get
- * how far each got. False at the first segment that differs. */
-static bool walk(const char *template_, const char *path, folder_vars *v, const char **t_end, const char **p_end) {
+ * the segment it stands for ({save_id} to the row's number of them), until
+ * either runs out. `*t_end` and `*p_end` get how far each got. False at the
+ * first segment that differs. */
+static bool walk(const sigil_layout_profiles *row, const char *template_, const char *path, folder_vars *v,
+                 const char **t_end, const char **p_end) {
     memset(v, 0, sizeof(*v));
+    size_t id_segments = row->save_id_segments ? row->save_id_segments : 1;
     const char *t = template_, *p = path;
     while (*t && *p) {
         size_t tn = strcspn(t, "/"), pn = strcspn(p, "/");
         if (pn == 0) return false;
+        if (tn == 9 && strncmp(t, "{save_id}", 9) == 0) pn = segments_len(p, id_segments);
         if (t[0] == '{') {
             size_t cap = 0;
             char *slot = var_slot(v, t, tn, &cap);
@@ -61,15 +72,16 @@ static bool walk(const char *template_, const char *path, folder_vars *v, const 
 }
 
 /* `path` lies in folder `template_`; `*rest` gets the part inside it. */
-static bool in_folder(const char *template_, const char *path, folder_vars *v, const char **rest) {
+static bool in_folder(const sigil_layout_profiles *row, const char *template_, const char *path, folder_vars *v,
+                      const char **rest) {
     const char *t_end = NULL;
-    return walk(template_, path, v, &t_end, rest) && !*t_end && **rest;
+    return walk(row, template_, path, v, &t_end, rest) && !*t_end && **rest;
 }
 
 /* `path` is file `template_`. */
-static bool is_file(const char *template_, const char *path, folder_vars *v) {
+static bool is_file(const sigil_layout_profiles *row, const char *template_, const char *path, folder_vars *v) {
     const char *t_end = NULL, *p_end = NULL;
-    return walk(template_, path, v, &t_end, &p_end) && !*t_end && !*p_end;
+    return walk(row, template_, path, v, &t_end, &p_end) && !*t_end && !*p_end;
 }
 
 static bool expand(const char *template_, folder_vars *v, const char *rest, char *out, size_t cap) {
@@ -193,7 +205,7 @@ static void implied_profile(const sigil_layout_profiles *row, const char *below,
         folder_vars v;
         const char *t_end = NULL, *p_end = NULL;
         if (row->areas[i].area != SIGIL_SAVE_AREA_ACCOUNT) continue;
-        if (!walk(row->areas[i].template_, below, &v, &t_end, &p_end) || !v.profile[0]) continue;
+        if (!walk(row, row->areas[i].template_, below, &v, &t_end, &p_end) || !v.profile[0]) continue;
         if (device_folder_name(row, v.profile)) continue;
         snprintf(out, SIGIL_PROFILE_ID_MAX, "%s", v.profile);
         return;
@@ -249,7 +261,7 @@ static bool layout_path(const sigil_layout_profiles *row, const char *path, size
             for (size_t k = 0; k < count; k++) {
                 folder_vars v;
                 const char *t_end = NULL, *p_end = NULL;
-                if (walk(templates[k], path + i, &v, &t_end, &p_end) &&
+                if (walk(row, templates[k], path + i, &v, &t_end, &p_end) &&
                     (size_t)(t_end - templates[k]) >= literal_lead(templates[k])) {
                     return true;
                 }
@@ -304,7 +316,7 @@ static bool inside_save_folder(const sigil_profile_root *p) {
     for (size_t i = 0; i < p->row->area_count && p->below[0]; i++) {
         folder_vars v;
         const char *rest = NULL;
-        if (in_folder(p->row->areas[i].template_, p->below, &v, &rest) && save_id_fits(p, v.save_id)) return true;
+        if (in_folder(p->row, p->row->areas[i].template_, p->below, &v, &rest) && save_id_fits(p, v.save_id)) return true;
     }
     return false;
 }
@@ -469,7 +481,7 @@ static void folder_profiles(sigil_profile_root *p) {
             folder_vars v;
             const char *rest = NULL;
             if (p->row->areas[a].area != SIGIL_SAVE_AREA_ACCOUNT) continue;
-            if (!in_folder(p->row->areas[a].template_, path, &v, &rest) || ignored(p->row, rest)) continue;
+            if (!in_folder(p->row, p->row->areas[a].template_, path, &v, &rest) || ignored(p->row, rest)) continue;
             if (!device_folder_name(p->row, v.profile)) add_profile(p, v.profile, "");
         }
     }
@@ -668,7 +680,7 @@ static int file_profiles(sigil_profile_root *p) {
         char path[SIGIL_SAVE_PATH_MAX];
         folder_vars v;
         if (!p->req->listing[i] || !to_base(p, p->req->listing[i], path)) continue;
-        if (!is_file(p->row->list, path, &v) || !v.profile[0]) continue;
+        if (!is_file(p->row, p->row->list, path, &v) || !v.profile[0]) continue;
         size_t len = 0;
         uint8_t *data = NULL;
         rc = read_root_file(p, path, &data, &len);
@@ -806,7 +818,7 @@ static const sigil_layout_area *area_of(const sigil_profile_root *p, const char 
         folder_vars v;
         const char *rest = NULL;
         if (area->area == SIGIL_SAVE_AREA_ACCOUNT && !profile[0]) continue;
-        if (!in_folder(area->template_, base_path, &v, &rest) || !save_id_fits(p, v.save_id)) continue;
+        if (!in_folder(p->row, area->template_, base_path, &v, &rest) || !save_id_fits(p, v.save_id)) continue;
         if (area->area == SIGIL_SAVE_AREA_ACCOUNT && strcmp(v.profile, profile) != 0) continue;
         if (ignored(p->row, rest) || rest[strlen(rest) - 1] == '/') return NULL;
         char folder[SIGIL_SAVE_PATH_MAX];
@@ -868,7 +880,7 @@ int sigil_profile_place(const sigil_profile_root *p, const char *entry, sigil_pr
             const char *name = legacy ? row_area->legacy : row_area->entry;
             folder_vars v;
             const char *rest = NULL;
-            if (!name || !in_folder(name, entry, &v, &rest) || !save_id_fits(p, v.save_id)) continue;
+            if (!name || !in_folder(p->row, name, entry, &v, &rest) || !save_id_fits(p, v.save_id)) continue;
             f->area = row_area->area;
             if (!expand(row_area->entry, &v, rest, f->entry, sizeof(f->entry))) return SIGIL_ERR_NOT_FOUND;
             if (ignored(p->row, rest)) {

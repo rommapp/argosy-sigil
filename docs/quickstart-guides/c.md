@@ -179,14 +179,13 @@ listed alone.
 
 ### Layouts with profiles
 
-`eden`, `citron`, `sudachi` and `yuzu` (Switch), `cemu` (Wii U), `vita3k`
-and `rpcs3` keep a game's saves in folders per user profile, and the Switch
-and Wii U also keep device saves every profile shares. The PSP layouts
-(`ppsspp`, `ppsspp_standalone`, `psp_console`) keep save folders the same
-way with no profiles, so everything below applies to them except picking a
-profile.
-[save-units.md](../save-units.md#profiles) has the folders. The root is the emulator's base folder, the one holding
-`nand/`, `mlc01/`, `ux0/`, `dev_hdd0/` or `PSP/`; a root above it works when the
+The Switch, Wii U, PS Vita and PS3 emulators keep a game's saves in folders
+per user profile, and the Switch and Wii U also keep device saves every
+profile shares. The PSP and 3DS emulators keep save folders the same way
+with no profiles, so everything below applies to them except picking a
+profile. [platforms/](../platforms/README.md#layouts) lists the layout ids
+and [save-units.md](../save-units.md#profiles) the folders. The root is the emulator's base folder, the one holding
+`nand/`, `bis/`, `mlc01/`, `ux0/`, `dev_hdd0/`, `PSP/` or `sdmc/`; a root above it works when the
 listing reaches below, and a root inside it works when `root_path` says
 where it is. `sigil_save_base` turns any path into the base and the
 profile the path lies in, so a caller can list the base instead:
@@ -199,7 +198,7 @@ int sigil_save_base(
     char *profile, size_t profile_cap   /* required. The profile folder path lies in, or "". */
 );                                /* SIGIL_ERR_INVALID_ARG when a buffer is too small. */
 
-const char *sigil_save_layout_top(const char *layout);   /* "nand", "mlc01", "ux0", "dev_hdd0", "PSP", or NULL. */
+const char *sigil_save_layout_top(const char *layout);   /* "nand", "bis", "mlc01", "ux0", "dev_hdd0", "PSP", "sdmc", ... or NULL. */
 ```
 
 ```c

@@ -27,7 +27,7 @@ save folder; sigil never searches the drive.
 | Super Nintendo | [snes](snes.md) | `snes` | header facts | located |
 | NES, Famicom Disk System | [fds](fds.md) | `fds` (layout rows) | no | located |
 | Nintendo DS | [nds](nds.md) | | no | located |
-| Nintendo 3DS | [3ds](3ds.md) | `3ds` | yes | in development |
+| Nintendo 3DS | [3ds](3ds.md) | `3ds` | yes | synced |
 | Nintendo 64 | [n64](n64.md) | `n64` | yes | located |
 | Pokémon Mini | [pokemini](pokemini.md) | | no | located |
 | GameCube | [gamecube](gamecube.md) | `gamecube` | yes | synced |
@@ -121,6 +121,9 @@ section, fails `bindings/python/test_docs.py`.
 | `ryujinx` | [switch](switch.md) | Ryujinx, Ryubing | standalone |
 | `kenjinx` | [switch](switch.md) | Kenji-NX | standalone |
 | `cemu` | [wiiu](wiiu.md) | Cemu | standalone |
+| `azahar` | [3ds](3ds.md) | Azahar | standalone |
+| `citra` | [3ds](3ds.md) | Citra, and its libretro core | standalone |
+| `lime3ds` | [3ds](3ds.md) | Lime3DS | standalone |
 | `vita3k` | [psvita](psvita.md) | Vita3K | standalone |
 | `rpcs3` | [ps3](ps3.md) | RPCS3 | standalone |
 | `aps3e` | [ps3](ps3.md) | aPS3e | standalone |

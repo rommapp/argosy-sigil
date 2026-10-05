@@ -104,6 +104,7 @@ typedef struct {
     const char              *index;         /* the save index (Ryujinx's imkvdb.arc), relative to the base: save
                                                folders are named by the id it gives each save, and it says
                                                whose each one is; NULL when folders are named by the title */
+    size_t                   save_id_segments;   /* the path segments {save_id} spans (3DS: 2); 0 means 1 */
 } sigil_layout_profiles;
 
 typedef struct {

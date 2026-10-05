@@ -392,6 +392,22 @@ static const sigil_layout_profiles RYUJINX_PROFILES = {
 };
 static const char *const RYUJINX_SUBDIRS[] = { "bis/user/save", "bis/system/save/8000000000000000", "system" };
 
+/* Azahar, and the Citra and Lime3DS lines it merged
+ * (core/file_sys/archive_source_sd_savedata.cpp, hle/service/fs/archive.h):
+ * sdmc/Nintendo 3DS/<id0>/<id1>/title/<high>/<low>/data/ holds the save as
+ * 00000001/ and 00000001.metadata beside it, both ids all zeros. {save_id} is
+ * the title id as those two folders. The 3DS has no user accounts. */
+static const sigil_layout_area CTR_AREAS[] = {
+    { "sdmc/Nintendo 3DS/00000000000000000000000000000000/00000000000000000000000000000000/title/{save_id}/data/",
+      "{save_id}/", SIGIL_SAVE_AREA_DEVICE, false, NULL },
+};
+static const sigil_layout_profiles CTR_FOLDERS = {
+    "sdmc", 0, NULL, CTR_AREAS, COUNT(CTR_AREAS), NULL, 0, false, false, NULL, NULL, 2,
+};
+static const char *const CTR_SUBDIRS[] = {
+    "sdmc/Nintendo 3DS/00000000000000000000000000000000/00000000000000000000000000000000/title",
+};
+
 /* Cemu (src/Cafe/TitleList/SaveInfo.cpp, Account.cpp): the mlc's
  * usr/save/00050000/<title low>/ holds meta/, user/<persistent id>/ per
  * account and user/common/ for every account. Cemu writes meta/ again when
@@ -545,6 +561,9 @@ static const sigil_layout LAYOUTS[] = {
     ROW_PROFILES("ryujinx", "switch", RYUJINX_SUBDIRS, RYUJINX_PROFILES),
     ROW_PROFILES("kenjinx", "switch", RYUJINX_SUBDIRS, RYUJINX_PROFILES),
     ROW_PROFILES("cemu", "wiiu", CEMU_SUBDIRS, CEMU_PROFILES),
+    ROW_PROFILES("azahar", "3ds", CTR_SUBDIRS, CTR_FOLDERS),
+    ROW_PROFILES("citra", "3ds", CTR_SUBDIRS, CTR_FOLDERS),
+    ROW_PROFILES("lime3ds", "3ds", CTR_SUBDIRS, CTR_FOLDERS),
     ROW_PROFILES("vita3k", "psvita", VITA3K_SUBDIRS, VITA3K_PROFILES),
     ROW_PROFILES("rpcs3", "ps3", RPCS3_SUBDIRS, RPCS3_PROFILES),
     /* aPS3e (aenu1/aps3e) and ARMSX3 keep RPCS3's tree under their config/ folder, user 00000001. */

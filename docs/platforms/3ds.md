@@ -1,7 +1,6 @@
 # Nintendo 3DS
 
-Status: in development
-Sigil reads the title id and `save_id` from a 3DS image. No layout row names a 3DS emulator's save files.
+Status: synced
 
 ## Identification
 
@@ -58,7 +57,27 @@ frontend's save folder. Real-console tools (Checkpoint, JKSM) export the
 same tree, so copying the folder moves a save without loss. The 3DS has
 no user accounts.
 
+## Save layouts
+
+| Layout | Files (role, option) | Shared | Verified |
+|---|---|---|---|
+| `azahar`, `citra`, `lime3ds` | folder: `sdmc/Nintendo 3DS/00000000000000000000000000000000/00000000000000000000000000000000/title/{save_id}/data/`, holding `00000001/` and `00000001.metadata` | | emulator source |
+
+The base folder is the one holding `sdmc/`: Azahar's user folder, or the
+folder a libretro core keeps its tree in under the frontend's save folder.
+`{save_id}` is the title id as its two folders (`00040000/00033500`).
+
+## Sync
+
+The unit is a zip of the title's `data/` folder under the title id's two
+folders: `00040000/00033500/00000001/...` and
+`00040000/00033500/00000001.metadata`. Installed content beside it
+(`content/`) stays out. The rules for folder layouts are in
+[sync](../sync.md) and [profiles](../save-units.md#profiles).
+
 ## Open items
 
+- Extra data (extdata, `sdmc/Nintendo 3DS/.../extdata/`) doesn't travel: the extdata ids a title uses don't follow from its title id in general.
 - Check one 3DS title known to use shared extdata.
+- The libretro core's folder under the frontend's save folder is unconfirmed.
 - How much key handling is in scope for reading the 3DS exheader?

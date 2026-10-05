@@ -121,12 +121,12 @@ card by its contents: `memcards/Mcd001.ps2` is a folder card when the
 listing holds paths below it (`memcards/Mcd001.ps2/_pcsx2_superblock`), and
 a file card when it is listed alone.
 
-On a layout with profiles (`eden`, `citron`, `sudachi`, `yuzu`, `cemu`,
-`vita3k`, `rpcs3`) and on the PSP layouts (`ppsspp`, `ppsspp_standalone`,
-`psp_console`, which keep no profiles), `saveRoot` may be any folder
-around the emulator's own: its base (the folder holding `nand/`, `mlc01/`,
-`ux0/`, `dev_hdd0/` or `PSP/`), a folder above it, or one inside it such
-as a profile's save folder. Sigil re-roots at the base and takes the profile the root lies in.
+On a folder layout (the Switch, Wii U, PS Vita, PS3, PSP and 3DS
+emulators; [platforms/](../platforms/README.md#layouts) lists them),
+`saveRoot` may be any folder around the emulator's own: its base (the
+folder holding `nand/`, `bis/`, `mlc01/`, `ux0/`, `dev_hdd0/`, `PSP/` or
+`sdmc/`), a folder above it, or one inside it such as a profile's save
+folder. Sigil re-roots at the base and takes the profile the root lies in.
 Member paths are then relative to the base, which `saveBase` returns.
 [save-units.md](../save-units.md#profiles) has the folders and the profile rules.
 

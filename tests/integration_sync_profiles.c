@@ -943,6 +943,44 @@ static void check_ryujinx(void) {
     root_free(&root);
 }
 
+/* ---- 3DS -------------------------------------------------------------------------- */
+
+#define CTR_TITLE "sdmc/Nintendo 3DS/00000000000000000000000000000000/00000000000000000000000000000000/title/"
+
+/* Azahar keeps a title's save as data/00000001/ with 00000001.metadata beside
+ * it, under the title id split in two folders: both travel, other titles
+ * don't, and a restore writes them back in a data folder that has none. */
+static void check_3ds(void) {
+    mem_root root = {0};
+    put_text(&root, CTR_TITLE "00040000/00033500/data/00000001/main", "save");
+    put_text(&root, CTR_TITLE "00040000/00033500/data/00000001.metadata", "meta");
+    put_text(&root, CTR_TITLE "00040000/00033501/data/00000001/main", "another title");
+    put_text(&root, CTR_TITLE "00040000/00033500/content/00000000.app", "installed game");
+    game g;
+    make_game(&g, &root, "azahar", "3ds", "00040000/00033500");
+    sigil_sync_result *r = NULL;
+    expect_rc("3ds collect", collect(&g, &r), SIGIL_OK);
+    if (!unit_has(r, "00040000/00033500/00000001/main") || !unit_has(r, "00040000/00033500/00000001.metadata") ||
+        !unit_all(r, "00040000/00033500/", NULL, 2)) {
+        fail("3ds collect", "the save folder and its metadata, nothing else");
+    }
+
+    mem_root fresh = {0};
+    game t;
+    make_game(&t, &fresh, "citra", "3ds", "00040000/00033500");
+    t.req.save.root_path = "/storage/emulated/0/citra-emu";
+    sigil_sync_result *w = NULL;
+    expect_rc("3ds restore", restore(&t, r, &w), SIGIL_OK);
+    if (!root_holds(&fresh, CTR_TITLE "00040000/00033500/data/00000001/main", "save") ||
+        !root_holds(&fresh, CTR_TITLE "00040000/00033500/data/00000001.metadata", "meta")) {
+        fail("3ds restore", "files");
+    }
+    sigil_sync_result_free(w);
+    sigil_sync_result_free(r);
+    root_free(&fresh);
+    root_free(&root);
+}
+
 /* ---- PSP -------------------------------------------------------------------------- */
 
 /* A PARAM.SFO holding one empty string entry per key. */
@@ -1331,6 +1369,7 @@ int main(void) {
     check_psp_game_data();
     check_skyline();
     check_ryujinx();
+    check_3ds();
     check_save_base();
     check_resolve();
     check_list_profiles();

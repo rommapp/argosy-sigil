@@ -44,7 +44,7 @@ do it yet) or `n/a` (the system has nothing of that kind).
 | [Super Nintendo](docs/platforms/snes.md) | n/a | yes | n/a | single or multi | no |
 | [Famicom Disk System](docs/platforms/fds.md) | no | yes | n/a | single | no |
 | [Nintendo DS](docs/platforms/nds.md) | no | yes | n/a | single | no |
-| [Nintendo 3DS](docs/platforms/3ds.md) | yes | no | n/a | folder | no |
+| [Nintendo 3DS](docs/platforms/3ds.md) | yes | yes | n/a | folder | yes |
 | [Nintendo 64](docs/platforms/n64.md) | yes | yes | n/a | single or multi | no |
 | [GameCube](docs/platforms/gamecube.md) | yes | yes | yes | single or multi | yes |
 | [Wii](docs/platforms/wii.md) | yes | no | n/a | folder | no |
