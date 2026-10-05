@@ -28,7 +28,7 @@ save folder; sigil never searches the drive.
 | NES, Famicom Disk System | [fds](fds.md) | `fds` (layout rows) | no | located |
 | Nintendo DS | [nds](nds.md) | | no | located |
 | Nintendo 3DS | [3ds](3ds.md) | `3ds` | yes | synced |
-| Nintendo 64 | [n64](n64.md) | `n64` | yes | located |
+| Nintendo 64 | [n64](n64.md) | `n64` | yes | synced |
 | Pokémon Mini | [pokemini](pokemini.md) | | no | located |
 | GameCube | [gamecube](gamecube.md) | `gamecube` | yes | synced |
 | Wii | [wii](wii.md) | `wii` | yes | in development |

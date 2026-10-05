@@ -160,15 +160,24 @@ static int finish(sigil_sync_ctx *x, sigil_sync_result *r, bool collecting) {
     return rc;
 }
 
-/* The kind for the request: a layout with profiles keeps its saves as plain
- * folders, so it needs nothing from a card format but the platform. */
+static bool n64_cart(const sigil_sync_request *req) {
+    return req->save.platform && strcmp(sigil_layout_platform(req->save.platform), "n64") == 0;
+}
+
+/* Saves kept as plain files: a layout with profiles, or an N64 cartridge. */
+static bool plain_files(const sigil_sync_request *req, const sigil_layout *layout) {
+    return layout->profiles || n64_cart(req);
+}
+
+/* The kind for the request: saves kept as plain files need nothing from a
+ * card format but the platform, and take no companions. */
 static const sigil_sync_kind *kind_for(const sigil_sync_request *req, const sigil_layout *layout,
-                                       sigil_sync_kind *folders) {
-    if (!layout->profiles) return sigil_sync_kind_for(req);
-    memset(folders, 0, sizeof(*folders));
-    folders->platform = layout->platform;
-    folders->has_ids = true;
-    return req->companion_count ? NULL : folders;
+                                       sigil_sync_kind *files) {
+    if (!plain_files(req, layout)) return sigil_sync_kind_for(req);
+    memset(files, 0, sizeof(*files));
+    files->platform = layout->profiles ? layout->platform : "n64";
+    files->has_ids = true;
+    return req->companion_count ? NULL : files;
 }
 
 int sigil_collect(const sigil_sync_request *req, sigil_sync_result **out) {
@@ -176,15 +185,19 @@ int sigil_collect(const sigil_sync_request *req, sigil_sync_result **out) {
     *out = NULL;
     if (!request_valid(req)) return SIGIL_ERR_INVALID_ARG;
     const sigil_layout *layout = sigil_layout_find(req->save.layout, req->save.platform);
-    sigil_sync_kind folders;
-    const sigil_sync_kind *kind = kind_for(req, layout, &folders);
-    if (!kind) return layout->profiles ? SIGIL_ERR_INVALID_ARG : SIGIL_ERR_UNSUPPORTED_FORMAT;
+    sigil_sync_kind files;
+    const sigil_sync_kind *kind = kind_for(req, layout, &files);
+    if (!kind) return plain_files(req, layout) ? SIGIL_ERR_INVALID_ARG : SIGIL_ERR_UNSUPPORTED_FORMAT;
     sigil_sync_ctx x;
     int rc = sigil_sync_ctx_open(&x, req, kind);
     sigil_sync_result *r = rc == SIGIL_OK ? new_result() : NULL;
     if (rc == SIGIL_OK && !r) rc = SIGIL_ERR_OOM;
     if (rc == SIGIL_OK) rc = sigil_save_alternates(&req->save, &r->alternates, &r->alternate_count);
-    if (rc == SIGIL_OK) rc = layout->profiles ? sigil_sync_collect_profiles(&x, layout->profiles, r) : collect_any(&x, r);
+    if (rc == SIGIL_OK) {
+        rc = layout->profiles ? sigil_sync_collect_profiles(&x, layout->profiles, r)
+           : n64_cart(req)    ? sigil_sync_collect_n64(&x, r)
+                              : collect_any(&x, r);
+    }
     if (rc == SIGIL_OK) rc = finish(&x, r, true);
     sigil_sync_ctx_close(&x);
     return hand_back(r, rc, out);
@@ -337,9 +350,9 @@ int sigil_restore(const sigil_sync_request *req, const uint8_t *unit, size_t uni
     *out = NULL;
     if (!request_valid(req) || !req->write || !unit) return SIGIL_ERR_INVALID_ARG;
     const sigil_layout *layout = sigil_layout_find(req->save.layout, req->save.platform);
-    sigil_sync_kind folders;
-    const sigil_sync_kind *kind = kind_for(req, layout, &folders);
-    if (!kind) return layout->profiles ? SIGIL_ERR_INVALID_ARG : SIGIL_ERR_UNSUPPORTED_FORMAT;
+    sigil_sync_kind files;
+    const sigil_sync_kind *kind = kind_for(req, layout, &files);
+    if (!kind) return plain_files(req, layout) ? SIGIL_ERR_INVALID_ARG : SIGIL_ERR_UNSUPPORTED_FORMAT;
     sigil_sync_ctx x;
     int rc = sigil_sync_ctx_open(&x, req, kind);
     sigil_sync_result *r = rc == SIGIL_OK ? new_result() : NULL;
@@ -352,6 +365,7 @@ int sigil_restore(const sigil_sync_request *req, const uint8_t *unit, size_t uni
     if (r) r->hardcore_marker = marked;
     if (rc == SIGIL_OK) {
         rc = layout->profiles ? sigil_sync_restore_profiles(&x, layout->profiles, unit, saves_len, r, local_identity)
+           : n64_cart(req)    ? sigil_sync_restore_n64(&x, unit, saves_len, unit_len, r, local_identity)
                               : restore_units(&x, unit, saves_len, unit_len, r, local_identity);
     }
     if (rc == SIGIL_OK && req->mode == SIGIL_SYNC_UNMANAGED) {

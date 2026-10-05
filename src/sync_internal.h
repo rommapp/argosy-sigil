@@ -166,6 +166,18 @@ int sigil_sync_drop(const sigil_sync_request *req, const char *path);
  */
 size_t sigil_sync_unmarked_len(const uint8_t *unit, size_t len, bool *marked);
 
+/* ---- N64 cartridges (sync_n64.c) ---------------------------------------------- */
+
+/** Collect on N64: the neutral zip of the regions the game uses, from whichever emulator's files hold them. */
+int sigil_sync_collect_n64(sigil_sync_ctx *x, sigil_sync_result *r);
+/**
+ * Restore on N64: a neutral unit, a zip of an emulator's files, a libretro
+ * .srm or a lone EEPROM file, written as the request's emulator keeps it.
+ * `received_len` is the unit's length as it came, for RomM's hash.
+ */
+int sigil_sync_restore_n64(sigil_sync_ctx *x, const uint8_t *unit, size_t len, size_t received_len,
+                           sigil_sync_result *r, char local_identity[33]);
+
 enum { SYNC_OWN_GAME, SYNC_OWN_OTHER, SYNC_OWN_NONE, SYNC_OWN_COMPANION };
 
 /* Whose saves a unit or card read takes: the game's, the game's and its
