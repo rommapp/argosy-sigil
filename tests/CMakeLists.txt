@@ -87,6 +87,7 @@ endforeach()
 # through sigil. That indirection only ever worked for a static build; a shared
 # libsigil keeps those dependencies private and the tests fail to link.
 target_link_libraries(unit_zip PRIVATE sigil_zlib)
+target_link_libraries(integration_sync_volumes PRIVATE sigil_zlib)
 target_link_libraries(unit_zar PRIVATE sigil_zstd_compress)
 target_link_libraries(unit_switch_cnmt PRIVATE sigil_aes)
 
