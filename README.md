@@ -11,43 +11,62 @@ other games' saves.
 ## What it handles
 
 The client always tells sigil which emulator runs the game and where that
-emulator keeps its saves; sigil never searches the drive. From there:
+emulator keeps its saves; sigil never searches the drive. Each column
+reads `yes` (sigil does it), `no` (the system needs it and sigil doesn't
+do it yet) or `n/a` (the system has nothing of that kind).
 
-- **Game id**: sigil reads the platform's own id out of the ROM.
-- **Names the save files**: sigil knows which files in that save folder are
-  this game's, for each emulator it lists. The client uploads them as they
+- **Game id**: sigil reads the system's own id out of the ROM. `n/a` where
+  the cart or disc carries none and emulators name saves after the file.
+- **Save files**: sigil knows which files in the save folder are this
+  game's, for each emulator it lists. The client can upload them as they
   are ([members](docs/quickstart-guides/c.md#without-collect-and-restore)).
-- **Builds the upload**: sigil packs the game's saves into the unit that
-  goes to RomM and writes a downloaded one back, conflicts included
-  ([sync](docs/sync.md)). Where the emulator keeps every game on one
-  memory card or backup RAM file, this is what takes one game's saves out
-  of the card and puts them back without touching the others.
+- **Shared card**: the emulator can keep every game's saves on one memory
+  card or backup RAM file, and sigil takes one game's saves out of it and
+  puts them back without touching the others. `n/a` where each game's
+  saves are already files of their own.
+- **Unit**: what travels to RomM: one file, several files zipped, or the
+  game's save folders zipped. "single or multi" depends on the emulator
+  or the cart (a clock file, a second card).
+- **Collect and restore**: sigil builds the unit, writes a downloaded one
+  back and tracks what changed since the last sync
+  ([sync](docs/sync.md)). Where it's `no`, the client uploads the save
+  files as they are.
 
-| System | Game id | Names the save files | Builds the upload |
-|---|---|---|---|
-| [PlayStation](docs/platforms/psx.md) | yes | yes | yes |
-| [PlayStation 2](docs/platforms/ps2.md) | yes | yes | yes |
-| [PSP](docs/platforms/psp.md) | yes | yes | yes |
-| [PS Vita](docs/platforms/psvita.md) | yes | yes | yes |
-| [PlayStation 3](docs/platforms/ps3.md) | yes | yes | yes |
-| [Game Boy / Color](docs/platforms/gb.md) | header facts | yes | |
-| [Game Boy Advance](docs/platforms/gba.md) | | yes | |
-| [Super Nintendo](docs/platforms/snes.md) | header facts | yes | |
-| [Famicom Disk System](docs/platforms/fds.md) | | yes | |
-| [Nintendo DS](docs/platforms/nds.md) | | yes | |
-| [Nintendo 3DS](docs/platforms/3ds.md) | yes | | |
-| [GameCube](docs/platforms/gamecube.md) | yes | yes | yes |
-| [Wii](docs/platforms/wii.md) | yes | | |
-| [Wii U](docs/platforms/wiiu.md) | yes | yes | yes |
-| [Switch](docs/platforms/switch.md) | yes | yes | yes |
-| [Mega Drive, 32X, Master System, Game Gear](docs/platforms/genesis.md) | | yes | |
-| [Sega CD](docs/platforms/segacd.md) | | yes | yes |
-| [Saturn](docs/platforms/saturn.md) | | yes | yes |
-| [Dreamcast](docs/platforms/dreamcast.md) | yes | yes | yes |
-| [Xbox](docs/platforms/xbox.md) | yes | | |
-| [Xbox 360](docs/platforms/xbox360.md) | yes | | |
-| [Arcade](docs/platforms/arcade.md), [Neo Geo](docs/platforms/neogeo.md), [Neo Geo Pocket](docs/platforms/ngp.md), [PC Engine](docs/platforms/pce.md), [WonderSwan](docs/platforms/wonderswan.md), [Lynx](docs/platforms/lynx.md), [Jaguar](docs/platforms/jaguar.md), [Pokémon Mini](docs/platforms/pokemini.md), [3DO](docs/platforms/3do.md), [DOS](docs/platforms/dos.md), [CD-i](docs/platforms/cdi.md) | | yes | |
-| [Nintendo 64](docs/platforms/n64.md) | yes | yes | |
+| System | Game id | Save files | Shared card | Unit | Collect and restore |
+|---|---|---|---|---|---|
+| [PlayStation](docs/platforms/psx.md) | yes | yes | yes | single | yes |
+| [PlayStation 2](docs/platforms/ps2.md) | yes | yes | yes | single | yes |
+| [PSP](docs/platforms/psp.md) | yes | yes | n/a | folder | yes |
+| [PS Vita](docs/platforms/psvita.md) | yes | yes | n/a | folder | yes |
+| [PlayStation 3](docs/platforms/ps3.md) | yes | yes | n/a | folder | yes |
+| [Game Boy / Color](docs/platforms/gb.md) | n/a | yes | n/a | single or multi | no |
+| [Game Boy Advance](docs/platforms/gba.md) | no | yes | n/a | single or multi | no |
+| [Super Nintendo](docs/platforms/snes.md) | n/a | yes | n/a | single or multi | no |
+| [Famicom Disk System](docs/platforms/fds.md) | no | yes | n/a | single | no |
+| [Nintendo DS](docs/platforms/nds.md) | no | yes | n/a | single | no |
+| [Nintendo 3DS](docs/platforms/3ds.md) | yes | no | n/a | folder | no |
+| [Nintendo 64](docs/platforms/n64.md) | yes | yes | n/a | single or multi | no |
+| [GameCube](docs/platforms/gamecube.md) | yes | yes | yes | single or multi | yes |
+| [Wii](docs/platforms/wii.md) | yes | no | n/a | folder | no |
+| [Wii U](docs/platforms/wiiu.md) | yes | yes | n/a | folder | yes |
+| [Switch](docs/platforms/switch.md) | yes | yes | n/a | folder | yes |
+| [Mega Drive, 32X, Master System, Game Gear](docs/platforms/genesis.md) | no | yes | n/a | single | no |
+| [Sega CD](docs/platforms/segacd.md) | no | yes | yes | single or multi | yes |
+| [Saturn](docs/platforms/saturn.md) | no | yes | yes | single or multi | yes |
+| [Dreamcast](docs/platforms/dreamcast.md) | yes | yes | yes | single or multi | yes |
+| [Xbox](docs/platforms/xbox.md) | yes | no | n/a | folder | no |
+| [Xbox 360](docs/platforms/xbox360.md) | yes | no | n/a | folder | no |
+| [Arcade](docs/platforms/arcade.md) | n/a | yes | no | single or multi | no |
+| [Neo Geo](docs/platforms/neogeo.md) | no | yes | no | single or multi | no |
+| [Neo Geo Pocket](docs/platforms/ngp.md) | no | yes | n/a | single | no |
+| [PC Engine](docs/platforms/pce.md) | n/a | yes | n/a | single | no |
+| [WonderSwan](docs/platforms/wonderswan.md) | no | yes | n/a | single | no |
+| [Lynx](docs/platforms/lynx.md) | n/a | yes | n/a | single | no |
+| [Jaguar](docs/platforms/jaguar.md) | n/a | yes | no | single | no |
+| [Pokémon Mini](docs/platforms/pokemini.md) | no | yes | n/a | single | no |
+| [3DO](docs/platforms/3do.md) | n/a | yes | no | single | no |
+| [DOS](docs/platforms/dos.md) | n/a | yes | n/a | single | no |
+| [CD-i](docs/platforms/cdi.md) | n/a | yes | n/a | folder | no |
 
 [docs/platforms/](docs/platforms/README.md) lists every system, the
 emulators each one covers, and the ones still in development. Formats and
