@@ -216,7 +216,10 @@ since its last sync. The state keeps the account area's hash per profile and
 the device area's per device, so another profile's sync doesn't read as a
 change. A unit member no folder of the game takes, or one whose folder lies
 outside the root, is `SIGIL_ERR_NO_TARGET` naming it; Cemu's `meta/`, which
-Cemu writes again by itself, is skipped instead.
+Cemu writes again by itself, is skipped instead. A 3DS unit without
+extdata leaves the title's extdata alone. On Ryujinx, restore gives a game
+the emulator never ran its save index entries
+([switch](platforms/switch.md#save-layouts)).
 
 The root may sit anywhere around the emulator's base folder, the one
 holding the row's top folder (`nand`, `mlc01`, `ux0`, `dev_hdd0`). Above it,

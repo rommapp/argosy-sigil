@@ -127,9 +127,11 @@ typedef struct {
     sigil_named_md5  *parts;                         /* under the name collect gives each member */
     char              content[33];                   /* RomM's hash of the unit as it came */
     bool              carried[AREA_COUNT];           /* the unit holds files of the area, by AREAS */
+    sigil_profile_published published;               /* the save index's new entries for the unit's saves */
 } incoming_unit;
 
 static void incoming_free(incoming_unit *u) {
+    sigil_profile_published_free(&u->published);
     if (u->members) sigil_zip_members_free(u->members, u->count);
     free(u->paths);
     free(u->areas);
@@ -179,8 +181,24 @@ static bool argosy_device_unit(const sigil_sync_ctx *x, const profile_sync *s, c
  * reaches, is SIGIL_ERR_NO_TARGET; an account member with several profiles
  * and none picked is SIGIL_ERR_AMBIGUOUS; one whose path leaves the root is
  * SIGIL_ERR_IO; two members for one file are SIGIL_ERR_UNSUPPORTED_FORMAT. */
-static int read_unit(const sigil_sync_ctx *x, const profile_sync *s, const uint8_t *unit, size_t len,
-                     incoming_unit *u, sigil_sync_result *r) {
+/* On a row with a save index, folders for the unit's saves of a game the
+ * emulator never ran: the unit's <title>/... members are the account save,
+ * its device/<title>/... members the device save. */
+static int publish_saves(profile_sync *s, incoming_unit *u) {
+    if (!s->root.row->index) return SIGIL_OK;
+    char account[SIGIL_SAVE_ENTRY_MAX], device[SIGIL_SAVE_ENTRY_MAX];
+    snprintf(account, sizeof(account), "%s/", s->root.save_id);
+    snprintf(device, sizeof(device), "device/%s/", s->root.save_id);
+    bool has_account = false, has_device = false;
+    for (size_t i = 0; i < u->count; i++) {
+        has_account = has_account || strncmp(u->members[i].name, account, strlen(account)) == 0;
+        has_device = has_device || strncmp(u->members[i].name, device, strlen(device)) == 0;
+    }
+    return sigil_profile_publish(&s->root, has_account, has_device, &u->published);
+}
+
+static int read_unit(const sigil_sync_ctx *x, profile_sync *s, const uint8_t *unit, size_t len, incoming_unit *u,
+                     sigil_sync_result *r) {
     memset(u, 0, sizeof(*u));
     int rc = sigil_zip_read_mem(unit, len, PROFILE_MAX_MEMBER, &u->members, &u->count);
     if (rc != SIGIL_OK) return rc;
@@ -203,6 +221,8 @@ static int read_unit(const sigil_sync_ctx *x, const profile_sync *s, const uint8
         sigil_md5_of(u->members[i].data, u->members[i].len, u->parts[i].md5);
     }
     content_of(u->parts, u->count, u->content);
+    rc = publish_saves(s, u);
+    if (rc != SIGIL_OK && rc != SIGIL_ERR_NO_TARGET) return rc;
     for (size_t i = 0; i < u->count; i++) {
         sigil_profile_file f;
         bool skip = false;
@@ -316,11 +336,15 @@ static bool holds(const local_files *l, const char *path, const char *md5) {
     return false;
 }
 
+/* The save index's counter goes first and the index last: a counter left
+ * past an id nothing uses is harmless, an index naming an id the counter
+ * hasn't passed gets that folder wiped when the emulator publishes it again. */
 static int write_areas(const sigil_sync_ctx *x, const incoming_unit *u, const local_files *l) {
     bool removing = false;
     for (size_t i = 0; i < l->count && !removing; i++) removing = goes(u, l, i);
     if (removing && !x->req->remove) return SIGIL_ERR_INVALID_ARG;
-    int rc = SIGIL_OK;
+    const sigil_profile_published *pub = &u->published;
+    int rc = pub->index ? sigil_sync_put(x->req, pub->counter_path, pub->counter, sizeof(pub->counter)) : SIGIL_OK;
     for (size_t i = 0; i < u->count && rc == SIGIL_OK; i++) {
         if (!u->paths[i][0] || holds(l, u->paths[i], u->parts[i].md5)) continue;
         rc = sigil_sync_put(x->req, u->paths[i], u->members[i].data, u->members[i].len);
@@ -328,6 +352,7 @@ static int write_areas(const sigil_sync_ctx *x, const incoming_unit *u, const lo
     for (size_t i = 0; i < l->count && rc == SIGIL_OK; i++) {
         if (goes(u, l, i)) rc = sigil_sync_drop(x->req, l->files[i].path);
     }
+    if (rc == SIGIL_OK && pub->index) rc = sigil_sync_put(x->req, pub->index_path, pub->index, pub->index_len);
     return rc;
 }
 

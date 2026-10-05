@@ -76,10 +76,20 @@ title. sigil reads the index to find the game's folders and takes only
 each folder's committed copy (`0/`), leaving the working copy, the lock and
 Kenji-NX's `TITLEID.txt` out. A unit uses the yuzu forks' names, so it
 moves between Ryujinx and the yuzu forks unchanged. A profile id is the
-user's `user_id` as `Profiles.json` writes it. Restore writes only into a
-folder the index already holds: a game Ryujinx hasn't run has none, and
-restore refuses with `SIGIL_ERR_NO_TARGET` naming the member. Run the game
-once, then restore.
+user's `user_id` as `Profiles.json` writes it.
+
+A game Ryujinx hasn't run has no folder. Restore then gives the unit's
+account and device saves their entries as Ryujinx does on the game's first
+run. Each new folder id goes past every id in `lastPublishedId`, in the
+index and among the folders under `bis/user/save/`, since Ryujinx wipes the
+folder of an id it hands out again. Restore writes the raised
+`lastPublishedId` first and the index, with its entries in LibHac's key
+order, last. The saves go in `<id>/0/`; Ryujinx writes the folder's extra
+data the next time it starts. Restore refuses with `SIGIL_ERR_NO_TARGET`
+naming the member when the index is missing (Ryujinx never started) or
+already holds the save's key, as for one marked for deletion. Ryujinx keeps
+the index in memory while it runs and writes it back over sigil's, so
+restore only while it is closed.
 
 The layouts list `nand/user/save/0000000000000000` and
 `nand/system/save/8000000000000010/su/avators`, which
@@ -120,7 +130,7 @@ the profile's folder.
 
 sigil has no layout for the yuzu forks' newer layout, and reads no NACP.
 
-- Ryujinx: restoring a game it has never run would mean adding an entry to its save index and bumping `lastPublishedId`; until that is checked on a device, restore refuses. When `0/` is missing Ryujinx loads `1/`, which sigil doesn't read. Cache storage on the emulated SD card has its own index, which sigil doesn't read. The rows follow LibHac copies vendored in other projects, since the pinned Ryujinx.LibHac builds weren't reachable.
+- Ryujinx: the index entries restore adds for a game never run follow Ryujinx.LibHac 0.20.0. They are unchecked against a device running the emulators' 0.21 builds, as are a size of 0 in the entry's value, the extra data Ryujinx writes on its next start, and whether Kenji-NX wants its `TITLEID.txt` in the new folder. When `0/` is missing Ryujinx loads `1/`, which sigil doesn't read. Cache storage on the emulated SD card has its own index, which sigil doesn't read. The rows follow LibHac copies vendored in other projects, since the pinned Ryujinx.LibHac builds weren't reachable.
 - Lemon moves to the newer layout (`user/save/account/<uuid>/<TITLEID>/0`) when that folder exists, and lets the user move its NAND folder; the `lemon` row knows the default yuzu tree only.
 - Skyline's source is no longer published; its row follows the last version visible in Strato's history (May 2023).
 - Whether Mario Kart 8 Deluxe keeps a real device save, or only a copy of account data in the device folder, is not shown. The game's control data (NACP) declares its device save size and would settle it; reading the NACP needs more of the user's keys than sigil uses today.

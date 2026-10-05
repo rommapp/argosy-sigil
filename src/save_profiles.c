@@ -358,16 +358,17 @@ static bool inside_save_folder(const sigil_profile_root *p) {
 /* ---- profiles ------------------------------------------------------------------ */
 
 /* `*data` gets the listed file's bytes, or NULL when the root can't reach it,
- * it isn't listed or the request has no `open`. SIGIL_ERR_IO when it is
- * listed and won't open. */
-static int read_root_file(const sigil_profile_root *p, const char *base_path, uint8_t **data, size_t *len) {
+ * it isn't listed, it is over `cap` bytes or the request has no `open`.
+ * SIGIL_ERR_IO when it is listed and won't open. */
+static int read_root_file(const sigil_profile_root *p, const char *base_path, size_t cap, uint8_t **data,
+                          size_t *len) {
     char path[SIGIL_SAVE_PATH_MAX];
     *data = NULL;
     *len = 0;
     if (!p->req->open || !to_root(p, base_path, path) || !sigil_save_listed(p->req, path)) return SIGIL_OK;
     sigil_io *io = p->req->open(p->req->open_ctx, path);
     if (!io) return SIGIL_ERR_IO;
-    int rc = sigil_bram_read_all(io, PROFILE_LIST_MAX, data, len);
+    int rc = sigil_bram_read_all(io, cap, data, len);
     sigil_io_close(io);
     return rc == SIGIL_ERR_UNSUPPORTED_FORMAT ? SIGIL_OK : rc;
 }
@@ -534,7 +535,7 @@ static bool list_reachable(const sigil_profile_root *p) {
 static int yuzu_profiles(sigil_profile_root *p) {
     size_t len = 0;
     uint8_t *data = NULL;
-    int rc = read_root_file(p, p->row->list, &data, &len);
+    int rc = read_root_file(p, p->row->list, PROFILE_LIST_MAX, &data, &len);
     for (size_t off = YUZU_HEADER; data && off + YUZU_ENTRY <= len; off += YUZU_ENTRY) {
         const uint8_t *uuid = data + off;
         bool empty = true;
@@ -606,7 +607,7 @@ static bool json_value(const char *s, const char *end, const char *key, char *ou
 static int ryujinx_profiles(sigil_profile_root *p) {
     size_t len = 0;
     uint8_t *data = NULL;
-    int rc = read_root_file(p, p->row->list, &data, &len);
+    int rc = read_root_file(p, p->row->list, PROFILE_LIST_MAX, &data, &len);
     char *text = data ? (char *)malloc(len + 1) : NULL;
     if (text) {
         memcpy(text, data, len);
@@ -634,11 +635,41 @@ static int ryujinx_profiles(sigil_profile_root *p) {
 
 #define KVDB_MAGIC   0x564B4D49u   /* "IMKV" */
 #define KVDB_ENTRY   0x4E454D49u   /* "IMEN" */
+#define KVDB_HEADER  0xCu
 #define KVDB_KEY     0x40u
+#define KVDB_VALUE   0x40u
+#define INDEX_MAX    (16u * 1024u * 1024u)
 #define INDEX_ACCOUNT 1
 #define INDEX_DEVICE  3
 #define INDEX_SPACE_USER 1
 #define INDEX_DELETED 3
+
+/* One entry of a KeyValueArchive: "IMEN", the key's and the value's sizes,
+ * then both. */
+typedef struct {
+    const uint8_t *start, *key, *value;
+    uint32_t       key_len, value_len;
+    size_t         size;   /* the whole entry's bytes */
+} kvdb_entry;
+
+/* The archive's entry at `*at`, moving `*at` past it; false at the end of
+ * the archive or at an entry that runs past it. */
+static bool kvdb_next(const uint8_t *data, size_t len, size_t *at, kvdb_entry *e) {
+    if (*at + KVDB_HEADER > len || sigil_read_le32(data + *at) != KVDB_ENTRY) return false;
+    e->key_len = sigil_read_le32(data + *at + 4);
+    e->value_len = sigil_read_le32(data + *at + 8);
+    if (e->key_len > len || e->value_len > len || *at + KVDB_HEADER + e->key_len + e->value_len > len) return false;
+    e->start = data + *at;
+    e->key = e->start + KVDB_HEADER;
+    e->value = e->key + e->key_len;
+    e->size = KVDB_HEADER + e->key_len + e->value_len;
+    *at += e->size;
+    return true;
+}
+
+static bool kvdb_valid(const uint8_t *data, size_t len) {
+    return data && len >= KVDB_HEADER && sigil_read_le32(data) == KVDB_MAGIC;
+}
 
 /* Ryujinx's imkvdb.arc (LibHac KeyValueArchive of SaveDataAttribute keys and
  * SaveDataIndexerValue values): the game's account and device saves in the
@@ -647,24 +678,19 @@ static int ryujinx_profiles(sigil_profile_root *p) {
 static int load_index(sigil_profile_root *p) {
     size_t len = 0;
     uint8_t *data = NULL;
-    int rc = read_root_file(p, p->row->index, &data, &len);
+    int rc = read_root_file(p, p->row->index, INDEX_MAX, &data, &len);
     uint64_t title = 0;
     bool have_title = sscanf(p->save_id, "%16" SCNx64, &title) == 1;
-    if (!data || len < 0xC || sigil_read_le32(data) != KVDB_MAGIC || !have_title) {
+    if (!kvdb_valid(data, len) || !have_title) {
         free(data);
         return rc;
     }
     uint32_t count = sigil_read_le32(data + 8);
-    size_t at = 0xC;
-    for (uint32_t i = 0; i < count && at + 0xC <= len; i++) {
-        uint32_t key_len = sigil_read_le32(data + at + 4), value_len = sigil_read_le32(data + at + 8);
-        if (sigil_read_le32(data + at) != KVDB_ENTRY || key_len > len || value_len > len ||
-            at + 0xC + key_len + value_len > len) {
-            break;
-        }
-        const uint8_t *key = data + at + 0xC, *value = key + key_len;
-        at += 0xC + key_len + value_len;
-        if (key_len < KVDB_KEY || value_len < 0x1A || sigil_read_le64(key) != title) continue;
+    size_t at = KVDB_HEADER;
+    kvdb_entry entry;
+    for (uint32_t i = 0; i < count && kvdb_next(data, len, &at, &entry); i++) {
+        const uint8_t *key = entry.key, *value = entry.value;
+        if (entry.key_len < KVDB_KEY || entry.value_len < 0x1A || sigil_read_le64(key) != title) continue;
         int type = key[0x20];
         if ((type != INDEX_ACCOUNT && type != INDEX_DEVICE) || value[0x18] != INDEX_SPACE_USER ||
             value[0x19] == INDEX_DELETED || p->indexed_count == SIGIL_PROFILE_INDEX_MAX) {
@@ -706,6 +732,172 @@ static const sigil_profile_indexed *indexed_save(const sigil_profile_root *p, in
     return NULL;
 }
 
+/* LibHac's SaveDataAttribute order, which the index keeps its entries in:
+ * program id, type, user (high, then low), static id, index, rank. */
+static int key_order(const uint8_t *a, const uint8_t *b) {
+    static const struct { uint8_t at, size; } FIELDS[] = {
+        { 0x00, 8 }, { 0x20, 1 }, { 0x08, 8 }, { 0x10, 8 }, { 0x18, 8 }, { 0x22, 2 }, { 0x21, 1 },
+    };
+    for (size_t i = 0; i < sizeof(FIELDS) / sizeof(FIELDS[0]); i++) {
+        const uint8_t *x = a + FIELDS[i].at, *y = b + FIELDS[i].at;
+        uint64_t u = FIELDS[i].size == 8 ? sigil_read_le64(x) : FIELDS[i].size == 2 ? sigil_read_le16(x) : *x;
+        uint64_t v = FIELDS[i].size == 8 ? sigil_read_le64(y) : FIELDS[i].size == 2 ? sigil_read_le16(y) : *y;
+        if (u != v) return u < v ? -1 : 1;
+    }
+    return 0;
+}
+
+/* The highest save folder id the counter, the index or a listed folder under
+ * bis/user/save/ holds. The emulator wipes the folder of an id it publishes
+ * again, so a new id goes past all three. */
+static uint64_t highest_id(const sigil_profile_root *p, const uint8_t *index, size_t len, const uint8_t *counter,
+                           size_t counter_len) {
+    static const char SAVES[] = "bis/user/save/";
+    uint64_t top = counter_len == 8 ? sigil_read_le64(counter) : 0;
+    size_t at = KVDB_HEADER;
+    kvdb_entry e;
+    while (kvdb_next(index, len, &at, &e)) {
+        if (e.value_len >= 8 && sigil_read_le64(e.value) > top) top = sigil_read_le64(e.value);
+    }
+    for (size_t i = 0; i < p->req->listing_count; i++) {
+        char path[SIGIL_SAVE_PATH_MAX];
+        uint64_t id = 0;
+        size_t n = sizeof(SAVES) - 1;
+        if (!p->req->listing[i] || !to_base(p, p->req->listing[i], path) || strncmp(path, SAVES, n) != 0) continue;
+        bool hex = strlen(path) > n + 16 && path[n + 16] == '/';
+        for (size_t k = 0; k < 16 && hex; k++) hex = isxdigit((unsigned char)path[n + k]) != 0;
+        if (hex && sscanf(path + n, "%16" SCNx64, &id) == 1 && id > top) top = id;
+    }
+    return top;
+}
+
+/* A new entry's key and value: `type` for program `title`, under `profile`
+ * (32 hex, "" for none), with folder `id` in the user space. */
+static bool make_entry(uint64_t title, int type, const char *profile, uint64_t id, uint8_t key[KVDB_KEY],
+                       uint8_t value[KVDB_VALUE]) {
+    memset(key, 0, KVDB_KEY);
+    memset(value, 0, KVDB_VALUE);
+    sigil_write_le64(key, title);
+    if (profile[0]) {
+        uint64_t high = 0, low = 0;
+        if (strlen(profile) != 32 || sscanf(profile, "%16" SCNx64, &high) != 1 ||
+            sscanf(profile + 16, "%16" SCNx64, &low) != 1) {
+            return false;
+        }
+        sigil_write_le64(key + 0x08, high);
+        sigil_write_le64(key + 0x10, low);
+    }
+    key[0x20] = (uint8_t)type;
+    sigil_write_le64(value, id);
+    value[0x18] = INDEX_SPACE_USER;
+    return true;
+}
+
+static bool append(uint8_t *out, size_t cap, size_t *n, const void *data, size_t len) {
+    if (*n + len > cap) return false;
+    memcpy(out + *n, data, len);
+    *n += len;
+    return true;
+}
+
+static bool append_entry(uint8_t *out, size_t cap, size_t *n, const uint8_t *key, const uint8_t *value) {
+    uint8_t head[KVDB_HEADER];
+    sigil_write_le32(head, KVDB_ENTRY);
+    sigil_write_le32(head + 4, KVDB_KEY);
+    sigil_write_le32(head + 8, KVDB_VALUE);
+    return append(out, cap, n, head, sizeof(head)) && append(out, cap, n, key, KVDB_KEY) &&
+           append(out, cap, n, value, KVDB_VALUE);
+}
+
+/* `index` with `count` new entries, keys ascending, put in key order among
+ * its own; NULL when an entry runs past the archive or a new key is taken. */
+static uint8_t *index_with(const uint8_t *index, size_t len, uint8_t (*keys)[KVDB_KEY],
+                           uint8_t (*values)[KVDB_VALUE], size_t count, size_t *out_len) {
+    uint32_t have = sigil_read_le32(index + 8);
+    size_t cap = len + count * (KVDB_HEADER + KVDB_KEY + KVDB_VALUE), n = 0, at = KVDB_HEADER, next = 0;
+    uint8_t *out = (uint8_t *)malloc(cap);
+    bool ok = out && append(out, cap, &n, index, 8);
+    uint8_t total[4];
+    sigil_write_le32(total, have + (uint32_t)count);
+    ok = ok && append(out, cap, &n, total, 4);
+    kvdb_entry e;
+    for (uint32_t i = 0; ok && i < have; i++) {
+        ok = kvdb_next(index, len, &at, &e) && e.key_len >= KVDB_KEY;
+        for (size_t k = 0; ok && k < count; k++) ok = key_order(keys[k], e.key) != 0;
+        while (ok && next < count && key_order(keys[next], e.key) < 0) {
+            ok = append_entry(out, cap, &n, keys[next], values[next]);
+            next++;
+        }
+        ok = ok && append(out, cap, &n, e.start, e.size);
+    }
+    for (; ok && next < count; next++) ok = append_entry(out, cap, &n, keys[next], values[next]);
+    if (!ok) {
+        free(out);
+        return NULL;
+    }
+    *out_len = n;
+    return out;
+}
+
+int sigil_profile_publish(sigil_profile_root *p, bool account, bool device, sigil_profile_published *out) {
+    memset(out, 0, sizeof(*out));
+    account = account && p->profile[0] && !indexed_save(p, SIGIL_SAVE_AREA_ACCOUNT, p->profile);
+    device = device && !indexed_save(p, SIGIL_SAVE_AREA_DEVICE, "");
+    if (!p->row->index || (!account && !device)) return SIGIL_OK;
+
+    char counter_base[SIGIL_SAVE_PATH_MAX];
+    const char *slash = strrchr(p->row->index, '/');
+    int w = snprintf(counter_base, sizeof(counter_base), "%.*slastPublishedId",
+                     slash ? (int)(slash - p->row->index + 1) : 0, p->row->index);
+    uint64_t title = 0;
+    if (w < 0 || w >= (int)sizeof(counter_base) || sscanf(p->save_id, "%16" SCNx64, &title) != 1 ||
+        !to_root(p, p->row->index, out->index_path) || !to_root(p, counter_base, out->counter_path) ||
+        p->indexed_count + 2 > SIGIL_PROFILE_INDEX_MAX) {
+        return SIGIL_ERR_NO_TARGET;
+    }
+
+    uint8_t *index = NULL, *counter = NULL;
+    size_t len = 0, counter_len = 0;
+    int rc = read_root_file(p, p->row->index, INDEX_MAX, &index, &len);
+    if (rc == SIGIL_OK) rc = read_root_file(p, counter_base, 8, &counter, &counter_len);
+    if (rc == SIGIL_OK && !kvdb_valid(index, len)) rc = SIGIL_ERR_NO_TARGET;
+
+    uint8_t keys[2][KVDB_KEY], values[2][KVDB_VALUE];
+    size_t count = 0;
+    uint64_t id = rc == SIGIL_OK ? highest_id(p, index, len, counter, counter_len) : 0;
+    if (rc == SIGIL_OK && account) {
+        if (!make_entry(title, INDEX_ACCOUNT, p->profile, ++id, keys[count], values[count])) rc = SIGIL_ERR_NO_TARGET;
+        count++;
+    }
+    if (rc == SIGIL_OK && device) {
+        make_entry(title, INDEX_DEVICE, "", ++id, keys[count], values[count]);
+        count++;
+    }
+    if (rc == SIGIL_OK) {
+        out->index = index_with(index, len, keys, values, count, &out->index_len);
+        if (!out->index) rc = SIGIL_ERR_NO_TARGET;
+    }
+    free(index);
+    free(counter);
+    if (rc != SIGIL_OK) {
+        sigil_profile_published_free(out);
+        return rc;
+    }
+    sigil_write_le64(out->counter, id);
+    for (size_t i = 0; i < count; i++) {
+        sigil_profile_indexed *e = &p->indexed[p->indexed_count++];
+        e->id = sigil_read_le64(values[i]);
+        e->area = keys[i][0x20] == INDEX_ACCOUNT ? SIGIL_SAVE_AREA_ACCOUNT : SIGIL_SAVE_AREA_DEVICE;
+        snprintf(e->profile, sizeof(e->profile), "%s", e->area == SIGIL_SAVE_AREA_ACCOUNT ? p->profile : "");
+    }
+    return SIGIL_OK;
+}
+
+void sigil_profile_published_free(sigil_profile_published *out) {
+    free(out->index);
+    memset(out, 0, sizeof(*out));
+}
+
 /* Emulators with one file per profile: each listed file the list template
  * names is a profile, named by its folder. */
 static int file_profiles(sigil_profile_root *p) {
@@ -717,7 +909,7 @@ static int file_profiles(sigil_profile_root *p) {
         if (!is_file(p->row, p->row->list, path, &v) || !v.profile[0]) continue;
         size_t len = 0;
         uint8_t *data = NULL;
-        rc = read_root_file(p, path, &data, &len);
+        rc = read_root_file(p, path, PROFILE_LIST_MAX, &data, &len);
         char name[SIGIL_PROFILE_NAME_MAX];
         name_from(p->row->format, data, len, name);
         free(data);
@@ -787,7 +979,7 @@ static bool game_data_install(const sigil_profile_root *p, const char *folder) {
     if (snprintf(sfo_path, sizeof(sfo_path), "%sPARAM.SFO", folder) >= (int)sizeof(sfo_path)) return false;
     uint8_t *sfo = NULL;
     size_t len = 0;
-    if (read_root_file(p, sfo_path, &sfo, &len) != SIGIL_OK || !sfo) {
+    if (read_root_file(p, sfo_path, PROFILE_LIST_MAX, &sfo, &len) != SIGIL_OK || !sfo) {
         free(sfo);
         return false;
     }
@@ -825,8 +1017,8 @@ static const sigil_layout_area *indexed_area_of(const sigil_profile_root *p, con
 
 /* Where unit member `entry` goes on a row with a save index: the folder the
  * index gives the game's account save of the chosen profile, or its device
- * save. A save the index has no folder for is SIGIL_ERR_NO_TARGET: the
- * emulator gives a save its folder the first time the game runs. */
+ * save. A save the index has no folder for, after sigil_profile_publish, is
+ * SIGIL_ERR_NO_TARGET. */
 static int indexed_place(const sigil_profile_root *p, const char *entry, sigil_profile_file *f) {
     size_t n = strlen(p->save_id);
     bool device = strncmp(entry, "device/", 7) == 0;

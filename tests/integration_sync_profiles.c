@@ -3,6 +3,7 @@
  * against the saves and profile lists pulled from an AYN Odin 3. */
 #include "save_corpus.h"
 #include "legacy_units.h"
+#include <inttypes.h>
 #include <stdbool.h>
 
 #define TEST_SKIP    77
@@ -959,18 +960,128 @@ static void check_ryujinx(void) {
     }
     sigil_sync_result_free(w);
 
-    /* A title the emulator never ran has no folder: refused, nothing written. */
+    /* An emulator that never started has no index to add the game to: refused, nothing written. */
     mem_root fresh = {0};
     put_ryu_profiles(&fresh);
     make_game(&t, &fresh, "ryujinx", "switch", RYU_TITLE);
     w = NULL;
-    expect_rc("ryujinx restore with no folder", restore(&t, r, &w), SIGIL_ERR_NO_TARGET);
-    if (fresh.writes != 0) fail("ryujinx restore with no folder", "wrote");
+    expect_rc("ryujinx restore with no index", restore(&t, r, &w), SIGIL_ERR_NO_TARGET);
+    if (fresh.writes != 0) fail("ryujinx restore with no index", "wrote");
     sigil_sync_result_free(w);
 
     sigil_sync_result_free(r);
     root_free(&fresh);
     root_free(&target);
+    root_free(&root);
+}
+
+#define RYU_LAST "bis/system/save/8000000000000000/0/lastPublishedId"
+
+static void put_ryu_last(mem_root *root, uint64_t id) {
+    uint8_t raw[8];
+    sigil_write_le64(raw, id);
+    root_put(root, RYU_LAST, raw, sizeof(raw));
+}
+
+/* The index's entries in file order, `n` at most; returns how many it holds. */
+static size_t read_ryu_index(mem_root *root, ryu_entry *out, size_t n) {
+    mem_file *f = root_find(root, RYU_INDEX);
+    if (!f || f->len < 0xC) return 0;
+    size_t count = sigil_read_le32(f->data + 8), at = 0xC;
+    for (size_t i = 0; i < count && i < n && at + 0x8C <= f->len; i++, at += 0x8C) {
+        const uint8_t *key = f->data + at + 0xC, *value = key + 0x40;
+        bool zeros = sigil_read_le64(key + 0x18) == 0 && sigil_read_le64(value + 0x08) == 0 &&
+                     sigil_read_le64(value + 0x10) == 0 && key[0x21] == 0 && key[0x22] == 0 && key[0x23] == 0;
+        for (size_t k = 0x24; k < 0x40 && zeros; k++) zeros = key[k] == 0;
+        for (size_t k = 0x1A; k < 0x40 && zeros; k++) zeros = value[k] == 0;
+        out[i] = (ryu_entry){ sigil_read_le64(key), sigil_read_le64(key + 0x08), sigil_read_le64(key + 0x10),
+                              sigil_read_le64(value), key[0x20], value[0x18], zeros ? value[0x19] : 0xFF };
+    }
+    return count;
+}
+
+static bool same_entry(const ryu_entry *a, const ryu_entry *b) {
+    return a->program == b->program && a->user_high == b->user_high && a->user_low == b->user_low &&
+           a->id == b->id && a->type == b->type && a->space == b->space && a->state == b->state;
+}
+
+/* A game the emulator never ran gets the index entries the emulator would
+ * give it: ids past every id the counter, the index and the save folders
+ * hold, keys in LibHac's order, and the counter raised before anything else
+ * is written. `counter` is 0 for no lastPublishedId file. */
+static void check_ryujinx_first_run_ids(const char *name, uint64_t counter, uint64_t orphan, uint64_t first) {
+    const uint64_t title = 0x0100ABCD12345000ull;
+    const ryu_entry entries[] = {
+        { 0x0100000000099000ull, 1, 0, 0x3, 1, 1, 0 },
+        { title, 0, 0, 0x4, 5, 1, 0 },          /* the game's cache storage, after its saves */
+        { 0x0100FFFF00000000ull, 0, 0, 0x6, 3, 1, 0 },
+    };
+    mem_root root = {0};
+    put_ryu_index(&root, entries, 3);
+    put_ryu_profiles(&root);
+    if (counter) put_ryu_last(&root, counter);
+    char orphan_path[SIGIL_SAVE_PATH_MAX];
+    snprintf(orphan_path, sizeof(orphan_path), RYU_SAVES "%016" PRIx64 "/0/left.bin", orphan);
+    if (orphan) put_text(&root, orphan_path, "a folder the index lost");
+
+    const char *const pairs[] = { RYU_TITLE "/save.bin", "account", "device/" RYU_TITLE "/shared.bin", "device" };
+    sigil_sync_result *unit = unit_of(pairs, 2);
+    game g;
+    make_game(&g, &root, "ryujinx", "switch", RYU_TITLE);
+    sigil_sync_result *w = NULL;
+    expect_rc(name, restore(&g, unit, &w), SIGIL_OK);
+    if (strcmp(root.first_write, RYU_LAST) != 0) fail(name, "the counter wasn't written first");
+    mem_file *last = root_find(&root, RYU_LAST);
+    if (!last || last->len != 8 || sigil_read_le64(last->data) != first + 1) fail(name, "lastPublishedId");
+
+    char account[SIGIL_SAVE_PATH_MAX], device[SIGIL_SAVE_PATH_MAX];
+    snprintf(account, sizeof(account), RYU_SAVES "%016" PRIx64 "/0/save.bin", first);
+    snprintf(device, sizeof(device), RYU_SAVES "%016" PRIx64 "/0/shared.bin", first + 1);
+    if (!root_holds(&root, account, "account") || !root_holds(&root, device, "device")) fail(name, "save folders");
+
+    const ryu_entry want[] = {
+        entries[0],
+        { title, 1, 0, first, 1, 1, 0 },
+        { title, 0, 0, first + 1, 3, 1, 0 },
+        entries[1],
+        entries[2],
+    };
+    ryu_entry got[8];
+    size_t n = read_ryu_index(&root, got, 8);
+    bool same = n == 5;
+    for (size_t i = 0; i < 5 && same; i++) same = same_entry(&got[i], &want[i]);
+    if (!same) fail(name, "index entries");
+
+    /* The next collect finds the saves through the new entries. */
+    sigil_sync_result *back = NULL;
+    expect_rc(name, collect(&g, &back), SIGIL_OK);
+    if (!back || !w || strcmp(back->identity_hash, w->identity_hash) != 0) fail(name, "collect after restore");
+    sigil_sync_result_free(back);
+    sigil_sync_result_free(w);
+    unit_of_free(unit);
+    root_free(&root);
+}
+
+static void check_ryujinx_first_run(void) {
+    check_ryujinx_first_run_ids("ryujinx first run, folder past the counter", 6, 7, 8);
+    check_ryujinx_first_run_ids("ryujinx first run, counter past the folders", 0x20, 0, 0x21);
+    check_ryujinx_first_run_ids("ryujinx first run, no counter", 0, 0, 7);
+
+    /* An entry for the save on its way out (marked for deletion) keeps its key: refused, nothing written. */
+    const uint64_t title = 0x0100ABCD12345000ull;
+    const ryu_entry dying[] = { { title, 1, 0, 0x2, 1, 1, 3 } };
+    mem_root root = {0};
+    put_ryu_index(&root, dying, 1);
+    put_ryu_profiles(&root);
+    const char *const pairs[] = { RYU_TITLE "/save.bin", "account" };
+    sigil_sync_result *unit = unit_of(pairs, 1);
+    game g;
+    make_game(&g, &root, "ryujinx", "switch", RYU_TITLE);
+    sigil_sync_result *w = NULL;
+    expect_rc("ryujinx key taken", restore(&g, unit, &w), SIGIL_ERR_NO_TARGET);
+    if (root.writes != 0) fail("ryujinx key taken", "wrote");
+    sigil_sync_result_free(w);
+    unit_of_free(unit);
     root_free(&root);
 }
 
@@ -1445,6 +1556,7 @@ int main(void) {
     check_skyline();
     check_switch_argosy_uploads();
     check_ryujinx();
+    check_ryujinx_first_run();
     check_3ds();
     check_save_base();
     check_resolve();

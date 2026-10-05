@@ -73,6 +73,29 @@ bool sigil_profile_undecided(const sigil_profile_root *p);
  */
 int sigil_profile_place(const sigil_profile_root *p, const char *entry, sigil_profile_file *f, bool *skip);
 
+/* What restore writes to give the game's saves folders a row's save index
+ * lacks: the raised counter and the index with the new entries, both
+ * relative to the save root. */
+typedef struct {
+    char     counter_path[SIGIL_SAVE_PATH_MAX];
+    uint8_t  counter[8];
+    char     index_path[SIGIL_SAVE_PATH_MAX];
+    uint8_t *index;       /* NULL when the index already names every save asked for */
+    size_t   index_len;
+} sigil_profile_published;
+
+/**
+ * On a row with a save index, gives the game's account save of the chosen
+ * profile (when `account` and a profile is chosen) and its device save (when
+ * `device`) a folder where the index has none, as the emulator does when the
+ * game first runs, and adds them to `p`'s indexed saves. Nothing is written:
+ * `out` holds the files to write. SIGIL_ERR_NO_TARGET when the index is
+ * missing, out of the root's reach or already holds the key.
+ */
+int sigil_profile_publish(sigil_profile_root *p, bool account, bool device, sigil_profile_published *out);
+
+void sigil_profile_published_free(sigil_profile_published *out);
+
 /** The profiles, "id name" one per line, as SIGIL_ERR_AMBIGUOUS reports them. */
 void sigil_profile_lines(const sigil_profile_root *p, char *out, size_t cap);
 
