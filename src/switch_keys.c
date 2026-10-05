@@ -71,7 +71,7 @@ static int find_key_hex(const char *text, size_t text_len, const char *key_name,
 int sigil_load_header_key_from_prod_keys(const char *path, uint8_t out[32]) {
     if (!path || !out) return SIGIL_ERR_INVALID_ARG;
 
-    FILE *fp = fopen(path, "rb");
+    FILE *fp = sigil_fopen(path, "rb");
     if (!fp) return SIGIL_ERR_IO;
     if (fseeko(fp, 0, SEEK_END) != 0) { fclose(fp); return SIGIL_ERR_IO; }
     off_t sz = ftello(fp);
@@ -115,7 +115,7 @@ int sigil_load_key16_from_prod_keys(const char *path, const char *key_name,
                                     uint8_t out[16]) {
     if (!path || !key_name || !out) return SIGIL_ERR_INVALID_ARG;
 
-    FILE *fp = fopen(path, "rb");
+    FILE *fp = sigil_fopen(path, "rb");
     if (!fp) return SIGIL_ERR_IO;
     if (fseeko(fp, 0, SEEK_END) != 0) { fclose(fp); return SIGIL_ERR_IO; }
     off_t sz = ftello(fp);

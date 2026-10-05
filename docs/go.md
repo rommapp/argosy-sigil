@@ -3,7 +3,7 @@
 `import sigil "github.com/rommforge/argosy-sigil/bindings/go"` (cgo;
 `make build` compiles the static libs it links). On Windows cgo links
 with MinGW gcc, so build sigil with MinGW too; it can't link the `.lib`
-archives MSVC makes. Failures return a sentinel per C code
+archives MSVC makes ([building.md](building.md#windows)). Failures return a sentinel per C code
 (`sigil.ErrNotFound`, `sigil.ErrNeedsKey`, `sigil.ErrIO`, ...) for
 `errors.Is`.
 
@@ -31,8 +31,8 @@ type Options struct {
 
 ```go
 type Result struct {
-    TitleID           string             // "" on gb, gbc, snes.
-    RawSerial         string             // As found in the binary.
+    TitleID           string             // "" on gb, gbc, snes. A Switch update or DLC gives its game's id.
+    RawSerial         string             // As found in the binary; a Switch update's or DLC's own id.
     SaveID            string             // On-disk name the emulator keys the save by. "" on gb, gbc, snes.
     Platform          Platform
     PlatformSlug      string
@@ -44,13 +44,23 @@ type Result struct {
     SwitchContentType SwitchContentType  // SwitchContentUnknown, Application, Patch, Addon.
     TitleVersion      uint32             // Switch only.
     Features          uint32             // Bit set. FeatureRTC: cart has a clock. HasRTC() reads it.
+    N64Header         string             // N64 only. The cart's name; "" when not plain ASCII.
+    N64MD5            string             // N64 only. The ROM's MD5 in .z64 byte order, uppercase.
+    N64MD5N64         string             // N64 only. The same in .n64 byte order, as Project64 hashes it.
 }
 ```
 
-Store `TitleID`, `SaveID`, `PlatformSlug`, `Features`. Rebuild later, or
-build for a platform sigil cannot extract (Sega CD returns an error).
-Every field is passed every time; a new struct comes back, nothing is
-kept between calls:
+For an N64 ROM, `Extract` reads the whole file to fill the two MD5s; the
+standalone N64 emulators name saves from them.
+
+A Switch XCI or NSP needs keys: without them `Extract` returns
+`sigil.ErrNeedsKey`, and with keys that don't open the content (a key
+file older than the dump, or a wrong header key)
+`sigil.ErrKeysIncompatible`.
+
+Store `TitleID`, `SaveID`, `RawSerial`, `PlatformSlug`, `Features` and,
+for N64, the three `N64*` fields. Rebuild the result from them later, or
+build one for a platform sigil cannot extract (Sega CD returns an error):
 
 ```go
 sigil.PersistedResult(
@@ -61,8 +71,9 @@ sigil.PersistedResult(
 ) *Result
 ```
 
-Set `RawSerial` on the returned result where it was stored;
-pcsx_rearmed's serial cards are named from it.
+Then set `RawSerial` and the `N64*` fields on the returned result:
+pcsx_rearmed's serial cards are named from `RawSerial`, and the
+standalone N64 emulators' saves from the `N64*` fields.
 
 ## 2. Locate the saves
 
@@ -111,10 +122,11 @@ than its save-method option. Ask the user, or call again with each
 alternate's `Options`; sigil never picks one itself.
 
 On a layout with profiles (`eden`, `citron`, `sudachi`, `yuzu`, `cemu`,
-`vita3k`, `rpcs3`), the save root may be any folder around the emulator's
-own: its base (the folder holding `nand/`, `mlc01/`, `ux0/` or
-`dev_hdd0/`), a folder above it, or one inside it such as a profile's save
-folder. Sigil re-roots at the base and takes the profile the root lies in.
+`vita3k`, `rpcs3`) and on the PSP layouts (`ppsspp`, `ppsspp_standalone`,
+`psp_console`, which keep no profiles), the save root may be any folder
+around the emulator's own: its base (the folder holding `nand/`, `mlc01/`,
+`ux0/`, `dev_hdd0/` or `PSP/`), a folder above it, or one inside it such
+as a profile's save folder. Sigil re-roots at the base and takes the profile the root lies in.
 Member paths are then relative to the base, which `SaveBase` returns.
 [save-units.md](save-units.md#profiles) has the folders and the profile rules.
 
@@ -176,49 +188,79 @@ that ticked doesn't read as a new save. Most clients never read it.
 
 ## Upload and restore
 
-Upload by `Shape`. `Single` sends the member as is. `Multi` zips the
-members flat, each under its `Entry`. `Folder` zips the `Key` folder so
-entries read `<key>/<file>`. Name the upload `Artifact`. Hash rules:
-[save-units.md](save-units.md#hash); each system's layouts:
-[platforms/](platforms/README.md).
-
-Restore by `Path`. Unzip a `Multi` artifact so every entry lands at its
-member's `Path` under the root. Unzip a `Folder` artifact from the
-root's parent of the key folder. `Expected` says where a primary goes
-when the emulator has not created one yet.
-
-## Memory cards
-
-List the saves on a memory card or backup RAM volume: PS1 cards (the raw
-card as `.mcr`, `.mcd` or `.srm`, DexDrive `.gme`, PSP or Vita `.vmp`),
-PS2 `.ps2` file cards, GameCube raw cards, Dreamcast VMUs, and Saturn and
-Sega CD backup RAM.
+`Collect` and `Restore` (see [Sync](#sync)) build and unpack the
+artifact for you. One round trip, with `romm` and `store` standing for
+your own server client and storage:
 
 ```go
-sigil.ListCard(
-    path string,        // required. The card file. Its format is detected from the content.
-) (*CardListing, error) // sigil.ErrUnsupportedFormat when the file is not a card sigil reads.
+const core, content, root = "pcsx_rearmed", "Chrono Cross (USA).cue", "/saves/psx"
 
-type CardListing struct {
-    Format       CardFormat  // CardFormatPS1Raw, CardFormatPS1GME, CardFormatPS1VMP, CardFormatPS2,
-                             //   CardFormatGameCubeRaw, CardFormatDreamcastVMU, CardFormatSaturnBackup,
-                             //   CardFormatSegaCDBRAM.
-    TotalBlocks  uint32
-    FreeBlocks   uint32      // Blocks a new save can use.
-    FreeSlots    uint32      // Directory slots a new save can use.
-    CorruptCount uint32      // Saves left out because their block chain is broken.
-    Entries      []CardEntry // Live saves, in directory order.
-    CorruptEntries []CardEntry // The left-out saves the card still names; Blocks is 0.
+// After the game closes: collect, upload what changed, then keep the state.
+res, err := sigil.Collect(game, core, content, root, &sigil.SyncOptions{State: store.State(game)})
+if err != nil {
+    return err
+}
+if res.Changed && res.Data != nil {
+    if err := romm.UploadSave(game, res.Artifact, res.Data, res.ContentHash); err != nil {
+        return err
+    }
+    if res.Holding != nil {
+        if err := romm.UploadSave(game, "holding.zip", res.Holding, ""); err != nil {
+            return err
+        }
+    }
+    store.SetState(game, res.State) // only once every upload succeeded
 }
 
-type CardEntry struct {
-    Name       string // As stored on the card, e.g. "BASLUSP01041USCHRO00".
-    OwnerID    string // The game id the save carries, as Extract reports it: PS1 and PS2 "SLUS-01041",
-                      //   GameCube "47465A45". "" when the format has none.
-    Blocks     uint32 // In the card's own block size.
-    FirstBlock uint32
+// Before the next launch: put the server's save back.
+unit, err := romm.DownloadSave(game)
+if err != nil {
+    return err
 }
+opts := &sigil.SyncOptions{State: store.State(game)}
+res, err = sigil.Restore(unit, game, core, content, root, opts)
+var pe *sigil.ProblemError
+switch {
+case errors.Is(err, sigil.ErrConflict):
+    // The saves on disk changed since the last sync. Ask the user, then:
+    opts.OverwriteLocal = true
+    res, err = sigil.Restore(unit, game, core, content, root, opts)
+case errors.As(err, &pe) && errors.Is(pe, sigil.ErrAmbiguous):
+    // More than one profile could take the saves. Ask which is theirs:
+    opts.Profile = askUser(pe.Profiles).ID
+    res, err = sigil.Restore(unit, game, core, content, root, opts)
+}
+if err != nil {
+    return err
+}
+store.SetState(game, res.State)
 ```
+
+Upload `Data` under the name `Artifact`; RomM computes the same
+`ContentHash`. Pass back the `State` the last call returned every time,
+so sigil can tell a local change from its own last restore.
+
+### Without collect and restore
+
+`LocateSaves` doesn't build an upload. It gives you `Members`, the files
+that make up the game's save, and you package them yourself:
+
+1. Upload by `Shape`. `SaveShapeSingle`: send the one member's file as
+   it is. `SaveShapeMulti`: zip the members yourself, each stored at the
+   zip's root under its `Entry`. `SaveShapeFolder`: zip the `Key` folder
+   so entries read `<key>/<file>`. Name the upload `Artifact`.
+2. Compare with RomM by the `ContentHash` from step 3; it matches what
+   RomM computes for that upload.
+3. To restore, unpack the artifact yourself. Single: write it to the
+   member's `Path`. Multi: write each zip entry to the `Path` of the
+   member with that `Entry`. Folder: unzip into the key folder's parent.
+   When the emulator hasn't created a primary yet, `Expected` gives its
+   `Path`.
+
+This path writes whole files, so it can't merge a game's saves into a
+shared memory card or a profile folder the way `Restore` does. Use
+`Collect` and `Restore` wherever they cover the system. Hash rules:
+[save-units.md](save-units.md#hash).
 
 ## Sync
 
@@ -226,8 +268,8 @@ type CardEntry struct {
 `Restore` puts a unit back and reads it back, removing files where a save
 folder holds a save the unit lacks. PS1 and PS2 memory cards, PCSX2 folder
 cards, GameCube cards and Dolphin's GCI folder, Saturn and Sega CD backup RAM,
-Dreamcast VMUs, and the save folders the yuzu forks, Cemu, Vita3K and RPCS3
-keep per user profile work today. `Restore` returns
+Dreamcast VMUs, the save folders the yuzu forks, Cemu, Vita3K and RPCS3
+keep per user profile, and PSP save folders work today. `Restore` returns
 `sigil.ErrNotFound` for a unit holding none of the game's saves, and
 ignores other games' saves inside a unit. The rules every system shares are
 in [sync.md](sync.md); what a unit holds, how Saturn and Sega CD saves find
@@ -320,6 +362,40 @@ with `errors.Is` and names what is at fault in `Problem`.
 | `ErrDamaged` | a file the saves are in is damaged; pass `Repair` once the user agrees | yes |
 | `ErrExists` | Dolphin's GCI folder has no free name for a new save | yes |
 | `ErrIO` | a file the listing holds won't open, or a member's path would leave the root | |
+
+## Memory cards
+
+List the saves on a memory card or backup RAM volume: PS1 cards (the raw
+card as `.mcr`, `.mcd` or `.srm`, DexDrive `.gme`, PSP or Vita `.vmp`),
+PS2 `.ps2` file cards, GameCube raw cards, Dreamcast VMUs, and Saturn and
+Sega CD backup RAM. Sync doesn't need it; it's for showing the user
+what a card holds.
+
+```go
+sigil.ListCard(
+    path string,        // required. The card file. Its format is detected from the content.
+) (*CardListing, error) // sigil.ErrUnsupportedFormat when the file is not a card sigil reads.
+
+type CardListing struct {
+    Format         CardFormat  // CardFormatPS1Raw, CardFormatPS1GME, CardFormatPS1VMP, CardFormatPS2,
+                               //   CardFormatGameCubeRaw, CardFormatDreamcastVMU,
+                               //   CardFormatSaturnBackup, CardFormatSegaCDBRAM.
+    TotalBlocks    uint32
+    FreeBlocks     uint32      // Blocks a new save can use.
+    FreeSlots      uint32      // Directory slots a new save can use.
+    CorruptCount   uint32      // Saves left out because their block chain is broken.
+    Entries        []CardEntry // Live saves, in directory order.
+    CorruptEntries []CardEntry // The left-out saves the card still names; Blocks is 0.
+}
+
+type CardEntry struct {
+    Name       string // As stored on the card, e.g. "BASLUSP01041USCHRO00".
+    OwnerID    string // The game id the save carries, as Extract reports it: PS1 and PS2
+                      //   "SLUS-01041", GameCube "47465A45". "" when the format has none.
+    Blocks     uint32 // In the card's own block size.
+    FirstBlock uint32
+}
+```
 
 ## Helpers
 

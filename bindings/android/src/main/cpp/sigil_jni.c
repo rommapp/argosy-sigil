@@ -70,9 +70,10 @@ static void load_result_class(JNIEnv *env) {
     if (g_result_class) return;
     g_result_class = global_class(env, "com/nendo/sigil/SigilResult");
     if (!g_result_class) return;
-    /* SigilResult(titleId, rawSerial, saveId, platformSlug, source, usage, experimental, features, switchContentType, titleVersion) */
+    /* SigilResult(titleId, rawSerial, saveId, platformSlug, source, usage, experimental, features, switchContentType,
+     *             titleVersion, n64Header, n64Md5, n64Md5N64) */
     g_result_ctor = find_method(env, g_result_class, "<init>",
-        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;IIZIIJ)V");
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;IIZIIJLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
 }
 
 static jclass g_list_class = NULL;
@@ -339,7 +340,7 @@ Java_com_nendo_sigil_Sigil_nativeExtract(JNIEnv *env, jclass clazz,
 
     sigil_result r;
     memset(&r, 0, sizeof(r));
-    r.struct_version = SIGIL_RESULT_V3;
+    r.struct_version = SIGIL_RESULT_V4;
     int rc = sigil_extract_from_path(path, sigil_platform_from_slug(slug), &opts, &r);
 
     jni_free(path);
@@ -356,6 +357,9 @@ Java_com_nendo_sigil_Sigil_nativeExtract(JNIEnv *env, jclass clazz,
     jstring jraw     = jni_string(env,r.raw_serial);
     jstring jsave_id = jni_string(env,r.save_id);
     jstring jslug    = jni_string(env,sigil_platform_to_slug(r.platform));
+    jstring jheader  = jni_string(env,r.n64_header);
+    jstring jmd5     = jni_string(env,r.n64_md5);
+    jstring jmd5_n64 = jni_string(env,r.n64_md5_n64);
 
     return (*env)->NewObject(env, g_result_class, g_result_ctor,
                              jtitle, jraw, jsave_id, jslug,
@@ -363,7 +367,8 @@ Java_com_nendo_sigil_Sigil_nativeExtract(JNIEnv *env, jclass clazz,
                              r.experimental ? JNI_TRUE : JNI_FALSE,
                              (jint)r.features,
                              (jint)r.switch_content_type,
-                             (jlong)r.title_version);
+                             (jlong)r.title_version,
+                             jheader, jmd5, jmd5_n64);
 }
 
 /* ---- save units ------------------------------------------------------------ */
@@ -459,11 +464,23 @@ static void release_strings(const char **strings, jsize count) {
     free((void *)strings);
 }
 
+/* The stored N64 fields, SigilResult.n64Fields: header, md5, md5_n64. */
+static void copy_n64_fields(JNIEnv *env, jobjectArray jn64, sigil_result *result) {
+    jsize count = 0;
+    const char **n64 = borrow_strings(env, jn64, &count);
+    char *fields[] = { result->n64_header, result->n64_md5, result->n64_md5_n64 };
+    size_t caps[] = { sizeof(result->n64_header), sizeof(result->n64_md5), sizeof(result->n64_md5_n64) };
+    for (jsize i = 0; n64 && i < count && i < 3; i++) {
+        if (n64[i]) snprintf(fields[i], caps[i], "%s", n64[i]);
+    }
+    release_strings(n64, count);
+}
+
 JNIEXPORT jobject JNICALL
 Java_com_nendo_sigil_Sigil_nativeLocateSaves(JNIEnv *env, jclass clazz,
                                               jstring jlayout, jstring jplatform,
                                               jstring jcontent, jstring jtitle_id, jstring jraw_serial,
-                                              jstring jsave_id, jint features,
+                                              jstring jsave_id, jint features, jobjectArray jn64,
                                               jobjectArray jopt_keys, jobjectArray jopt_values,
                                               jobjectArray jlisting, jstring jroot, jstring jprofile) {
     (void)clazz;
@@ -498,11 +515,12 @@ Java_com_nendo_sigil_Sigil_nativeLocateSaves(JNIEnv *env, jclass clazz,
 
     sigil_result result;
     memset(&result, 0, sizeof(result));
-    result.struct_version = SIGIL_RESULT_V3;
+    result.struct_version = SIGIL_RESULT_V4;
     result.features = (uint32_t)features;
     if (title_id) strncpy(result.title_id, title_id, sizeof(result.title_id) - 1);
     if (raw_serial) strncpy(result.raw_serial, raw_serial, sizeof(result.raw_serial) - 1);
     if (save_id)  strncpy(result.save_id, save_id, sizeof(result.save_id) - 1);
+    copy_n64_fields(env, jn64, &result);
 
     sigil_save_request req;
     memset(&req, 0, sizeof(req));
@@ -861,7 +879,7 @@ JNIEXPORT jobject JNICALL
 Java_com_nendo_sigil_Sigil_nativeSync(JNIEnv *env, jclass clazz,
                                        jbyteArray junit, jstring jroot, jstring jlayout,
                                        jstring jplatform, jstring jcontent, jstring jtitle_id,
-                                       jstring jraw_serial, jstring jsave_id, jint features,
+                                       jstring jraw_serial, jstring jsave_id, jint features, jobjectArray jn64,
                                        jobjectArray jopt_keys, jobjectArray jopt_values,
                                        jobjectArray jlisting, jobjectArray jgame_ids,
                                        jbyteArray jstate, jboolean unmanaged, jboolean overwrite_local,
@@ -905,12 +923,13 @@ Java_com_nendo_sigil_Sigil_nativeSync(JNIEnv *env, jclass clazz,
 
     sigil_result result;
     memset(&result, 0, sizeof(result));
-    result.struct_version = SIGIL_RESULT_V3;
+    result.struct_version = SIGIL_RESULT_V4;
     result.features = (uint32_t)features;
     result.platform = sigil_platform_from_slug(platform);
     if (title_id) strncpy(result.title_id, title_id, sizeof(result.title_id) - 1);
     if (raw_serial) strncpy(result.raw_serial, raw_serial, sizeof(result.raw_serial) - 1);
     if (save_id)  strncpy(result.save_id, save_id, sizeof(result.save_id) - 1);
+    copy_n64_fields(env, jn64, &result);
 
     open_ctx octx = { root };
     sigil_sync_request req;

@@ -17,6 +17,7 @@ and passes back. The calls and their fields are on each language's page
 | Saturn, Sega CD | `backup.ram`, or a zip with `backup.ram` and `cart.ram` | [saturn](platforms/saturn.md#sync), [segacd](platforms/segacd.md#sync) |
 | Dreamcast | `vmu_A1.bin`, or a zip of the VMUs present | [dreamcast](platforms/dreamcast.md#sync) |
 | Switch, Wii U, PS Vita, PS3 | a zip of the game's save folders, without the profile id | [switch](platforms/switch.md#sync), [wiiu](platforms/wiiu.md#sync), [psvita](platforms/psvita.md#sync), [ps3](platforms/ps3.md#sync) |
+| PSP | a zip of the game's save folders | [psp](platforms/psp.md#sync) |
 
 Every volume in a unit is raw, whatever form the emulator stores it in;
 restore writes each file back in the emulator's form (gzip, byte

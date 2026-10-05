@@ -86,8 +86,13 @@ templates, the shared files it may write, and the subfolders it writes
 into. Template variables: `{stem}`, `{romset}` (same as the stem),
 `{title_id}`, `{save_id}`, `{cart_size}`, `{nvram_version}`,
 `{left_index}`, `{right_index}`, `{dc_vmu_id}`, `{disc_id}`,
-`{pcsx_serial}`, `{gc_region}`. A template ending in `/` names a folder
-whose whole subtree is the member. A template with an option key applies
+`{pcsx_serial}`, `{gc_region}`, `{n64_header}`, `{n64_md5_8}`,
+`{n64_md5_lower}`, `{n64_md5_n64}`. A template ending in `/` names a folder
+whose whole subtree is the member. A `*` in a template stands for any run
+of characters within one path segment, never a `/`, for a name sigil can
+only partly spell: every listed file that fits is a member, and a member
+that isn't listed is not expected, since sigil can't name the file to
+create. A template with an option key applies
 only while that core option holds the given value; the row's default
 flag says whether an absent option counts as holding it, so a caller
 sends only the options it has changed. Expansion fails, and the member
@@ -117,6 +122,12 @@ and `SLUSP012.06` gives `SLUSP-0120`.
 ending the game code: `E` gives `USA`, `J` and `K` give `JAP`, any other
 letter `EUR`. Dolphin reads the disc's region field, which follows the
 letter on retail discs.
+The `{n64_*}` variables come from the result's N64 fields:
+`{n64_header}` is `n64_header`, `{n64_md5_8}` the first eight digits of
+`n64_md5` as mupen64plus names a save, `{n64_md5_lower}` the whole of
+`n64_md5` in lowercase as M64Plus FZ names a game's folder, and
+`{n64_md5_n64}` is `n64_md5_n64` as Project64 names one. A result older
+than `SIGIL_RESULT_V4` has none of them.
 
 Every row but `vita_pops` was read from the core's source or its libretro
 docs page; the names are the core's literals. The PSP and Vita firmware
@@ -167,6 +178,10 @@ area it belongs to:
 | `cemu` | `mlc01/usr/save/00050000/{save_id}/user/{profile}/` | `user/common/` and `meta/` beside it | `mlc01/usr/save/system/act/{profile}/account.dat` (`PersistentId`, `MiiName`) |
 | `vita3k` | `ux0/user/{profile}/savedata/{save_id}/` | | `ux0/user/{profile}/user.xml` |
 | `rpcs3` | `dev_hdd0/home/{profile}/savedata/{save_id}*/` | | `dev_hdd0/home/{profile}/localusername` |
+| `ppsspp`, `ppsspp_standalone`, `psp_console` | | `PSP/SAVEDATA/{save_id}*/` | none |
+
+The PSP keeps no profiles: its rows have device folders alone, so nothing
+below about picking a profile applies to them.
 
 The profile comes from the request, else from the root path when the root
 lies inside a profile's folder, else from the emulator's list when it holds
@@ -186,7 +201,8 @@ yuzu-fork unit holds `<save_id>/...` for the account save and
 `device/<save_id>/...` for the device save. A Cemu unit holds
 `<save_id>/meta/`, `<save_id>/user/account/` and `<save_id>/user/common/`; an
 older unit naming the account folder by its id restores as the account
-save. The size file each yuzu fork keeps in a save folder
+save. A PSP unit holds each of the game's folders by its own name
+(`ULUS10064DATA00/...`, `ULUS10064SETTINGS/...`). The size file each yuzu fork keeps in a save folder
 (`.yuzu_save_size`, `.citron_save_size`, `.sudachi_save_size`,
 `.suyu_save_size`) is never collected, written or removed.
 

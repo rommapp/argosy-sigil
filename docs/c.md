@@ -3,7 +3,8 @@
 `#include <sigil.h>`, link `libsigil` and its bundled decompression and
 crypto libs ([building.md](building.md)). Every call returns `SIGIL_OK` or a
 negative `SIGIL_ERR_*`; `sigil_strerror(code)` names it. The caller sets
-`struct_version` on every struct it passes.
+`struct_version` on every struct it passes. Paths are UTF-8 on every
+system, Windows included ([building.md](building.md#windows)).
 
 ## 1. Identify the game
 
@@ -15,7 +16,7 @@ int sigil_extract_from_path(
     sigil_platform hint,          /* required. SIGIL_PLATFORM_PSP etc., or sigil_platform_from_slug(slug).
                                      SIGIL_PLATFORM_AUTO sniffs the extension; a bare .iso or .zip needs one. */
     const sigil_options *opts,    /* optional, NULL for defaults. */
-    sigil_result *out             /* required. struct_version = SIGIL_RESULT_V3. */
+    sigil_result *out             /* required. struct_version = SIGIL_RESULT_V4. */
 );                                /* SIGIL_ERR_* when nothing identified the file. */
 
 typedef struct {
@@ -43,8 +44,8 @@ older than the dump's key generation, or a wrong header key)
 ```c
 typedef struct {
     uint32_t struct_version;
-    char title_id[32];            /* "" on gb, gbc, snes. */
-    char raw_serial[32];          /* As found in the binary. */
+    char title_id[32];            /* "" on gb, gbc, snes. A Switch update or DLC gives its game's id. */
+    char raw_serial[32];          /* As found in the binary; a Switch update's or DLC's own id. */
     char save_id[32];             /* On-disk name the emulator keys the save by. "" on gb, gbc, snes. */
     sigil_platform platform;      /* sigil_platform_to_slug() for the slug. */
     sigil_source source;          /* SIGIL_SOURCE_BINARY, SIGIL_SOURCE_FILENAME. */
@@ -54,17 +55,26 @@ typedef struct {
     int switch_content_type;      /* SIGIL_SWITCH_CONTENT_UNKNOWN, _APPLICATION, _PATCH, _ADDON. */
     uint32_t title_version;       /* Switch only. */
     uint32_t features;            /* Bit set. SIGIL_FEATURE_RTC: cart has a clock. */
+    char n64_header[24];          /* N64 only. The cart's name; "" when not plain ASCII. */
+    char n64_md5[33];             /* N64 only. The ROM's MD5 in .z64 byte order, uppercase. */
+    char n64_md5_n64[33];         /* N64 only. The same in .n64 byte order, as Project64 hashes it. */
 } sigil_result;
 ```
 
-Store `title_id`, `save_id`, the platform slug, `features`. Rebuild
-later, or build for a platform sigil cannot extract (Sega CD returns
+For an N64 ROM, extract reads the whole file to fill the two MD5s; the
+standalone N64 emulators name saves from them.
+
+Store `title_id`, `save_id`, `raw_serial`, the platform slug, `features`
+and, for N64, the three `n64_*` fields. Rebuild the result from them
+later, or build one for a platform sigil cannot extract (Sega CD returns
 `SIGIL_ERR_UNKNOWN_PLATFORM`), by filling a zeroed result:
 
 ```c
-sigil_result game = { .struct_version = SIGIL_RESULT_V3, .features = stored_features };
-strncpy(game.title_id, stored_title_id, sizeof(game.title_id) - 1);   /* or leave "" */
-strncpy(game.save_id, stored_save_id, sizeof(game.save_id) - 1);      /* or leave "" */
+sigil_result game = { .struct_version = SIGIL_RESULT_V4, .features = stored_features };
+strncpy(game.title_id, stored_title_id, sizeof(game.title_id) - 1);       /* or leave "" */
+strncpy(game.save_id, stored_save_id, sizeof(game.save_id) - 1);          /* or leave "" */
+strncpy(game.raw_serial, stored_raw_serial, sizeof(game.raw_serial) - 1); /* pcsx_rearmed's serial cards */
+strncpy(game.n64_md5, stored_n64_md5, sizeof(game.n64_md5) - 1);          /* and the other n64_* fields */
 ```
 
 ## 2. Locate the saves
@@ -164,9 +174,12 @@ alternate's `options`; sigil never picks one itself.
 
 `eden`, `citron`, `sudachi` and `yuzu` (Switch), `cemu` (Wii U), `vita3k`
 and `rpcs3` keep a game's saves in folders per user profile, and the Switch
-and Wii U also keep device saves every profile shares.
+and Wii U also keep device saves every profile shares. The PSP layouts
+(`ppsspp`, `ppsspp_standalone`, `psp_console`) keep save folders the same
+way with no profiles, so everything below applies to them except picking a
+profile.
 [save-units.md](save-units.md#profiles) has the folders. The root is the emulator's base folder, the one holding
-`nand/`, `mlc01/`, `ux0/` or `dev_hdd0/`; a root above it works when the
+`nand/`, `mlc01/`, `ux0/`, `dev_hdd0/` or `PSP/`; a root above it works when the
 listing reaches below, and a root inside it works when `root_path` says
 where it is. `sigil_save_base` turns any path into the base and the
 profile the path lies in, so a caller can list the base instead:
@@ -179,7 +192,7 @@ int sigil_save_base(
     char *profile, size_t profile_cap   /* required. The profile folder path lies in, or "". */
 );                                /* SIGIL_ERR_INVALID_ARG when a buffer is too small. */
 
-const char *sigil_save_layout_top(const char *layout);   /* "nand", "mlc01", "ux0", "dev_hdd0", or NULL. */
+const char *sigil_save_layout_top(const char *layout);   /* "nand", "mlc01", "ux0", "dev_hdd0", "PSP", or NULL. */
 ```
 
 ```c
@@ -232,16 +245,76 @@ that ticked doesn't read as a new save. Most clients never read it.
 
 ## Upload and restore
 
-Upload by `shape`. `SINGLE` sends the member as is. `MULTI` zips the
-members flat, each under its `entry`. `FOLDER` zips the `key` folder so
-entries read `<key>/<file>`. Name the upload `artifact`. Hash rules:
-[save-units.md](save-units.md#hash); each system's layouts:
-[platforms/](platforms/README.md).
+`sigil_collect` and `sigil_restore` (see [Sync](#sync)) build and unpack
+the artifact for you. One round trip, with `romm_*`, `stored_state`,
+`store_state` and `ask_user` standing for your own server client,
+storage and UI:
 
-Restore by `path`. Unzip a `MULTI` artifact so every entry lands at its
-member's `path` under the root. Unzip a `FOLDER` artifact from the
-root's parent of the key folder. `expected` says where a primary goes
-when the emulator has not created one yet.
+```c
+sigil_sync_request req = { .struct_version = SIGIL_SYNC_REQUEST_V1 };
+req.save = save_request;              /* as for sigil_save_resolve, with open set */
+req.write = write_file;               /* your callbacks, rooted at the save root */
+req.remove = remove_file;
+req.write_ctx = root;
+req.state = stored_state(game, &req.state_len);
+
+/* After the game closes: collect, upload what changed, then keep the state. */
+sigil_sync_result *r = NULL;
+if (sigil_collect(&req, &r) == SIGIL_OK && r->changed && r->data) {
+    int ok = romm_upload(game, r->artifact, r->data, r->len, r->content_hash) == 0;
+    if (ok && r->holding) ok = romm_upload(game, "holding.zip", r->holding, r->holding_len, NULL) == 0;
+    if (ok) store_state(game, r->state, r->state_len);   /* only once every upload succeeded */
+}
+sigil_sync_result_free(r);
+
+/* Before the next launch: put the server's save back. */
+size_t unit_len = 0;
+uint8_t *unit = romm_download(game, &unit_len);
+req.state = stored_state(game, &req.state_len);
+r = NULL;
+int rc = sigil_restore(&req, unit, unit_len, &r);
+if (rc == SIGIL_ERR_CONFLICT) {
+    /* The saves on disk changed since the last sync. Ask the user, then: */
+    req.overwrite_local = 1;
+} else if (rc == SIGIL_ERR_AMBIGUOUS) {
+    /* More than one profile could take the saves. Ask which is theirs: */
+    req.save.profile = ask_user(r->profiles, r->profile_count);   /* returns a copy of the id */
+}
+if (rc == SIGIL_ERR_CONFLICT || rc == SIGIL_ERR_AMBIGUOUS) {
+    sigil_sync_result_free(r);
+    r = NULL;
+    rc = sigil_restore(&req, unit, unit_len, &r);
+}
+if (rc == SIGIL_OK) store_state(game, r->state, r->state_len);
+sigil_sync_result_free(r);
+```
+
+Upload `data` under the name `artifact`; RomM computes the same
+`content_hash`. Pass back the `state` the last call returned every time,
+so sigil can tell a local change from its own last restore.
+
+### Without collect and restore
+
+`sigil_save_resolve` doesn't build an upload. It gives you `members`, the
+files that make up the game's save, and you package them yourself:
+
+1. Upload by `shape`. `SIGIL_SAVE_SHAPE_SINGLE`: send the one member's
+   file as it is. `SIGIL_SAVE_SHAPE_MULTI`: zip the members yourself,
+   each stored at the zip's root under its `entry`.
+   `SIGIL_SAVE_SHAPE_FOLDER`: zip the `key` folder so entries read
+   `<key>/<file>`. Name the upload `artifact`.
+2. Compare with RomM by the `content_hash` from step 3; it matches what
+   RomM computes for that upload.
+3. To restore, unpack the artifact yourself. Single: write it to the
+   member's `path`. Multi: write each zip entry to the `path` of the
+   member with that `entry`. Folder: unzip into the key folder's parent.
+   When the emulator hasn't created a primary yet, `expected` gives its
+   `path`.
+
+This path writes whole files, so it can't merge a game's saves into a
+shared memory card or a profile folder the way `sigil_restore` does. Use
+`sigil_collect` and `sigil_restore` wherever they cover the system. Hash
+rules: [save-units.md](save-units.md#hash).
 
 ## Memory cards
 
@@ -385,6 +458,44 @@ Restore refuses, writing nothing, with the codes in
 names for each. Collect refuses with `SIGIL_ERR_DAMAGED`,
 `SIGIL_ERR_AMBIGUOUS` and `SIGIL_ERR_IO` in the same way. With each of
 these the call still sets `*out`; free it as usual.
+
+## Memory cards
+
+List the saves on a memory card or backup RAM volume: PS1 cards (the raw
+card as `.mcr`, `.mcd` or `.srm`, DexDrive `.gme`, PSP or Vita `.vmp`),
+PS2 `.ps2` file cards, GameCube raw cards, Dreamcast VMUs, and Saturn and
+Sega CD backup RAM. Sync doesn't need it; it's for showing the user
+what a card holds.
+
+```c
+int sigil_card_list(
+    const sigil_io *io,             /* required. The card file. Its format is detected from the content. */
+    sigil_card_listing **out        /* required. Free with sigil_card_listing_free. */
+);                                  /* SIGIL_ERR_UNSUPPORTED_FORMAT when the stream is not a card sigil reads. */
+
+typedef struct {
+    uint32_t struct_version;
+    int format;                     /* SIGIL_CARD_FORMAT_PS1_RAW, _PS1_GME, _PS1_VMP, _PS2, _GAMECUBE_RAW,
+                                       _DREAMCAST_VMU, _SATURN_BACKUP, _SEGACD_BRAM. */
+    uint32_t total_blocks;
+    uint32_t free_blocks;           /* Blocks a new save can use. */
+    uint32_t free_slots;            /* Directory slots a new save can use. */
+    uint32_t corrupt_count;         /* Saves left out because their block chain is broken. */
+    sigil_card_entry *entries;      /* Live saves, in directory order. */
+    size_t entry_count;
+    sigil_card_entry *corrupt_entries;  /* The left-out saves the card still names; blocks is 0. */
+    size_t corrupt_entry_count;
+} sigil_card_listing;
+
+typedef struct {
+    char name[64];                  /* As stored on the card, e.g. "BASLUSP01041USCHRO00". */
+    char owner_id[16];              /* The game id the save carries, as disc identification reports it:
+                                       PS1 and PS2 "SLUS-01041", GameCube "47465A45". "" when the
+                                       format has none. */
+    uint32_t blocks;                /* In the card's own block size. */
+    uint32_t first_block;
+} sigil_card_entry;
+```
 
 ## Helpers
 

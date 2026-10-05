@@ -81,11 +81,18 @@ without you re-deriving it.
 | `gb` | Game Boy | `.gb`, `.sgb` | none; sets `features` | file-prefix | |
 | `gbc` | Game Boy Color | `.gbc` | none; sets `features` | file-prefix | |
 | `snes` | Super Nintendo | `.sfc`, `.smc` | none; sets `features` | file-prefix | |
+| `n64` | Nintendo 64 | `.z64`, `.v64`, `.n64` | `NSME` (the cart header's game code) | file-prefix | homebrew without a game code gives an empty `title_id` |
 
 Game Boy and SNES carts carry no title id. Sigil validates the header
 and reports what the cart holds in `features` (see
 [save-units.md](save-units.md#features)); `title_id` and `save_id` stay empty and
 the emulator names the save after the content file.
+
+An N64 cart's game code is the category, the two-letter game and the
+region (`NSME` is Super Mario 64 for North America), read in whichever
+byte order the dump uses. The libretro cores name the save after the
+content file, so the code identifies the game for RomM and the save
+still follows the file.
 
 The slugs are stable. Argosy's shorter internal identifiers (`dc`,
 `ngc`, `gc`, `vita`, `n3ds`, `nsw`, `x360`, `xbx`, `sfc`, `sfam`) and

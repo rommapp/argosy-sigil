@@ -16,9 +16,22 @@ make build        # cmake the static libs into ../../build-python, then compile 
 make test         # build + pytest
 ```
 
-Prebuilt wheels will come later via CI; for now build from source as above.
+On Windows, without `make`, build sigil with MSVC and point
+`build_sigil.py` at the configuration's folder
+([docs/building.md](../../docs/building.md#windows)):
+
+```bat
+cd bindings\python
+python -m venv .venv && .venv\Scripts\activate
+pip install cffi setuptools pytest
+cmake -B ..\..\build-python -S ..\.. -DSIGIL_BUILD_CLI=OFF -DSIGIL_BUILD_TESTS=OFF
+cmake --build ..\..\build-python --config Release --target sigil
+set SIGIL_LIB_DIR=..\..\build-python\Release
+python build_sigil.py
+python -m pytest test_sigil.py
+```
 
 ## Usage
 
-[docs/python.md](../../docs/python.md): identify, locate, hash, with
-what each call requires and returns.
+[docs/python.md](../../docs/python.md): identify, locate, hash, sync,
+with what each call requires and returns.

@@ -37,6 +37,53 @@ def test_nonexistent_path_raises_io_error(tmp_path):
     assert excinfo.value.code < 0
 
 
+def test_extract_reads_the_file_name_by_default(tmp_path):
+    rom = tmp_path / "Mario Kart 8 [000500001010EC00].wua"
+    rom.write_bytes(bytes(4096))
+    result = sigil.extract(rom, platform="wiiu")
+    assert result.source == "filename"
+    assert result.title_id == "1010EC00"
+
+
+def _n64_rom() -> bytes:
+    rom = bytearray(0x1000)
+    rom[0:4] = b"\x80\x37\x12\x40"
+    rom[0x20:0x34] = b"1080 SNOWBOARDING   "
+    rom[0x3B:0x3F] = b"NTEA"
+    return bytes(rom)
+
+
+def test_extract_reads_the_n64_fields_standalone_emulators_name_saves_by(tmp_path):
+    rom = _n64_rom()
+    path = tmp_path / "1080.z64"
+    path.write_bytes(rom)
+    n64_order = b"".join(rom[i:i + 4][::-1] for i in range(0, len(rom), 4))
+    result = sigil.extract(path)
+    assert result.title_id == "NTEA"
+    assert result.n64_header == "1080 SNOWBOARDING"
+    assert result.n64_md5 == hashlib.md5(rom).hexdigest().upper()
+    assert result.n64_md5_n64 == hashlib.md5(n64_order).hexdigest().upper()
+
+
+def test_a_stored_n64_result_finds_the_standalone_saves(tmp_path):
+    game = sigil.SigilResult.persisted("n64", "NTEA", "NTEA", 0, n64_header="1080 SNOWBOARDING",
+                                       n64_md5="FA27089C425DBAB99F19245C5C997613",
+                                       n64_md5_n64="10C93DD78B695CD32B6938534ED0EDD5")
+    listing = ["1080 Snowboarding (JU) [!]-FA27089C.eep", "Other-12345678.eep",
+               "Save/1080 SNOWBOARDING-10C93DD78B695CD32B6938534ED0EDD5/1080 SNOWBOARDING.eep"]
+    mupen = sigil.locate_saves(game, "mupen64plus_standalone", "1080.z64", listing=listing)
+    assert [m.path for m in mupen.members] == ["1080 Snowboarding (JU) [!]-FA27089C.eep"]
+    pj64 = sigil.locate_saves(game, "project64", "1080.z64", listing=listing)
+    assert [m.path for m in pj64.members] == [listing[2]]
+
+
+def test_extract_ignores_the_file_name_when_fallback_is_off(tmp_path):
+    rom = tmp_path / "Mario Kart 8 [000500001010EC00].wua"
+    rom.write_bytes(bytes(4096))
+    with pytest.raises(sigil.SigilError):
+        sigil.extract(rom, platform="wiiu", filename_fallback=False)
+
+
 def _ps1_card(saves):
     """A raw PS1 card: `saves` is a list of (directory name, block count), laid out in order."""
     card = bytearray(128 * 1024)

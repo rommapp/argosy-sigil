@@ -2,6 +2,33 @@
 #include "sigil_internal.h"
 #include <stdio.h>
 #include <stdlib.h>
+#ifdef _WIN32
+#include <windows.h>
+
+wchar_t *sigil_wide_path(const char *path) {
+    int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, NULL, 0);
+    if (n <= 0) return NULL;
+    wchar_t *wide = (wchar_t *)malloc((size_t)n * sizeof(wchar_t));
+    if (wide && MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, wide, n) != n) {
+        free(wide);
+        return NULL;
+    }
+    return wide;
+}
+
+FILE *sigil_fopen(const char *path, const char *mode) {
+    wchar_t *wpath = sigil_wide_path(path);
+    wchar_t *wmode = sigil_wide_path(mode);
+    FILE *fp = wpath && wmode ? _wfopen(wpath, wmode) : NULL;
+    free(wpath);
+    free(wmode);
+    return fp;
+}
+#else
+FILE *sigil_fopen(const char *path, const char *mode) {
+    return fopen(path, mode);
+}
+#endif
 
 typedef struct {
     FILE *fp;
@@ -27,7 +54,7 @@ static void file_close(void *ctx) {
 
 sigil_io *sigil_io_open_file(const char *path) {
     if (!path) return NULL;
-    FILE *fp = fopen(path, "rb");
+    FILE *fp = sigil_fopen(path, "rb");
     if (!fp) return NULL;
 
     if (fseeko(fp, 0, SEEK_END) != 0) { fclose(fp); return NULL; }

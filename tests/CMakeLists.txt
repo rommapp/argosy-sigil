@@ -46,7 +46,10 @@ sigil_add_test(unit_switch_nca)
 sigil_add_test(unit_switch_cnmt)
 sigil_add_test(unit_gb)
 sigil_add_test(unit_snes)
+sigil_add_test(unit_n64)
+target_include_directories(unit_n64 PRIVATE ${CMAKE_SOURCE_DIR}/src)
 sigil_add_test(unit_save_unit)
+sigil_add_test(unit_utf8_paths)
 
 # Checks the save samples against their manifests. It hashes the files with
 # sigil's md5 compiled in directly, so it doesn't link the library it will
@@ -96,6 +99,10 @@ target_include_directories(unit_jni_utf16 PRIVATE ${CMAKE_SOURCE_DIR}/bindings/a
 # their tests run here when the toolchain is there and the build is plain and
 # static: a sanitized archive needs its runtime in the host process.
 if(NOT SIGIL_BUILD_SHARED AND NOT CMAKE_C_FLAGS MATCHES "-fsanitize")
+    # Multi-config generators (Visual Studio) put the archives in a folder per
+    # configuration.
+    set(sigil_lib_dir "$<TARGET_LINKER_FILE_DIR:sigil>")
+
     find_program(SIGIL_GO go)
     # cgo links with gcc, which can't take MSVC's .lib archives; on Windows the
     # Go binding needs sigil built with MinGW.
@@ -104,28 +111,38 @@ if(NOT SIGIL_BUILD_SHARED AND NOT CMAKE_C_FLAGS MATCHES "-fsanitize")
         # so a cached build keeps the old struct layout after the header changes.
         add_test(NAME binding_go COMMAND ${SIGIL_GO} test -count=1 -a ./...
                  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/bindings/go)
-        set_tests_properties(binding_go PROPERTIES ENVIRONMENT "CGO_LDFLAGS=-L${CMAKE_BINARY_DIR}")
+        set_tests_properties(binding_go PROPERTIES ENVIRONMENT "CGO_LDFLAGS=-L${sigil_lib_dir}")
+    elseif(MSVC)
+        message(STATUS "Go binding tests off: cgo can't link an MSVC build")
     else()
         message(STATUS "Go binding tests off: no go")
     endif()
 
-    set(SIGIL_BINDING_PYTHON "${CMAKE_SOURCE_DIR}/bindings/python/.venv/bin/python" CACHE FILEPATH
+    if(WIN32)
+        set(venv_python "${CMAKE_SOURCE_DIR}/bindings/python/.venv/Scripts/python.exe")
+    else()
+        set(venv_python "${CMAKE_SOURCE_DIR}/bindings/python/.venv/bin/python")
+    endif()
+    set(SIGIL_BINDING_PYTHON "${venv_python}" CACHE FILEPATH
         "Python with cffi and pytest that runs the binding tests")
     set(python_ready 1)
-    if(EXISTS "${SIGIL_BINDING_PYTHON}")
+    # CPython on Windows builds extensions with MSVC, which can't link MinGW's archives.
+    if(WIN32 AND NOT MSVC)
+        message(STATUS "Python binding tests off: CPython on Windows links MSVC builds only")
+    elseif(EXISTS "${SIGIL_BINDING_PYTHON}")
         execute_process(COMMAND ${SIGIL_BINDING_PYTHON} -c "import cffi, pytest"
                         RESULT_VARIABLE python_ready OUTPUT_QUIET ERROR_QUIET)
     endif()
     if(python_ready EQUAL 0)
         set(python_dir ${CMAKE_SOURCE_DIR}/bindings/python)
         add_test(NAME binding_python_build COMMAND ${SIGIL_BINDING_PYTHON} build_sigil.py WORKING_DIRECTORY ${python_dir})
-        set_tests_properties(binding_python_build PROPERTIES ENVIRONMENT "SIGIL_LIB_DIR=${CMAKE_BINARY_DIR}"
+        set_tests_properties(binding_python_build PROPERTIES ENVIRONMENT "SIGIL_LIB_DIR=${sigil_lib_dir}"
                              FIXTURES_SETUP sigil_python_extension)
         add_test(NAME binding_python COMMAND ${SIGIL_BINDING_PYTHON} -m pytest -q test_sigil.py WORKING_DIRECTORY ${python_dir})
         set_tests_properties(binding_python PROPERTIES FIXTURES_REQUIRED sigil_python_extension)
         add_test(NAME binding_contract COMMAND ${SIGIL_BINDING_PYTHON} -m pytest -q test_contract.py test_docs.py
                  WORKING_DIRECTORY ${python_dir})
-    else()
+    elseif(MSVC OR NOT WIN32)
         message(STATUS "Python binding tests off: set SIGIL_BINDING_PYTHON to a Python with cffi and pytest")
     endif()
 endif()

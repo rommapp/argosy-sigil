@@ -786,6 +786,80 @@ static void check_rpcs3(void) {
     root_free(&root);
 }
 
+/* ---- PSP -------------------------------------------------------------------------- */
+
+/* A memory stick: PPSSPP's, a PSP's ms0:/ or Adrenaline's ux0:pspemu/. */
+static void psp_stick(mem_root *root, const char *at) {
+    char path[SIGIL_SAVE_PATH_MAX];
+    const char *const files[][2] = {
+        { "PSP/SAVEDATA/ULUS10064DATA00/PARAM.SFO", "sfo" },
+        { "PSP/SAVEDATA/ULUS10064DATA00/DATA.BIN", "data" },
+        { "PSP/SAVEDATA/ULUS10064SETTINGS/PARAM.SFO", "settings" },
+        { "PSP/SAVEDATA/ULUS10041DATA00/PARAM.SFO", "another game" },
+        { "PSP/SAVEDATA/SLUS01040/SCEVMC0.VMP", "a PS1 classic's card" },
+        { "PSP/GAME/ULUS10064/EBOOT.PBP", "the game" },
+    };
+    for (size_t i = 0; i < sizeof(files) / sizeof(files[0]); i++) {
+        snprintf(path, sizeof(path), "%s%s", at, files[i][0]);
+        put_text(root, path, files[i][1]);
+    }
+}
+
+static void check_psp(void) {
+    mem_root root = {0};
+    psp_stick(&root, "");
+    game g;
+    make_game(&g, &root, "ppsspp", "psp", "ULUS10064");
+    sigil_sync_result *r = NULL;
+    expect_rc("psp collect", collect(&g, &r), SIGIL_OK);
+    if (!r || r->profile[0] || r->profile_count) fail("psp collect", "a profile where PSP keeps none");
+    if (!unit_all(r, "ULUS10064", NULL, 3) || !unit_has(r, "ULUS10064SETTINGS/PARAM.SFO")) {
+        fail("psp collect", "every folder starting with the game's id, and only those");
+    }
+    if (!r || strcmp(r->artifact, "ULUS10064.zip") != 0) fail("psp collect", "artifact");
+    keep_state(&g, r);
+
+    mem_root fresh = {0};
+    game t;
+    make_game(&t, &fresh, "ppsspp_standalone", "psp", "ULUS10064");
+    sigil_sync_result *w = NULL;
+    expect_rc("psp restore to an empty stick", restore(&t, r, &w), SIGIL_OK);
+    if (!root_holds(&fresh, "PSP/SAVEDATA/ULUS10064DATA00/DATA.BIN", "data")) fail("psp restore to an empty stick", "");
+    sigil_sync_result_free(w);
+
+    mem_root vita = {0};
+    psp_stick(&vita, "pspemu/");
+    game v;
+    make_game(&v, &vita, "psp_console", "psp", "ULUS10064");
+    put_text(&vita, "pspemu/PSP/SAVEDATA/ULUS10064SETTINGS/PARAM.SFO", "changed on the Vita");
+    v.req.overwrite_local = 1;
+    w = NULL;
+    expect_rc("psp restore under pspemu", restore(&v, r, &w), SIGIL_OK);
+    if (!root_holds(&vita, "pspemu/PSP/SAVEDATA/ULUS10064SETTINGS/PARAM.SFO", "settings") ||
+        !root_holds(&vita, "pspemu/PSP/SAVEDATA/ULUS10041DATA00/PARAM.SFO", "another game") ||
+        !root_holds(&vita, "pspemu/PSP/SAVEDATA/SLUS01040/SCEVMC0.VMP", "a PS1 classic's card")) {
+        fail("psp restore under pspemu", "the game's folders written, the others kept");
+    }
+    sigil_sync_result_free(w);
+
+    put_text(&root, "PSP/SAVEDATA/ULUS10064DATA00/DATA.BIN", "played since");
+    w = NULL;
+    expect_rc("psp conflict", restore(&g, r, &w), SIGIL_ERR_CONFLICT);
+    sigil_sync_result_free(w);
+
+    sigil_save_request req = g.req.save;
+    req.listing_count = root.count;
+    sigil_save_profile *profiles = NULL;
+    size_t count = 1;
+    expect_rc("psp profiles", sigil_save_profiles(&req, &profiles, &count), SIGIL_OK);
+    if (profiles || count) fail("psp profiles", "a profile where PSP keeps none");
+
+    sigil_sync_result_free(r);
+    root_free(&vita);
+    root_free(&fresh);
+    root_free(&root);
+}
+
 /* ---- names and the base ----------------------------------------------------------- */
 
 static void expect_base(const char *layout, const char *path, const char *base, const char *profile) {
@@ -812,6 +886,8 @@ static void check_save_base(void) {
     expect_base("cemu", "/x/mlc01/usr/save/00050000/" WIIU_BOTW "/user/common", "/x", "");
     expect_base("vita3k", "/v/ux0/user/00/savedata/PCSB00676", "/v", "00");
     expect_base("rpcs3", "/r/dev_hdd0/home/00000001", "/r", "00000001");
+    expect_base("ppsspp_standalone", "/storage/emulated/0/PSP/SAVEDATA", "/storage/emulated/0", "");
+    expect_base("psp_console", "ux0:pspemu/PSP/SAVEDATA/ULUS10064DATA00", "ux0:pspemu", "");
     expect_base("mednafen_psx_hw", "/saves/psx/", "/saves/psx", "");
     char small[4], profile[SIGIL_PROFILE_ID_MAX];
     expect_rc("save base small", sigil_save_base("eden", "/a/long/path", small, sizeof(small), profile, sizeof(profile)),
@@ -1009,6 +1085,7 @@ int main(void) {
     check_cemu();
     check_vita3k();
     check_rpcs3();
+    check_psp();
     check_save_base();
     check_resolve();
     check_list_profiles();

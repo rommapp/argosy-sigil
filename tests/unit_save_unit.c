@@ -477,6 +477,7 @@ static void test_option_values(void) {
         "mame2003-plus/nvram/mslug.nv", "mame2003-plus/hi/mslug.hi", "nvram/mslug.nv", "hi/mslug.hi",
     };
     static const char *const FDS[] = { "G.srm", "G.sav", "G.ups", "G.ips" };
+    static const char *const N64[] = { "G.srm", "G.rtc", "G.eep" };
     static const char *const POPS[] = {
         "PSP/SAVEDATA/SLUS01040/SCEVMC0.VMP", "PSP/SAVEDATA/SLUS01040/SCEVMC1.VMP", "PSP/SAVEDATA/SLUS01040/PARAM.SFO",
         "PSP/SAVEDATA/SLUS-01040/SCEVMC0.VMP",
@@ -605,6 +606,8 @@ static void test_option_values(void) {
           { 0 } },
         { "fds ips", "nestopia", "fds", "G.fds", { { "nestopia_fds_savefile_format", "ips" } }, L(FDS), { "G.ips" },
           { 0 } },
+        { "mupen64plus_next", "mupen64plus_next", "n64", "G.z64", { { 0 } }, L(N64), { "G.srm" }, { 0 } },
+        { "parallel_n64", "parallel_n64", "n64", "G.z64", { { 0 } }, L(N64), { "G.srm" }, { 0 } },
         { "vita pops", "vita_pops", "psx", "Vagrant Story (USA).cue", { { 0 } }, L(POPS),
           { "PSP/SAVEDATA/SLUS01040/SCEVMC0.VMP", "PSP/SAVEDATA/SLUS01040/SCEVMC1.VMP" }, { 0 }, "SLUS-01040" },
         { "vita pops later disc", "vita_pops", "psx", "Vagrant Story (USA) (Disc 2).cue", { { 0 } }, L(POPS),
@@ -992,6 +995,102 @@ static void test_alternates(void) {
 
 /* bsnes writes a clock cart's time.rtc and the Satellaview cart's download
  * RAM beside the .srm; both travel when present and neither is expected. */
+/* ---- N64 standalone emulators ---------------------------------------------- */
+
+#define N64_MD5     "FA27089C425DBAB99F19245C5C997613"
+#define N64_MD5_N64 "10C93DD78B695CD32B6938534ED0EDD5"
+#define FZ_GAME     "GameData/1080 SNOWBOARDING (JU) fa27089c425dbab99f19245c5c997613/"
+#define PJ64_GAME   "Save/1080 SNOWBOARDING-" N64_MD5_N64 "/"
+
+static void expect_n64(const char *what, const char *layout, uint32_t version, const char *header,
+                       const sigil_save_option *opts, size_t opt_count, const char *const *listing, size_t listing_count,
+                       const char *const *want, size_t want_count) {
+    sigil_result result;
+    memset(&result, 0, sizeof(result));
+    result.struct_version = version;
+    result.platform = SIGIL_PLATFORM_N64;
+    snprintf(result.title_id, sizeof(result.title_id), "NTEA");
+    snprintf(result.n64_header, sizeof(result.n64_header), "%s", header);
+    snprintf(result.n64_md5, sizeof(result.n64_md5), "%s", N64_MD5);
+    snprintf(result.n64_md5_n64, sizeof(result.n64_md5_n64), "%s", N64_MD5_N64);
+    sigil_save_request req;
+    memset(&req, 0, sizeof(req));
+    req.struct_version = SIGIL_SAVE_REQUEST_V1;
+    req.layout = layout;
+    req.platform = "n64";
+    req.content_path = "1080 Snowboarding (Japan, USA) (En,Ja).z64";
+    req.result = &result;
+    req.options = opts;
+    req.option_count = opt_count;
+    req.listing = listing;
+    req.listing_count = listing_count;
+    sigil_save_unit *u = NULL;
+    if (sigil_save_resolve(&req, &u) != SIGIL_OK || !u) {
+        fail(what, "resolve failed");
+        return;
+    }
+    bool same = u->member_count == want_count;
+    for (size_t i = 0; same && i < want_count; i++) same = strcmp(u->members[i].path, want[i]) == 0;
+    if (!same) {
+        for (size_t i = 0; i < u->member_count; i++) fprintf(stderr, "  member %s\n", u->members[i].path);
+        fail(what, "members differ from the files the emulator keeps for the game");
+    }
+    sigil_save_unit_free(u);
+}
+
+static void test_n64_standalone(void) {
+    const char *mupen[] = {
+        "1080 Snowboarding (JU) [!]-FA27089C.eep", "1080 SNOWBOARDING-FA27089C.mpk", "Other Game-12345678.eep",
+        "1080 Snowboarding (JU) [!]-FA27089D.eep", "sub/1080-FA27089C.eep", "1080 Snowboarding (JU) [!].eep",
+    };
+    const char *mupen_want[] = { "1080 Snowboarding (JU) [!]-FA27089C.eep", "1080 SNOWBOARDING-FA27089C.mpk" };
+    expect_n64("mupen64plus by the hash suffix", "mupen64plus_standalone", SIGIL_RESULT_V4, "1080 SNOWBOARDING", NULL, 0,
+               mupen, 6, mupen_want, 2);
+
+    const char *fz[] = {
+        FZ_GAME "SramData/1080 Snowboarding (JU) [!].eep",
+        FZ_GAME "SramData/1080 Snowboarding (JU) [!].mpk",
+        FZ_GAME "AutoSaves/2026-10-05.sav",
+        "GameData/fa27089c425dbab99f19245c5c997613/SramData/1080 Snowboarding (JU) [!].sra",
+        "GameData/OTHER GAME (U) 00000000000000000000000000000000/SramData/Other.eep",
+        "GameData/1080 Snowboarding (JU) [!].eep",
+    };
+    const char *fz_want[] = {
+        FZ_GAME "SramData/1080 Snowboarding (JU) [!].eep",
+        "GameData/fa27089c425dbab99f19245c5c997613/SramData/1080 Snowboarding (JU) [!].sra",
+        FZ_GAME "SramData/1080 Snowboarding (JU) [!].mpk",
+    };
+    expect_n64("m64plus fz by the folder's hash", "m64plus_fz", SIGIL_RESULT_V4, "1080 SNOWBOARDING", NULL, 0, fz, 6,
+               fz_want, 3);
+
+    const char *pj64[] = {
+        PJ64_GAME "1080 SNOWBOARDING.eep", PJ64_GAME "1080 SNOWBOARDING_Cont_1.mpk",
+        PJ64_GAME "1080 SNOWBOARDING_Cont_3.mpk", "Save/1080 SNOWBOARDING.eep",
+        "Save/1080 SNOWBOARDING-" N64_MD5 "/1080 SNOWBOARDING.eep",
+    };
+    const char *pj64_want[] = {
+        PJ64_GAME "1080 SNOWBOARDING.eep", PJ64_GAME "1080 SNOWBOARDING_Cont_1.mpk",
+        PJ64_GAME "1080 SNOWBOARDING_Cont_3.mpk",
+    };
+    expect_n64("project64 unique game dir", "project64", SIGIL_RESULT_V4, "1080 SNOWBOARDING", NULL, 0, pj64, 5,
+               pj64_want, 3);
+    expect_n64("project64 unique game dir, katakana header", "project64", SIGIL_RESULT_V4, "", NULL, 0, pj64, 5,
+               pj64_want, 3);
+
+    const sigil_save_option flat[] = { { "Unique Game Dir", "0" } };
+    const char *pj64_flat[] = {
+        "Save/1080 SNOWBOARDING.eep", "Save/1080 SNOWBOARDING_Cont_2.mpk", PJ64_GAME "1080 SNOWBOARDING.eep",
+        "Save/1080 SNOWBOARDING 2.eep",
+    };
+    const char *pj64_flat_want[] = { "Save/1080 SNOWBOARDING.eep", "Save/1080 SNOWBOARDING_Cont_2.mpk" };
+    expect_n64("project64 flat", "project64", SIGIL_RESULT_V4, "1080 SNOWBOARDING", flat, 1, pj64_flat, 4,
+               pj64_flat_want, 2);
+    expect_n64("project64 flat, katakana header", "project64", SIGIL_RESULT_V4, "", flat, 1, pj64_flat, 4, NULL, 0);
+
+    expect_n64("a result from before the N64 fields", "mupen64plus_standalone", SIGIL_RESULT_V3, "1080 SNOWBOARDING",
+               NULL, 0, mupen, 6, NULL, 0);
+}
+
 static void test_bsnes_files(void) {
     const char *all[] = { "G.srm", "G.rtc", "G.psr" };
     sigil_save_unit *u = resolve("bsnes all", "bsnes", "snes", "G.sfc", 0, NULL, 0, all, 3, NULL);
@@ -1059,6 +1158,7 @@ int main(void) {
     test_alternates();
     test_fds_patch();
     test_bsnes_files();
+    test_n64_standalone();
 
     if (g_fails) {
         fprintf(stderr, "%d failure(s)\n", g_fails);

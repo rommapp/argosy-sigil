@@ -69,7 +69,7 @@ static void raw_io_close(void *ctx_) {
 
 sigil_io *sigil_io_open_raw_cd(const char *path) {
     if (!path) return NULL;
-    FILE *fp = fopen(path, "rb");
+    FILE *fp = sigil_fopen(path, "rb");
     if (!fp) return NULL;
     if (fseeko(fp, 0, SEEK_END) != 0) { fclose(fp); return NULL; }
     off_t sz = ftello(fp);

@@ -31,6 +31,7 @@ extern "C" {
 #define SIGIL_RESULT_V1   1u
 #define SIGIL_RESULT_V2   2u
 #define SIGIL_RESULT_V3   3u
+#define SIGIL_RESULT_V4   4u
 #define SIGIL_SAVE_REQUEST_V1 1u
 #define SIGIL_SAVE_UNIT_V1    1u
 #define SIGIL_CARD_LISTING_V1 1u
@@ -100,7 +101,11 @@ typedef enum {
      * SIGIL_FEATURE_* facts; title_id and save_id stay empty. */
     SIGIL_PLATFORM_GB,
     SIGIL_PLATFORM_GBC,
-    SIGIL_PLATFORM_SNES
+    SIGIL_PLATFORM_SNES,
+    /* title_id and raw_serial are the cart header's game code (NSME), empty
+     * on a cart without one. N64 emulators name saves after the content
+     * file, not the code. */
+    SIGIL_PLATFORM_N64
 } sigil_platform;
 
 /* Cart facts read from the ROM header that change what a save unit holds.
@@ -160,6 +165,16 @@ typedef struct {
     uint32_t       title_version;
     /* SIGIL_FEATURE_* bits (struct_version >= SIGIL_RESULT_V3). */
     uint32_t       features;
+    /* N64 only (struct_version >= SIGIL_RESULT_V4); empty elsewhere. Standalone
+     * N64 emulators name saves from these, so store them with the result.
+     * n64_header: the cart's internal name, trailing spaces dropped; empty
+     * when it holds bytes outside printable ASCII. n64_md5: the ROM's MD5 in
+     * big-endian (.z64) byte order, uppercase hex, as mupen64plus computes it.
+     * n64_md5_n64: the same in 32-bit little-endian word (.n64) order, as
+     * Project64 computes it. Filling them reads the whole ROM. */
+    char           n64_header[24];
+    char           n64_md5[33];
+    char           n64_md5_n64[33];
 } sigil_result;
 
 typedef struct sigil_io sigil_io;
@@ -194,7 +209,9 @@ typedef struct {
     uint32_t              flags;         /* SIGIL_FLAG_* */
 } sigil_options;
 
-/* Extract from a path. `hint=SIGIL_PLATFORM_AUTO` sniffs from the file
+/* Every path sigil opens is UTF-8, on Windows too.
+ *
+ * Extract from a path. `hint=SIGIL_PLATFORM_AUTO` sniffs from the file
  * extension. `opts=NULL` uses defaults (filename fallback ON, no support
  * context, retail-only 3DS). */
 SIGIL_API int sigil_extract_from_path(const char *path,
@@ -356,7 +373,8 @@ SIGIL_API size_t sigil_save_layout_subdirs(const char *layout, const char **out,
 
 /* The emulator's base folder for `path` on a layout with profiles: `path`
  * cut above the layout's top folder (Eden's nand/, Cemu's mlc01/, Vita3K's
- * ux0/, RPCS3's dev_hdd0/) when `path` lies inside it, else `path` itself.
+ * ux0/, RPCS3's dev_hdd0/, a PSP memory stick's PSP/) when `path` lies inside
+ * it, else `path` itself.
  * `profile` gets the profile folder `path` lies in, or "". Separators are
  * kept as given; a trailing one is dropped. On other layouts `base` is
  * `path`. SIGIL_ERR_INVALID_ARG when either buffer is too small. */
@@ -364,7 +382,7 @@ SIGIL_API int sigil_save_base(const char *layout, const char *path, char *base, 
                               size_t profile_cap);
 
 /* The top folder of the emulator's base on a layout with profiles ("nand",
- * "mlc01", "ux0", "dev_hdd0"), for a caller looking under a save root for the
+ * "mlc01", "ux0", "dev_hdd0", "PSP"), for a caller looking under a save root for the
  * base; NULL on other layouts. */
 SIGIL_API const char *sigil_save_layout_top(const char *layout);
 

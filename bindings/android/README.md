@@ -63,7 +63,7 @@ library as a subdirectory build (`add_subdirectory`) and links it into
 `src/main/kotlin/com/nendo/sigil/Sigil.kt` calls into the JNI shim,
 which in turn calls sigil's public C API.
 
-This means each consuming app builds sigil from source — there's no
+This means each consuming app builds sigil from source. There's no
 prebuilt AAR to vendor or version-pin. That's deliberate: sigil is a
 small enough C library that building from source is cheap, and it
 keeps consumers on the same revision their submodule pin specifies.

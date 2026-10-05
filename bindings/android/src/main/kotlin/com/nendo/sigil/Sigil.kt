@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 package com.nendo.sigil
 
-/** Result of a successful title-id extraction. */
+/**
+ * Result of a successful title-id extraction.
+ *
+ * @property n64Header N64 only: the header name, "" when not plain ASCII.
+ * @property n64Md5 N64 only: the ROM's MD5 in .z64 byte order, uppercase, as mupen64plus computes it.
+ * @property n64Md5N64 N64 only: the ROM's MD5 in .n64 byte order, uppercase, as Project64 computes it.
+ * Standalone N64 emulators name saves from these three; store them with the result.
+ */
 data class SigilResult(
     val titleId: String,
     val rawSerial: String,
@@ -12,8 +19,13 @@ data class SigilResult(
     val experimental: Boolean = false,
     val features: Int = 0,
     private val switchContentTypeCode: Int = 0,
-    val titleVersion: Long = 0
+    val titleVersion: Long = 0,
+    val n64Header: String = "",
+    val n64Md5: String = "",
+    val n64Md5N64: String = ""
 ) {
+    internal val n64Fields: Array<String> get() = arrayOf(n64Header, n64Md5, n64Md5N64)
+
     val source: Source get() = Source.fromCode(sourceCode)
     val usage: Usage get() = Usage.fromCode(usageCode)
     val switchContentType: SwitchContentType get() = SwitchContentType.fromCode(switchContentTypeCode)
@@ -58,9 +70,21 @@ data class SigilResult(
          * A result rebuilt from stored columns, or built for a platform that has no title id.
          * [platformSlug] selects the save layout; the rest is what [Sigil.extract] returned.
          * [rawSerial] names pcsx_rearmed's per-disc cards, which follow the boot file as written.
+         * The `n64` fields name the standalone N64 emulators' saves.
          */
-        fun persisted(platformSlug: String, titleId: String, saveId: String, features: Int, rawSerial: String = "") =
-            SigilResult(titleId, rawSerial, saveId, platformSlug, Source.Binary.code, Usage.FolderExact.code, false, features)
+        fun persisted(
+            platformSlug: String,
+            titleId: String,
+            saveId: String,
+            features: Int,
+            rawSerial: String = "",
+            n64Header: String = "",
+            n64Md5: String = "",
+            n64Md5N64: String = ""
+        ) = SigilResult(
+            titleId, rawSerial, saveId, platformSlug, Source.Binary.code, Usage.FolderExact.code, false, features,
+            n64Header = n64Header, n64Md5 = n64Md5, n64Md5N64 = n64Md5N64
+        )
     }
 }
 
@@ -319,6 +343,7 @@ object Sigil {
         rawSerial: String?,
         saveId: String?,
         features: Int,
+        n64: Array<String>,
         optionKeys: Array<String>,
         optionValues: Array<String>,
         listing: Array<String>,
@@ -347,6 +372,7 @@ object Sigil {
         rawSerial: String?,
         saveId: String?,
         features: Int,
+        n64: Array<String>,
         optionKeys: Array<String>,
         optionValues: Array<String>,
         listing: Array<String>,
@@ -441,6 +467,7 @@ object Sigil {
             game.rawSerial.ifEmpty { null },
             game.saveId.ifEmpty { null },
             game.features,
+            game.n64Fields,
             options.keys.toTypedArray(),
             options.values.toTypedArray(),
             paths.toTypedArray(),
@@ -578,6 +605,7 @@ object Sigil {
             game.rawSerial.ifEmpty { null },
             game.saveId.ifEmpty { null },
             game.features,
+            game.n64Fields,
             options.keys.toTypedArray(),
             options.values.toTypedArray(),
             paths.toTypedArray(),

@@ -124,7 +124,7 @@ static int write_zip_multi(const char *path, const zip_member *members,
         return -1;
     }
 
-    FILE *fp = fopen(path, "wb");
+    FILE *fp = test_fopen(path, "wb");
     if (!fp) { free(payloads); free(plens); free(offsets); return -1; }
 
     for (size_t i = 0; i < count; i++) {
@@ -210,10 +210,9 @@ static int write_zip(const char *path, const uint8_t *data, size_t data_len,
     return write_zip_named(path, MEMBER_NAME, data, data_len, method);
 }
 
-static int run_case(const char *label, int method, const uint8_t *img) {
+static int run_case(const char *label, const char *file_name, int method, const uint8_t *img) {
     char path[512];
-    snprintf(path, sizeof(path), "%s/sigil_zip_%d.zip",
-             test_temp_root(), method);
+    snprintf(path, sizeof(path), "%s/%s", test_temp_root(), file_name);
 
     if (write_zip(path, img, IMAGE_BYTES, method) != 0) {
         fprintf(stderr, "FAIL %s: could not write fixture\n", label);
@@ -222,7 +221,7 @@ static int run_case(const char *label, int method, const uint8_t *img) {
 
     sigil_result r;
     int rc = sigil_extract_from_path(path, SIGIL_PLATFORM_AUTO, NULL, &r);
-    remove(path);
+    test_remove_file(path);
 
     if (rc != SIGIL_OK) {
         fprintf(stderr, "FAIL %s: rc=%d\n", label, rc);
@@ -404,8 +403,11 @@ int main(void) {
     if (!img) return 1;
 
     int bad = 0;
-    bad |= run_case("deflate", 8, img);
-    bad |= run_case("store", 0, img);
+    bad |= run_case("deflate", "sigil_zip_8.zip", 8, img);
+    bad |= run_case("store", "sigil_zip_0.zip", 0, img);
+    /* "ゼルダ" [Zelda] and "é": a UTF-8 file name, which Windows' ANSI file
+     * calls can't open. */
+    bad |= run_case("UTF-8 name", "\xe3\x82\xbc\xe3\x83\xab\xe3\x83\x80 \xc3\xa9.zip", 8, img);
     bad |= test_backward_seek(img);
 #if SIGIL_TEST_FILENAME_FALLBACK
     bad |= test_vita_zip_still_resolves_by_name(img);

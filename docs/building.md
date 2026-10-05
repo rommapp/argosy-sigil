@@ -17,18 +17,58 @@ understands:
 
 | Option | Effect |
 |---|---|
-| `-DSIGIL_BUILD_SHARED=ON` | Build `libsigil.so` instead of `.a` |
+| `-DSIGIL_BUILD_SHARED=ON` | Build a shared library (`libsigil.so`, `libsigil.dylib`, `sigil.dll`) instead of a static one |
 | `-DSIGIL_BUILD_CLI=OFF` | Skip the `sigil(1)` reference CLI ([cli.md](cli.md)) |
 | `-DSIGIL_BUILD_TESTS=OFF` | Skip tests |
 
 ### Windows
 
-CI builds with MSVC on `windows-latest`. The library reaches POSIX names
-through `src/sigil_compat.h`, which CMake force-includes into every source
-on MSVC; tests reach folders through `tests/test_fs.h`. To catch a header
-or call Windows lacks before CI does, cross-build with MinGW-w64
-(`brew install mingw-w64` on macOS) using a toolchain file that sets
-`CMAKE_SYSTEM_NAME` to `Windows` and the compilers to
+sigil builds with MSVC and with MinGW-w64. Which one depends on what links
+it:
+
+| Consumer | Build sigil with | Why |
+|---|---|---|
+| C or C++ built with MSVC | MSVC | `.lib` archives link only into MSVC builds |
+| Python | MSVC | CPython on Windows compiles extensions with MSVC |
+| Go | MinGW-w64 | cgo links with gcc, which can't read MSVC's `.lib` archives |
+
+With MSVC, from a Developer Command Prompt or any shell where CMake finds
+Visual Studio:
+
+```sh
+cmake -B build -S .
+cmake --build build --config Release
+ctest --test-dir build -C Release
+```
+
+The Visual Studio generator puts the libraries in `build\Release\`
+(`sigil.lib`, `sigil_chdr.lib`, ...; `sigil.dll` with its import library
+`sigil.lib` in a shared build). Link a shared build with `SIGIL_SHARED`
+defined, which CMake's `target_link_libraries(... sigil)` does for you.
+
+With MinGW-w64, from an MSYS2 UCRT64 shell (`pacman -S
+mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake
+mingw-w64-ucrt-x86_64-ninja`):
+
+```sh
+cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+ctest --test-dir build
+```
+
+Every path sigil takes is UTF-8, on Windows too: sigil opens files through
+the wide-character calls, so a ROM named in Japanese opens. Pass paths
+from `wchar_t` APIs through `WideCharToMultiByte(CP_UTF8, ...)`, not the
+ANSI code page. The Python and Go bindings already pass UTF-8. Relative
+save paths (`listing`, `write`, `remove`) use `/`; Windows accepts it.
+
+CI builds and tests both: MSVC with the Python binding, and MinGW-w64
+with the Go binding. The library reaches POSIX names through
+`src/sigil_compat.h`, which CMake force-includes into every source on
+MSVC; tests reach files and folders through `tests/test_fs.h`. To catch
+a header or call Windows lacks before CI does, cross-build with
+MinGW-w64 (`brew install mingw-w64` on macOS) using a toolchain file that
+sets `CMAKE_SYSTEM_NAME` to `Windows` and the compilers to
 `x86_64-w64-mingw32-gcc` and `x86_64-w64-mingw32-g++`:
 
 ```sh

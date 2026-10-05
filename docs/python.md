@@ -18,7 +18,7 @@ sigil.extract(
     prod_keys_path: str | PathLike = None,  # optional. Switch prod.keys file.
     prod_keys_text: str | bytes = None,     # optional. Switch prod.keys contents. Wins over prod_keys_path.
     header_key: bytes = None,               # optional. Switch header key, 32 bytes. Wins over both.
-    filename_fallback: bool = False,        # optional. Scan the file name when the binary gives nothing;
+    filename_fallback: bool = True,         # optional. Scan the file name when the binary gives nothing;
                                             #   source reports which happened.
     allow_3ds_homebrew: bool = False,       # optional.
 ) -> SigilResult                            # Raises when nothing identified the file.
@@ -26,8 +26,8 @@ sigil.extract(
 
 ```python
 SigilResult(
-    title_id: str,              # "" on gb, gbc, snes.
-    raw_serial: str,            # As found in the binary.
+    title_id: str,              # "" on gb, gbc, snes. A Switch update or DLC gives its game's id.
+    raw_serial: str,            # As found in the binary; a Switch update's or DLC's own id.
     save_id: str,               # On-disk name the emulator keys the save by. "" on gb, gbc, snes.
     platform: str,
     source: str,                # "binary", "filename".
@@ -37,13 +37,23 @@ SigilResult(
     switch_content_type: str,   # "unknown", "application", "patch", "addon".
     title_version: int,         # Switch only.
     features: int,              # Bit set. FEATURE_RTC: cart has a clock. has_rtc reads it.
+    n64_header: str,            # N64 only. The cart's name; "" when not plain ASCII.
+    n64_md5: str,               # N64 only. The ROM's MD5 in .z64 byte order, uppercase.
+    n64_md5_n64: str,           # N64 only. The same in .n64 byte order, as Project64 hashes it.
 )
 ```
 
-Store `title_id`, `save_id`, `platform`, `features`. Rebuild later, or
-build for a platform sigil cannot extract (Sega CD raises). Every field
-is passed every time; a new frozen value comes back, nothing is kept
-between calls:
+For an N64 ROM, `extract` reads the whole file to fill the two MD5s; the
+standalone N64 emulators name saves from them.
+
+A Switch XCI or NSP needs keys: without them `extract` raises
+`SigilNeedsKeyError`, and with keys that don't open the content (a key
+file older than the dump, or a wrong header key)
+`SigilKeysIncompatibleError`.
+
+Store `title_id`, `save_id`, `raw_serial`, `platform`, `features` and,
+for N64, the three `n64_*` fields. Rebuild the result from them later, or
+build one for a platform sigil cannot extract (Sega CD raises):
 
 ```python
 sigil.SigilResult.persisted(
@@ -52,6 +62,9 @@ sigil.SigilResult.persisted(
     save_id: str,       # required. Stored save_id, or "" when the platform has none.
     features: int,      # required. Stored features, or 0.
     raw_serial: str = "",  # optional. Stored raw_serial; pcsx_rearmed's serial cards are named from it.
+    n64_header: str = "",  # optional. The stored N64 fields; the standalone N64 emulators'
+    n64_md5: str = "",     #   saves are named from them.
+    n64_md5_n64: str = "",
 ) -> SigilResult
 ```
 
@@ -102,10 +115,11 @@ than its save-method option. Ask the user, or call again with each
 alternate's `options`; sigil never picks one itself.
 
 On a layout with profiles (`eden`, `citron`, `sudachi`, `yuzu`, `cemu`,
-`vita3k`, `rpcs3`), `save_root` may be any folder around the emulator's
-own: its base (the folder holding `nand/`, `mlc01/`, `ux0/` or
-`dev_hdd0/`), a folder above it, or one inside it such as a profile's save
-folder. Sigil re-roots at the base and takes the profile the root lies in.
+`vita3k`, `rpcs3`) and on the PSP layouts (`ppsspp`, `ppsspp_standalone`,
+`psp_console`, which keep no profiles), `save_root` may be any folder
+around the emulator's own: its base (the folder holding `nand/`, `mlc01/`,
+`ux0/`, `dev_hdd0/` or `PSP/`), a folder above it, or one inside it such
+as a profile's save folder. Sigil re-roots at the base and takes the profile the root lies in.
 Member paths are then relative to the base, which `save_base` returns.
 [save-units.md](save-units.md#profiles) has the folders and the profile rules.
 
@@ -167,50 +181,64 @@ that ticked doesn't read as a new save. Most clients never read it.
 
 ## Upload and restore
 
-Upload by `shape`. `single` sends the member as is. `multi` zips the
-members flat, each under its `entry`. `folder` zips the `key` folder so
-entries read `<key>/<file>`. Name the upload `artifact`. Hash rules:
-[save-units.md](save-units.md#hash); each system's layouts:
-[platforms/](platforms/README.md).
-
-Restore by `path`. Unzip a `multi` artifact so every entry lands at its
-member's `path` under the root. Unzip a `folder` artifact from the
-root's parent of the key folder. `expected` says where a primary goes
-when the emulator has not created one yet.
-
-## Memory cards
-
-List the saves on a memory card or backup RAM volume: PS1 cards (the raw
-card as `.mcr`, `.mcd` or `.srm`, DexDrive `.gme`, PSP or Vita `.vmp`),
-PS2 `.ps2` file cards, GameCube raw cards, Dreamcast VMUs, and Saturn and
-Sega CD backup RAM.
+`collect` and `restore` (see [Sync](#sync)) build and unpack the
+artifact for you. One round trip, with `romm` and `store` standing for
+your own server client and storage:
 
 ```python
-sigil.list_card(
-    path: str | PathLike,           # required. The card file. Its format is detected from the content.
-) -> SigilCardListing               # Raises SigilUnsupportedFormatError when the file is not a card
-                                    #   sigil reads.
+import sigil
 
-SigilCardListing(
-    format: str,                    # "ps1-raw", "ps1-gme", "ps1-vmp", "ps2", "gamecube-raw",
-                                    #   "dreamcast-vmu", "saturn-backup", "segacd-bram".
-    total_blocks: int,
-    free_blocks: int,               # Blocks a new save can use.
-    free_slots: int,                # Directory slots a new save can use.
-    corrupt_count: int,             # Saves left out because their block chain is broken.
-    entries: tuple[SigilCardEntry, ...],   # Live saves, in directory order.
-    corrupt_entries: tuple[SigilCardEntry, ...],   # The left-out saves the card still names; blocks is 0.
-)
+CORE, CONTENT, ROOT = "pcsx_rearmed", "Chrono Cross (USA).cue", "/saves/psx"
 
-SigilCardEntry(
-    name: str,                      # As stored on the card, e.g. "BASLUSP01041USCHRO00". Bytes that
-                                    #   aren't UTF-8 decode with surrogateescape.
-    owner_id: str,                  # The game id the save carries, as extract reports it: PS1 and PS2
-                                    #   "SLUS-01041", GameCube "47465A45". "" when the format has none.
-    blocks: int,                    # In the card's own block size.
-    first_block: int,
-)
+# After the game closes: collect, upload what changed, then keep the state.
+result = sigil.collect(game, CORE, CONTENT, ROOT, state=store.state(game))
+if result.changed and result.data is not None:
+    romm.upload_save(game, result.artifact, result.data, result.content_hash)
+    if result.holding is not None:
+        romm.upload_save(game, "holding.zip", result.holding)
+    store.set_state(game, result.state)      # only once every upload succeeded
+
+# Before the next launch: put the server's save back.
+unit = romm.download_save(game)
+try:
+    result = sigil.restore(unit, game, CORE, CONTENT, ROOT, state=store.state(game))
+except sigil.SigilConflictError:
+    # The saves on disk changed since the last sync. Ask the user, then:
+    result = sigil.restore(unit, game, CORE, CONTENT, ROOT, state=store.state(game),
+                           overwrite_local=True)
+except sigil.SigilAmbiguousError as e:
+    # More than one profile could take the saves. Ask which is theirs:
+    choice = ask_user(e.profiles)
+    result = sigil.restore(unit, game, CORE, CONTENT, ROOT, state=store.state(game),
+                           profile=choice.id)
+store.set_state(game, result.state)
 ```
+
+Upload `data` under the name `artifact`; RomM computes the same
+`content_hash`. Pass back the `state` the last call returned every time,
+so sigil can tell a local change from its own last restore.
+
+### Without collect and restore
+
+`locate_saves` doesn't build an upload. It gives you `members`, the
+files that make up the game's save, and you package them yourself:
+
+1. Upload by `shape`. `"single"`: send the one member's file as it is.
+   `"multi"`: zip the members yourself, each stored at the zip's root
+   under its `entry`. `"folder"`: zip the `key` folder so entries read
+   `<key>/<file>`. Name the upload `artifact`.
+2. Compare with RomM by the `content_hash` from step 3; it matches what
+   RomM computes for that upload.
+3. To restore, unpack the artifact yourself. `"single"`: write it to
+   the member's `path`. `"multi"`: write each zip entry to the `path` of
+   the member with that `entry`. `"folder"`: unzip into the key folder's
+   parent. When the emulator hasn't created a primary yet, `expected`
+   gives its `path`.
+
+This path writes whole files, so it can't merge a game's saves into a
+shared memory card or a profile folder the way `restore` does. Use
+`collect` and `restore` wherever they cover the system. Hash rules:
+[save-units.md](save-units.md#hash).
 
 ## Sync
 
@@ -218,8 +246,8 @@ SigilCardEntry(
 `restore` puts a unit back and reads it back, removing files where a save
 folder holds a save the unit lacks. PS1 and PS2 memory cards, PCSX2 folder
 cards, GameCube cards and Dolphin's GCI folder, Saturn and Sega CD backup RAM,
-Dreamcast VMUs, and the save folders the yuzu forks, Cemu, Vita3K and RPCS3
-keep per user profile work today. `restore` raises
+Dreamcast VMUs, the save folders the yuzu forks, Cemu, Vita3K and RPCS3
+keep per user profile, and PSP save folders work today. `restore` raises
 `SigilNotFoundError` for a unit holding none of the game's saves, and
 ignores other games' saves inside a unit. The rules every system shares are
 in [sync.md](sync.md); what a unit holds, how Saturn and Sega CD saves find
@@ -304,6 +332,41 @@ happens.
 | `SigilDamagedError` | a file the saves are in is damaged; pass `repair=True` once the user agrees |
 | `SigilExistsError` | Dolphin's GCI folder has no free name for a new save |
 | `SigilIOError` | a file the listing holds won't open, or a member's path would leave the root |
+
+## Memory cards
+
+List the saves on a memory card or backup RAM volume: PS1 cards (the raw
+card as `.mcr`, `.mcd` or `.srm`, DexDrive `.gme`, PSP or Vita `.vmp`),
+PS2 `.ps2` file cards, GameCube raw cards, Dreamcast VMUs, and Saturn and
+Sega CD backup RAM. Sync doesn't need it; it's for showing the user
+what a card holds.
+
+```python
+sigil.list_card(
+    path: str | PathLike,           # required. The card file. Its format is detected from the content.
+) -> SigilCardListing               # Raises SigilUnsupportedFormatError when the file is not a card
+                                    #   sigil reads.
+
+SigilCardListing(
+    format: str,                    # "ps1-raw", "ps1-gme", "ps1-vmp", "ps2", "gamecube-raw",
+                                    #   "dreamcast-vmu", "saturn-backup", "segacd-bram".
+    total_blocks: int,
+    free_blocks: int,               # Blocks a new save can use.
+    free_slots: int,                # Directory slots a new save can use.
+    corrupt_count: int,             # Saves left out because their block chain is broken.
+    entries: tuple[SigilCardEntry, ...],          # Live saves, in directory order.
+    corrupt_entries: tuple[SigilCardEntry, ...],  # The left-out saves the card still names; blocks is 0.
+)
+
+SigilCardEntry(
+    name: str,                      # As stored on the card, e.g. "BASLUSP01041USCHRO00". Bytes that
+                                    #   aren't UTF-8 decode with surrogateescape.
+    owner_id: str,                  # The game id the save carries, as extract reports it: PS1 and PS2
+                                    #   "SLUS-01041", GameCube "47465A45". "" when the format has none.
+    blocks: int,                    # In the card's own block size.
+    first_block: int,
+)
+```
 
 ## Helpers
 
