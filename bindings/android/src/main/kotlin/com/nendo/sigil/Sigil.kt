@@ -278,6 +278,9 @@ data class SigilCardListing(
  * the one whose saves were taken or written.
  * [hardcoreMarker] is true after a restore whose unit ended in the hardcore marker Argosy appended to
  * uploads before it used sigil; restore left the marker out of the saves.
+ * [unownedChanged] is how many of the first [unowned] names are new or rewritten since the last
+ * collect saw their volume: the saves a session that just ended wrote, when that collect came right
+ * before it.
  */
 class SigilSyncResult(
     val artifact: String,
@@ -294,7 +297,8 @@ class SigilSyncResult(
     val profiles: List<SigilProfile>,
     val profile: String,
     val alternates: List<SigilSaveAlternate>,
-    val hardcoreMarker: Boolean
+    val hardcoreMarker: Boolean,
+    val unownedChanged: Int
 ) {
     val shape: SigilSaveUnit.Shape get() = SigilSaveUnit.Shape.fromCode(shapeCode)
 }

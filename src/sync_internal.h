@@ -39,6 +39,11 @@ int sigil_sync_state_put(sigil_sync_state *s, const char *tag, const char *key, 
 /** The game a save named `name` on volume `volume` belongs to, or NULL. */
 const char *sigil_sync_owner_get(const sigil_sync_state *s, const char *volume, const char *name);
 int sigil_sync_owner_put(sigil_sync_state *s, const char *volume, const char *name, const char *game);
+/** The hash a save with no known owner had at the last collect, or NULL. */
+const char *sigil_sync_unowned_get(const sigil_sync_state *s, const char *volume, const char *name);
+int sigil_sync_unowned_put(sigil_sync_state *s, const char *volume, const char *name, const char *md5);
+/** Forgets every save with no known owner on `volume`. */
+int sigil_sync_unowned_clear(sigil_sync_state *s, const char *volume);
 /** `in` with '%', tab, CR and newline written as %XX, as state fields need. */
 void sigil_sync_escape(const char *in, char *out, size_t cap);
 

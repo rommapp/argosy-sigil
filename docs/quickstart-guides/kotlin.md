@@ -304,10 +304,12 @@ class SigilSyncResult(
     identityHash: String,       // Over the saves themselves; placement and timestamps don't move it.
     changed: Boolean,           // identityHash differs from the last sync.
     state: ByteArray,           // Store it once every upload succeeded; pass it back next time.
-    holding: ByteArray?,        // Saturn, Sega CD, Dreamcast: zip of the saves on a shared volume with no known
-                                //   owner. Upload it with the unit.
+    holding: ByteArray?,        // Saturn, Sega CD, Dreamcast: zip of the unclaimed saves on a shared volume.
+                                //   Managed: keep it until they're claimed (sync.md, "Unclaimed saves").
     unowned: List<String>,      // The names of the saves in holding, escaped as SigilCardEntry.name
                                 //   is. Pass them to `claimed` as they are.
+    unownedChanged: Int,        // How many names at the front of unowned are new or rewritten since
+                                //   the last collect.
     restoreAgain: Boolean,      // Unmanaged: the saves the last restore wrote were overwritten.
                                 //   Restore again instead of uploading.
     companions: List<SigilCompanionResult>,

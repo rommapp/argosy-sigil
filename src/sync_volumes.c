@@ -168,17 +168,47 @@ static int note_volumes(sigil_sync_ctx *x, const volume_set *s, const sigil_sync
     return rc;
 }
 
-/* The names of the saves with no known owner, for the user to claim. */
-static int note_unowned(const sigil_sync_saves *saves, sigil_sync_result *r) {
+/* A save with no known owner that is new or rewritten since the last
+ * collect saw its volume. None is, on a volume no collect has seen. */
+static bool unowned_changed(const sigil_sync_ctx *x, const volume_set *s, const sigil_sync_save *o, const char *md5) {
+    const char *key = s->files[o->card].key;
+    if (!sigil_sync_state_get(&x->state, "seen", key)) return false;
+    const char *before = sigil_sync_unowned_get(&x->state, key, o->name);
+    return !before || strcmp(before, md5) != 0;
+}
+
+/* The names of the saves with no known owner, for the user to claim: those
+ * new or rewritten since the last collect first, counted in
+ * `unowned_changed`. The state keeps each one's hash for the next collect.
+ * Call before note_volumes, which records the volumes as seen. */
+static int note_unowned(sigil_sync_ctx *x, const volume_set *s, const sigil_sync_saves *saves, sigil_sync_result *r) {
     size_t unowned = sigil_sync_count_where(saves, SYNC_OWN_NONE, SIZE_MAX);
-    if (!unowned) return SIGIL_OK;
-    r->unowned = calloc(unowned, SIGIL_CARD_NAME_MAX);
-    if (!r->unowned) return SIGIL_ERR_OOM;
-    for (size_t i = 0; i < saves->count; i++) {
-        if (saves->items[i].owner != SYNC_OWN_NONE) continue;
-        snprintf(r->unowned[r->unowned_count++], SIGIL_CARD_NAME_MAX, "%s", saves->items[i].name);
+    char (*md5)[33] = unowned ? calloc(saves->count, 33) : NULL;
+    if (unowned && (!md5 || !(r->unowned = calloc(unowned, SIGIL_CARD_NAME_MAX)))) {
+        free(md5);
+        return SIGIL_ERR_OOM;
     }
-    return SIGIL_OK;
+    int rc = SIGIL_OK;
+    for (size_t i = 0; i < saves->count && rc == SIGIL_OK; i++) {
+        if (saves->items[i].owner == SYNC_OWN_NONE) rc = x->kind->identity(saves->items[i].save, md5[i]);
+    }
+    for (int changed = 1; changed >= 0 && rc == SIGIL_OK; changed--) {
+        for (size_t i = 0; i < saves->count; i++) {
+            const sigil_sync_save *o = &saves->items[i];
+            if (o->owner != SYNC_OWN_NONE || unowned_changed(x, s, o, md5[i]) != (changed == 1)) continue;
+            snprintf(r->unowned[r->unowned_count++], SIGIL_CARD_NAME_MAX, "%s", o->name);
+            r->unowned_changed += changed;
+        }
+    }
+    for (size_t v = 0; v < s->count && rc == SIGIL_OK; v++) {
+        if (!s->files[v].target.per_game) rc = sigil_sync_unowned_clear(&x->state, s->files[v].key);
+    }
+    for (size_t i = 0; i < saves->count && rc == SIGIL_OK; i++) {
+        const sigil_sync_save *o = &saves->items[i];
+        if (o->owner == SYNC_OWN_NONE) rc = sigil_sync_unowned_put(&x->state, s->files[o->card].key, o->name, md5[i]);
+    }
+    free(md5);
+    return rc;
 }
 
 int sigil_sync_collect_volumes(sigil_sync_ctx *x, sigil_sync_result *r) {
@@ -199,7 +229,7 @@ int sigil_sync_collect_volumes(sigil_sync_ctx *x, sigil_sync_result *r) {
         rc = sigil_sync_build_unit(&saves, SYNC_OWN_NONE, &src, true, "holding", &r->holding, &r->holding_len,
                                    &holding_shape, holding_artifact, holding_hash);
     }
-    if (rc == SIGIL_OK) rc = note_unowned(&saves, r);
+    if (rc == SIGIL_OK) rc = note_unowned(x, &vols, &saves, r);
     if (rc == SIGIL_OK) rc = learn_owners(x, &vols, &saves);
     if (rc == SIGIL_OK) rc = note_volumes(x, &vols, &saves);
     sigil_sync_saves_free(&saves);

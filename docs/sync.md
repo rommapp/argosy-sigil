@@ -65,9 +65,32 @@ learned it belongs to, else, in managed mode, to the game the volume was
 last swapped in for, else to the game the save-name table gives it by one
 of the ids in `title_id` or `game_ids` (`src/save_names.c`; Saturn and
 Sega CD product codes as the disc header spells them, Dreamcast product
-numbers). The rest come back in `holding`, which the client
-keeps where the user can claim them; `holding` and the unit both go up
-before the state is stored.
+numbers). The rest are unclaimed saves; see below.
+
+### Unclaimed saves
+
+Collect returns the saves on a shared volume that no rule gives a game
+in `holding`, a zip of the volumes they're on, and their names in
+`unowned`. They're real saves of a game sigil couldn't identify. Call
+them unclaimed saves to the user.
+
+- A client claims a save by passing its name, exactly as `unowned` gave
+  it, in `claimed` on that game's collect. From then on the save is that
+  game's: it travels in that game's unit, and the state remembers the
+  owner. A later claim for another game moves it, so a wrong claim is
+  undone by claiming the save for the right game.
+- `unowned_changed` counts the names at the front of `unowned` that are
+  new or rewritten since the last collect saw their volume; it is 0 on a
+  volume no collect has seen. To claim what a session wrote, collect once
+  before launching the game, then claim the first `unowned_changed`
+  names from the collect after it exits. Without the collect before
+  launch, those names include whatever any other game wrote since.
+- In managed mode, a restore swaps the shared volume for one holding only
+  the game's saves, so `holding` becomes the only copy of the unclaimed
+  saves. A managed client keeps the latest `holding` per volume, and
+  uploads or stores it, until those saves are claimed. In unmanaged mode
+  a restore never takes them off the volume, and a client needs only the
+  claim.
 
 On layouts with profiles, the profile decides whose saves are taken: see
 [save-units.md](save-units.md#profiles).

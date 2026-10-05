@@ -298,10 +298,12 @@ SigilSyncResult(
     identity_hash: str,         # Over the saves themselves; placement and timestamps don't move it.
     changed: bool,              # identity_hash differs from the last sync.
     state: bytes,               # Store it once every upload succeeded; pass it back next time.
-    holding: bytes | None,      # Saturn, Sega CD, Dreamcast: zip of the saves on a shared volume with no known
-                                #   owner. Upload it with the unit.
+    holding: bytes | None,      # Saturn, Sega CD, Dreamcast: zip of the unclaimed saves on a shared volume.
+                                #   Managed: keep it until they're claimed (sync.md, "Unclaimed saves").
     unowned: tuple[str, ...],   # The names of the saves in holding, decoded as SigilCardEntry.name
                                 #   is. Pass them to `claimed` as they are.
+    unowned_changed: int,       # How many names at the front of unowned are new or rewritten since
+                                #   the last collect.
     restore_again: bool,        # Unmanaged: the saves the last restore wrote were overwritten.
                                 #   Restore again instead of uploading.
     companions: tuple[SigilCompanionResult, ...],

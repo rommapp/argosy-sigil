@@ -334,9 +334,10 @@ type SyncResult struct {
     IdentityHash string    // Over the saves themselves; placement and timestamps don't move it.
     Changed      bool      // IdentityHash differs from the last sync.
     State        []byte    // Store it once every upload succeeded; pass it back next time.
-    Holding      []byte    // Saturn, Sega CD, Dreamcast: zip of the saves on a shared volume with no known
-                           //   owner. Upload it with the unit.
+    Holding      []byte    // Saturn, Sega CD, Dreamcast: zip of the unclaimed saves on a shared volume.
+                           //   Managed: keep it until they're claimed (sync.md, "Unclaimed saves").
     Unowned      []string  // The names of the saves in Holding, for the user to claim.
+    UnownedChanged int     // How many names at the front of Unowned are new or rewritten since the last collect.
     RestoreAgain bool      // Unmanaged: the saves the last Restore wrote were overwritten.
                            //   Restore again instead of uploading.
     Companions   []CompanionResult // Collect: one per SyncOptions.Companions, in order.

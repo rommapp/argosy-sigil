@@ -733,6 +733,55 @@ done:
     free_shared_saves(&s);
 }
 
+/* Collect lists the unowned saves new or rewritten since the last collect
+ * first and counts them, so a client can claim the ones a session wrote,
+ * a save rewritten under a name already unowned included. A volume no
+ * collect has seen reports none as changed. */
+static void check_unowned_changed(void) {
+    shared_saves s;
+    if (!load_shared_saves(&s)) { free_shared_saves(&s); fail("unowned changed", "setup failed"); return; }
+    uint8_t *dwarf2 = bup_variant(s.dwarf, s.dwarf_len, 1), *toki2 = bup_variant(s.toki, s.toki_len, 1);
+    const uint8_t *first[2] = { s.zwei, s.toki };
+    const uint8_t *both[3] = { s.zwei, s.toki, s.dwarf };
+    const uint8_t *dwarf_rewritten[3] = { s.zwei, s.toki, dwarf2 };
+    const uint8_t *both_rewritten[3] = { s.zwei, toki2, s.dwarf };   /* both differ from the step before */
+    size_t lens[3] = { s.zwei_len, s.toki_len, s.dwarf_len };
+    static const struct { const char *what; size_t which; size_t count; size_t changed; const char *lead; } STEPS[] = {
+        { "a volume no collect has seen", 0, 1, 0, NULL },
+        { "the same volume again", 0, 1, 0, NULL },
+        { "a new save under a new name", 1, 2, 1, "THREE_DIRTY" },
+        { "nothing changed", 1, 2, 0, NULL },
+        { "a save rewritten under its name, listed first", 2, 2, 1, "THREE_DIRTY" },
+        { "two saves rewritten", 3, 2, 2, NULL },
+    };
+    const uint8_t *const *vols[4] = { first, both, dwarf_rewritten, both_rewritten };
+    size_t counts[4] = { 2, 3, 3, 3 };
+    mem_root root = {0};
+    sigil_sync_result *last = NULL;
+    for (size_t i = 0; i < sizeof(STEPS) / sizeof(STEPS[0]); i++) {
+        size_t v_len = 0;
+        uint8_t *v = saturn_volume(vols[STEPS[i].which], lens, counts[STEPS[i].which], &v_len);
+        root_put(&root, SHARED_BKR, v, v_len);
+        free(v);
+        game g;
+        make_shared(&g, &root, ZWEI_CUE, ZWEI_IDS, 1, SIGIL_SYNC_UNMANAGED);
+        if (last) use_state(&g, last);
+        sigil_sync_result *r = NULL;
+        if (sigil_collect(&g.req, &r) != SIGIL_OK || r->unowned_count != STEPS[i].count ||
+            r->unowned_changed != STEPS[i].changed ||
+            (STEPS[i].lead && strncmp(r->unowned[0], STEPS[i].lead, strlen(STEPS[i].lead)) != 0)) {
+            fail("unowned changed", STEPS[i].what);
+        }
+        sigil_sync_result_free(last);
+        last = r;
+    }
+    sigil_sync_result_free(last);
+    root_free(&root);
+    free(dwarf2);
+    free(toki2);
+    free_shared_saves(&s);
+}
+
 /* `vol` with the save named `name` broken: its archive claims more data than
  * its block list holds, so it lists as corrupt under its name. */
 static uint8_t *saturn_broken(const uint8_t *vol, size_t len, const char *name) {
@@ -2187,6 +2236,7 @@ int main(void) {
     check_cart_follows_option();
     check_saturn_unmanaged();
     check_saturn_swap_guard();
+    check_unowned_changed();
     check_unopenable_volume();
     check_owner_precedence();
     check_saturn_companion_shared();

@@ -527,10 +527,11 @@ typedef struct {
     int       conflict;                        /* restore: 1 when it wrote nothing because local saves changed */
     uint8_t  *state;                           /* store it once every upload succeeded; pass it back next time */
     size_t    state_len;
-    uint8_t  *holding;                         /* collect, Saturn, Sega CD and Dreamcast: a zip of the saves on a
-                                                  shared volume with no known owner, one member per volume named as
-                                                  in a unit ("backup.ram", "cart.ram", "vmu_A1.bin"); NULL when
-                                                  none. Keep it wherever the user can claim them from */
+    uint8_t  *holding;                         /* collect, Saturn, Sega CD and Dreamcast: a zip of the unclaimed
+                                                  saves on a shared volume (no known owner), one member per volume
+                                                  named as in a unit ("backup.ram", "cart.ram", "vmu_A1.bin"); NULL
+                                                  when none. Managed: keep it until they're claimed, since a managed
+                                                  restore takes them off the volume (docs/sync.md, "Unclaimed saves") */
     size_t    holding_len;
     char    (*unowned)[SIGIL_CARD_NAME_MAX];   /* the names of the saves in `holding`, for the user to claim */
     size_t    unowned_count;
@@ -555,6 +556,8 @@ typedef struct {
     int       hardcore_marker;                 /* restore: 1 when the unit ended in the hardcore marker Argosy
                                                   appended to uploads before it used sigil. Restore leaves the
                                                   marker out of the saves; content_hash still covers it */
+    size_t    unowned_changed;                 /* collect: the first this many of `unowned` are new or rewritten since
+                                                  the last collect saw their volume; 0 on a volume no collect has seen */
 } sigil_sync_result;
 
 /* Gathers the game's saves into one unit. Returns SIGIL_ERR_DAMAGED as restore does, and

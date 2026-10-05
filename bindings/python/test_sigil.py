@@ -286,6 +286,25 @@ def test_segacd_shared_volume_holds_unclaimed_saves_back(tmp_path):
 
     with pytest.raises(sigil.SigilUncollectedError):
         sigil.restore(claimed.data, _LUNAR, "genesis_plus_gx", "Lunar (USA).cue", tmp_path)
+    assert held.unowned_changed == 0  # a volume no collect had seen
+
+
+@pytest.mark.skipif(not _MULTI_BRM.exists(), reason="Sega CD save samples missing")
+def test_unowned_changed_counts_saves_new_since_the_last_collect(tmp_path):
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    target.mkdir()
+    (source / "scd_U.brm").write_bytes(_MULTI_BRM.read_bytes())
+    claimed = sigil.collect(_LUNAR, "genesis_plus_gx", "Lunar (USA).cue", source, claimed=["SFCD_DAT_09"])
+    assert claimed.data is not None
+    alone = sigil.restore(claimed.data, _LUNAR, "genesis_plus_gx", "Lunar (USA).cue", target, mode="unmanaged")
+    seen = sigil.collect(_LUNAR, "genesis_plus_gx", "Lunar (USA).cue", target, state=alone.state, mode="unmanaged")
+    assert seen.unowned == ()
+    (target / "scd_U.brm").write_bytes(_MULTI_BRM.read_bytes())
+    later = sigil.collect(_LUNAR, "genesis_plus_gx", "Lunar (USA).cue", target, state=seen.state, mode="unmanaged")
+    assert len(later.unowned) > 0
+    assert later.unowned_changed == len(later.unowned)
 
 
 _HYPER_DUEL = Path(__file__).resolve().parents[2] / "tests/fixtures/saves/saturn/files/hyper-duel-bkr/Hyper Duel (Japan).bkr"

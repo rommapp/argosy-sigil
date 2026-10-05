@@ -429,6 +429,8 @@ typedef struct {
     size_t holding_len;
     char (*unowned)[64];              /* The names of the saves in holding. */
     size_t unowned_count;
+    size_t unowned_changed;           /* How many names at the front of unowned are new or rewritten
+                                         since the last collect (at the end of the struct). */
     int restore_again;                /* collect, unmanaged: the saves the last restore wrote were
                                          overwritten. Restore again instead of uploading. */
     sigil_sync_companion_result *companions;   /* collect: one per request companion, in request order. */

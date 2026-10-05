@@ -1175,6 +1175,9 @@ type SyncResult struct {
 	// Restore: the unit ended in the hardcore marker Argosy appended to
 	// uploads before it used sigil. Restore left it out of the saves.
 	HardcoreMarker bool
+	// Collect: the first UnownedChanged names in Unowned are new or
+	// rewritten since the last collect saw their volume.
+	UnownedChanged int
 }
 
 func goProfiles(cres *C.sigil_sync_result) []Profile {
@@ -1276,6 +1279,7 @@ func runSync(unit []byte, game *Result, core, contentPath, saveRoot string, opts
 		Profile:        C.GoString(&cres.profile[0]),
 		Alternates:     goAlternates(cres.alternates, cres.alternate_count),
 		HardcoreMarker: cres.hardcore_marker != 0,
+		UnownedChanged: int(cres.unowned_changed),
 	}
 	if cres.data != nil {
 		out.Data = C.GoBytes(unsafe.Pointer(cres.data), C.int(cres.len))

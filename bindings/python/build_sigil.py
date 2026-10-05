@@ -358,6 +358,7 @@ typedef struct {
     sigil_save_alternate *alternates;
     size_t    alternate_count;
     int       hardcore_marker;
+    size_t    unowned_changed;
 } sigil_sync_result;
 
 int  sigil_collect(const sigil_sync_request *req, sigil_sync_result **out);

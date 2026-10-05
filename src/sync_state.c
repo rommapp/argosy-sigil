@@ -120,20 +120,40 @@ int sigil_sync_state_put(sigil_sync_state *s, const char *tag, const char *key, 
     return put_prefixed(s, prefix, value);
 }
 
-static void owner_prefix(const char *volume, const char *name, char out[3 * SYNC_KEY_MAX]) {
+/* The key of a record about save `name` on `volume`, or with `name` NULL
+ * the start of every one on `volume`. */
+static void save_prefix(const char *tag, const char *volume, const char *name, char out[3 * SYNC_KEY_MAX]) {
     char escaped[3 * SIGIL_CARD_NAME_MAX];
-    sigil_sync_escape(name, escaped, sizeof(escaped));
-    snprintf(out, 3 * SYNC_KEY_MAX, "owner\t%s\t%s\t", volume, escaped);
+    if (name) sigil_sync_escape(name, escaped, sizeof(escaped));
+    snprintf(out, 3 * SYNC_KEY_MAX, "%s\t%s\t%s%s", tag, volume, name ? escaped : "", name ? "\t" : "");
 }
 
 const char *sigil_sync_owner_get(const sigil_sync_state *s, const char *volume, const char *name) {
     char prefix[3 * SYNC_KEY_MAX];
-    owner_prefix(volume, name, prefix);
+    save_prefix("owner", volume, name, prefix);
     return get_prefixed(s, prefix);
 }
 
 int sigil_sync_owner_put(sigil_sync_state *s, const char *volume, const char *name, const char *game) {
     char prefix[3 * SYNC_KEY_MAX];
-    owner_prefix(volume, name, prefix);
+    save_prefix("owner", volume, name, prefix);
     return put_prefixed(s, prefix, game);
+}
+
+const char *sigil_sync_unowned_get(const sigil_sync_state *s, const char *volume, const char *name) {
+    char prefix[3 * SYNC_KEY_MAX];
+    save_prefix("unowned", volume, name, prefix);
+    return get_prefixed(s, prefix);
+}
+
+int sigil_sync_unowned_put(sigil_sync_state *s, const char *volume, const char *name, const char *md5) {
+    char prefix[3 * SYNC_KEY_MAX];
+    save_prefix("unowned", volume, name, prefix);
+    return put_prefixed(s, prefix, md5);
+}
+
+int sigil_sync_unowned_clear(sigil_sync_state *s, const char *volume) {
+    char prefix[3 * SYNC_KEY_MAX];
+    save_prefix("unowned", volume, NULL, prefix);
+    return put_prefixed(s, prefix, NULL);
 }

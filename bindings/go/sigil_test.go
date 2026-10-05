@@ -360,6 +360,40 @@ func TestSegaCDSharedVolumeHoldsUnclaimedSavesBack(t *testing.T) {
 	if _, err := Restore(claimed.Data, lunar, "genesis_plus_gx", "Lunar (USA).cue", root, nil); !errors.Is(err, ErrUncollected) {
 		t.Fatalf("err = %v, want ErrUncollected", err)
 	}
+	if held.UnownedChanged != 0 {
+		t.Fatalf("UnownedChanged = %d on a volume no collect had seen", held.UnownedChanged)
+	}
+}
+
+func TestUnownedChangedCountsSavesNewSinceTheLastCollect(t *testing.T) {
+	sample, err := os.ReadFile(filepath.Join("..", "..", "tests", "fixtures", "saves", "segacd", "files", "multi-titles-brm", "Multiple titles.brm"))
+	if err != nil {
+		t.Skip("Sega CD save samples missing")
+	}
+	source, target := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "scd_U.brm"), sample, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lunar := PersistedResult("segacd", "", "", 0)
+	claimed, err := Collect(lunar, "genesis_plus_gx", "Lunar (USA).cue", source, &SyncOptions{Claimed: []string{"SFCD_DAT_09"}})
+	if err != nil || claimed.Data == nil {
+		t.Fatalf("claimed collect = %+v, %v", claimed, err)
+	}
+	alone, err := Restore(claimed.Data, lunar, "genesis_plus_gx", "Lunar (USA).cue", target, &SyncOptions{Unmanaged: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen, err := Collect(lunar, "genesis_plus_gx", "Lunar (USA).cue", target, &SyncOptions{Unmanaged: true, State: alone.State})
+	if err != nil || len(seen.Unowned) != 0 {
+		t.Fatalf("seen = %+v, %v", seen, err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "scd_U.brm"), sample, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	later, err := Collect(lunar, "genesis_plus_gx", "Lunar (USA).cue", target, &SyncOptions{Unmanaged: true, State: seen.State})
+	if err != nil || len(later.Unowned) == 0 || later.UnownedChanged != len(later.Unowned) {
+		t.Fatalf("later = %d unowned, %d changed, %v", len(later.Unowned), later.UnownedChanged, err)
+	}
 }
 
 func TestASaveNameWithRawBytesCanBeClaimed(t *testing.T) {

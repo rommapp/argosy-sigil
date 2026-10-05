@@ -112,6 +112,7 @@ _SYNC_FIELDS = {
     "unowned": ("unowned", "unowned", "Unowned"),
     "restore again": ("restoreAgain", "restore_again", "RestoreAgain"),
     "hardcore marker": ("hardcoreMarker", "hardcore_marker", "HardcoreMarker"),
+    "unowned changed": ("unownedChanged", "unowned_changed", "UnownedChanged"),
     "state": ("state", "state", "State"),
     "conflict": ("CONFLICT = -9", "SigilConflictError", "ErrConflict "),
     "companions": ("companions", "companions", "Companions"),
