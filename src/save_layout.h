@@ -69,7 +69,8 @@ typedef enum {
                                   nickname at +0x28; the save folder is the UUID's bytes reversed, in hex */
     SIGIL_PROFILES_CEMU,       /* act/<id>/account.dat: PersistentId= and MiiName= (UTF-16BE in hex) lines */
     SIGIL_PROFILES_VITA3K,     /* user/<id>/user.xml: the name attribute of <user> */
-    SIGIL_PROFILES_RPCS3       /* home/<id>/localusername: the name alone */
+    SIGIL_PROFILES_RPCS3,      /* home/<id>/localusername: the name alone */
+    SIGIL_PROFILES_RYUJINX     /* system/Profiles.json: "user_id" (32 hex) and "name" per profile */
 } sigil_profiles_format;
 
 /* One folder of a game's saves on a layout with profiles. Templates are
@@ -100,6 +101,9 @@ typedef struct {
     bool                     savedata_only; /* a folder whose PARAM.SFO holds neither SAVEDATA_PARAMS nor
                                                SAVEDATA_FILE_LIST is installed game data, not a save */
     const char              *fixed_profile; /* the one profile an emulator with no list always uses, or NULL */
+    const char              *index;         /* the save index (Ryujinx's imkvdb.arc), relative to the base: save
+                                               folders are named by the id it gives each save, and it says
+                                               whose each one is; NULL when folders are named by the title */
 } sigil_layout_profiles;
 
 typedef struct {

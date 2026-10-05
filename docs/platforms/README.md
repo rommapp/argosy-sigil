@@ -118,6 +118,8 @@ section, fails `bindings/python/test_docs.py`.
 | `lemon` | [switch](switch.md) | Lemon | standalone |
 | `skyline` | [switch](switch.md) | Skyline | standalone |
 | `strato` | [switch](switch.md) | Strato | standalone |
+| `ryujinx` | [switch](switch.md) | Ryujinx, Ryubing | standalone |
+| `kenjinx` | [switch](switch.md) | Kenji-NX | standalone |
 | `cemu` | [wiiu](wiiu.md) | Cemu | standalone |
 | `vita3k` | [psvita](psvita.md) | Vita3K | standalone |
 | `rpcs3` | [ps3](ps3.md) | RPCS3 | standalone |

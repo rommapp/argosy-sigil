@@ -378,6 +378,20 @@ static const sigil_layout_profiles SKYLINE_PROFILES = {
 };
 static const char *const SKYLINE_SUBDIRS[] = { "switch/nand/user/save/0000000000000000" };
 
+/* Ryujinx and its forks Ryubing and Kenji-NX (LibHac SaveDataIndexer,
+ * DirectorySaveDataFileSystem; Ryujinx.HLE Account/Acc): bis/user/save/<id>/
+ * where <id> is the save index's id for the save, not the title, and 0/ holds
+ * the committed save. The index (imkvdb.arc) says whose each folder is;
+ * system/Profiles.json lists the users. */
+static const sigil_layout_area RYUJINX_AREAS[] = {
+    { "bis/user/save/{save_id}/0/", "{save_id}/", SIGIL_SAVE_AREA_DEVICE, false, NULL },
+};
+static const sigil_layout_profiles RYUJINX_PROFILES = {
+    "bis", SIGIL_PROFILES_RYUJINX, "system/Profiles.json", RYUJINX_AREAS, COUNT(RYUJINX_AREAS), NULL, 0, false, false,
+    NULL, "bis/system/save/8000000000000000/0/imkvdb.arc",
+};
+static const char *const RYUJINX_SUBDIRS[] = { "bis/user/save", "bis/system/save/8000000000000000", "system" };
+
 /* Cemu (src/Cafe/TitleList/SaveInfo.cpp, Account.cpp): the mlc's
  * usr/save/00050000/<title low>/ holds meta/, user/<persistent id>/ per
  * account and user/common/ for every account. Cemu writes meta/ again when
@@ -528,6 +542,8 @@ static const sigil_layout LAYOUTS[] = {
     ROW_PROFILES("lemon", "switch", YUZU_SUBDIRS, YUZU_PROFILES),
     ROW_PROFILES("skyline", "switch", SKYLINE_SUBDIRS, SKYLINE_PROFILES),
     ROW_PROFILES("strato", "switch", SKYLINE_SUBDIRS, SKYLINE_PROFILES),
+    ROW_PROFILES("ryujinx", "switch", RYUJINX_SUBDIRS, RYUJINX_PROFILES),
+    ROW_PROFILES("kenjinx", "switch", RYUJINX_SUBDIRS, RYUJINX_PROFILES),
     ROW_PROFILES("cemu", "wiiu", CEMU_SUBDIRS, CEMU_PROFILES),
     ROW_PROFILES("vita3k", "psvita", VITA3K_SUBDIRS, VITA3K_PROFILES),
     ROW_PROFILES("rpcs3", "ps3", RPCS3_SUBDIRS, RPCS3_PROFILES),

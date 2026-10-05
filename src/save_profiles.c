@@ -2,6 +2,7 @@
 #include "save_profiles.h"
 #include "card_saturn.h"
 #include <ctype.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -504,6 +505,161 @@ static int yuzu_profiles(sigil_profile_root *p) {
     return rc;
 }
 
+/* The JSON string starting at the quote `s` points to, unescaped into `out`;
+ * the byte after its closing quote, or NULL when it doesn't close. */
+static const char *json_string(const char *s, const char *end, char *out, size_t cap) {
+    size_t n = 0;
+    out[0] = '\0';
+    if (s >= end || *s++ != '"') return NULL;
+    uint32_t high = 0;
+    while (s < end && *s != '"') {
+        if (*s != '\\') {
+            if (n + 1 < cap) out[n++] = *s;
+            s++;
+            continue;
+        }
+        if (++s >= end) return NULL;
+        char e = *s++;
+        uint32_t c = e == 'n' ? '\n' : e == 't' ? '\t' : e == 'r' ? '\r' : e == 'b' ? '\b' : e == 'f' ? '\f' : (uint8_t)e;
+        if (e == 'u') {
+            unsigned unit = 0;
+            char quad[5] = { 0 };
+            if (end - s < 4) return NULL;
+            memcpy(quad, s, 4);
+            s += 4;
+            if (sscanf(quad, "%4x", &unit) != 1) return NULL;
+            if (unit >= 0xD800 && unit < 0xDC00) {
+                high = unit;
+                continue;
+            }
+            c = unit >= 0xDC00 && unit < 0xE000 && high ? 0x10000 + ((high - 0xD800) << 10) + (unit - 0xDC00) : unit;
+        }
+        high = 0;
+        out[n] = '\0';
+        put_utf8(c, out, cap, &n);
+    }
+    if (s >= end) return NULL;
+    out[utf8_whole(out, n)] = '\0';
+    return s + 1;
+}
+
+/* The string value of the first `"key":` in [s, end), into `out`. */
+static bool json_value(const char *s, const char *end, const char *key, char *out, size_t cap) {
+    char quoted[32];
+    int k = snprintf(quoted, sizeof(quoted), "\"%s\"", key);
+    for (; s + k <= end; s++) {
+        if (strncmp(s, quoted, (size_t)k) != 0) continue;
+        const char *v = s + k;
+        while (v < end && (isspace((unsigned char)*v) || *v == ':')) v++;
+        return json_string(v, end, out, cap) != NULL;
+    }
+    return false;
+}
+
+/* Ryujinx's Profiles.json: each "user_id" and the "name" that follows it. */
+static int ryujinx_profiles(sigil_profile_root *p) {
+    size_t len = 0;
+    uint8_t *data = NULL;
+    int rc = read_root_file(p, p->row->list, &data, &len);
+    char *text = data ? (char *)malloc(len + 1) : NULL;
+    if (text) {
+        memcpy(text, data, len);
+        text[len] = '\0';
+    }
+    const char *end = text ? text + len : NULL;
+    for (const char *s = text; text && s < end;) {
+        const char *at = strstr(s, "\"user_id\"");
+        if (!at || at >= end) break;
+        const char *next = strstr(at + 1, "\"user_id\"");
+        const char *object_end = next && next < end ? next : end;
+        char id[SIGIL_PROFILE_ID_MAX], name[SIGIL_PROFILE_NAME_MAX];
+        if (json_value(at, object_end, "user_id", id, sizeof(id))) {
+            if (!json_value(at, object_end, "name", name, sizeof(name))) name[0] = '\0';
+            add_profile(p, id, name);
+        }
+        s = object_end;
+    }
+    free(text);
+    free(data);
+    return rc;
+}
+
+/* ---- the save index ------------------------------------------------------------ */
+
+#define KVDB_MAGIC   0x564B4D49u   /* "IMKV" */
+#define KVDB_ENTRY   0x4E454D49u   /* "IMEN" */
+#define KVDB_KEY     0x40u
+#define INDEX_ACCOUNT 1
+#define INDEX_DEVICE  3
+#define INDEX_SPACE_USER 1
+#define INDEX_DELETED 3
+
+/* Ryujinx's imkvdb.arc (LibHac KeyValueArchive of SaveDataAttribute keys and
+ * SaveDataIndexerValue values): the game's account and device saves in the
+ * user space, with each one's folder id and, for an account save, its user
+ * as Profiles.json writes it. */
+static int load_index(sigil_profile_root *p) {
+    size_t len = 0;
+    uint8_t *data = NULL;
+    int rc = read_root_file(p, p->row->index, &data, &len);
+    uint64_t title = 0;
+    bool have_title = sscanf(p->save_id, "%16" SCNx64, &title) == 1;
+    if (!data || len < 0xC || sigil_read_le32(data) != KVDB_MAGIC || !have_title) {
+        free(data);
+        return rc;
+    }
+    uint32_t count = sigil_read_le32(data + 8);
+    size_t at = 0xC;
+    for (uint32_t i = 0; i < count && at + 0xC <= len; i++) {
+        uint32_t key_len = sigil_read_le32(data + at + 4), value_len = sigil_read_le32(data + at + 8);
+        if (sigil_read_le32(data + at) != KVDB_ENTRY || key_len > len || value_len > len ||
+            at + 0xC + key_len + value_len > len) {
+            break;
+        }
+        const uint8_t *key = data + at + 0xC, *value = key + key_len;
+        at += 0xC + key_len + value_len;
+        if (key_len < KVDB_KEY || value_len < 0x1A || sigil_read_le64(key) != title) continue;
+        int type = key[0x20];
+        if ((type != INDEX_ACCOUNT && type != INDEX_DEVICE) || value[0x18] != INDEX_SPACE_USER ||
+            value[0x19] == INDEX_DELETED || p->indexed_count == SIGIL_PROFILE_INDEX_MAX) {
+            continue;
+        }
+        sigil_profile_indexed *e = &p->indexed[p->indexed_count++];
+        e->id = sigil_read_le64(value);
+        e->area = type == INDEX_ACCOUNT ? SIGIL_SAVE_AREA_ACCOUNT : SIGIL_SAVE_AREA_DEVICE;
+        e->profile[0] = '\0';
+        if (type == INDEX_ACCOUNT) {
+            snprintf(e->profile, sizeof(e->profile), "%016" PRIx64 "%016" PRIx64, sigil_read_le64(key + 0x08),
+                     sigil_read_le64(key + 0x10));
+        }
+    }
+    free(data);
+    return SIGIL_OK;
+}
+
+/* The folder `path` (relative to the base) names when it is
+ * <saves>/<16 hex>/0/<file>: its id, and the file inside. */
+static bool indexed_path(const char *path, uint64_t *id, const char **rest) {
+    static const char SAVES[] = "bis/user/save/";
+    size_t n = sizeof(SAVES) - 1;
+    if (strncmp(path, SAVES, n) != 0 || strlen(path) < n + 19) return false;
+    for (size_t i = 0; i < 16; i++) {
+        if (!isxdigit((unsigned char)path[n + i])) return false;
+    }
+    if (strncmp(path + n + 16, "/0/", 3) != 0 || !path[n + 19] || path[strlen(path) - 1] == '/') return false;
+    if (sscanf(path + n, "%16" SCNx64, id) != 1) return false;
+    *rest = path + n + 19;
+    return true;
+}
+
+static const sigil_profile_indexed *indexed_save(const sigil_profile_root *p, int area, const char *profile) {
+    for (size_t i = 0; i < p->indexed_count; i++) {
+        const sigil_profile_indexed *e = &p->indexed[i];
+        if (e->area == area && (area == SIGIL_SAVE_AREA_DEVICE || strcasecmp(e->profile, profile) == 0)) return e;
+    }
+    return NULL;
+}
+
 /* Emulators with one file per profile: each listed file the list template
  * names is a profile, named by its folder. */
 static int file_profiles(sigil_profile_root *p) {
@@ -561,7 +717,9 @@ int sigil_profile_root_open(const sigil_save_request *req, const sigil_layout_pr
     if (row->fixed_profile) add_profile(p, row->fixed_profile, "");
     else if (!list_reachable(p)) folder_profiles(p);
     else if (row->format == SIGIL_PROFILES_YUZU) rc = yuzu_profiles(p);
+    else if (row->format == SIGIL_PROFILES_RYUJINX) rc = ryujinx_profiles(p);
     else rc = file_profiles(p);
+    if (rc == SIGIL_OK && row->index) rc = load_index(p);
     if (rc != SIGIL_OK) return rc;
 
     char implied[SIGIL_PROFILE_ID_MAX];
@@ -595,9 +753,54 @@ static bool game_data_install(const sigil_profile_root *p, const char *folder) {
     return install;
 }
 
+static const sigil_layout_area INDEXED_ACCOUNT = { NULL, NULL, SIGIL_SAVE_AREA_ACCOUNT, false, NULL };
+static const sigil_layout_area INDEXED_DEVICE = { NULL, NULL, SIGIL_SAVE_AREA_DEVICE, false, NULL };
+
+/* On a row with a save index: a file of a folder the index gives the game,
+ * named in the unit as the yuzu forks name it, <title>/... for the account
+ * save of `profile` and device/<title>/... for the device save. Only the
+ * folder's committed copy (0/) is the save. */
+static const sigil_layout_area *indexed_area_of(const sigil_profile_root *p, const char *profile,
+                                                const char *base_path, char entry[SIGIL_SAVE_ENTRY_MAX]) {
+    uint64_t id = 0;
+    const char *rest = NULL;
+    if (!indexed_path(base_path, &id, &rest)) return NULL;
+    for (size_t i = 0; i < p->indexed_count; i++) {
+        const sigil_profile_indexed *e = &p->indexed[i];
+        if (e->id != id) continue;
+        bool device = e->area == SIGIL_SAVE_AREA_DEVICE;
+        if (!device && (!profile[0] || strcasecmp(e->profile, profile) != 0)) return NULL;
+        int n = snprintf(entry, SIGIL_SAVE_ENTRY_MAX, "%s%s/%s", device ? "device/" : "", p->save_id, rest);
+        if (n < 0 || n >= SIGIL_SAVE_ENTRY_MAX) return NULL;
+        return device ? &INDEXED_DEVICE : &INDEXED_ACCOUNT;
+    }
+    return NULL;
+}
+
+/* Where unit member `entry` goes on a row with a save index: the folder the
+ * index gives the game's account save of the chosen profile, or its device
+ * save. A save the index has no folder for is SIGIL_ERR_NO_TARGET: the
+ * emulator gives a save its folder the first time the game runs. */
+static int indexed_place(const sigil_profile_root *p, const char *entry, sigil_profile_file *f) {
+    size_t n = strlen(p->save_id);
+    bool device = strncmp(entry, "device/", 7) == 0;
+    const char *in = device ? entry + 7 : entry;
+    if (!n || strncmp(in, p->save_id, n) != 0 || in[n] != '/' || !in[n + 1]) return SIGIL_ERR_NOT_FOUND;
+    f->area = device ? SIGIL_SAVE_AREA_DEVICE : SIGIL_SAVE_AREA_ACCOUNT;
+    snprintf(f->entry, sizeof(f->entry), "%s", entry);
+    if (!device && !p->profile[0]) return SIGIL_ERR_NO_TARGET;
+    const sigil_profile_indexed *e = indexed_save(p, f->area, p->profile);
+    if (!e) return SIGIL_ERR_NO_TARGET;
+    char base_path[SIGIL_SAVE_PATH_MAX];
+    int w = snprintf(base_path, sizeof(base_path), "bis/user/save/%016" PRIx64 "/0/%s", e->id, in + n + 1);
+    if (w < 0 || w >= (int)sizeof(base_path) || !to_root(p, base_path, f->path)) return SIGIL_ERR_NO_TARGET;
+    return SIGIL_OK;
+}
+
 /* The area folder `base_path` lies in for `profile`, with the file's name in the unit. */
 static const sigil_layout_area *area_of(const sigil_profile_root *p, const char *profile, const char *base_path,
                                         char entry[SIGIL_SAVE_ENTRY_MAX]) {
+    if (p->row->index) return indexed_area_of(p, profile, base_path, entry);
     for (size_t a = 0; a < p->row->area_count; a++) {
         const sigil_layout_area *area = &p->row->areas[a];
         folder_vars v;
@@ -658,6 +861,7 @@ bool sigil_profile_undecided(const sigil_profile_root *p) {
 int sigil_profile_place(const sigil_profile_root *p, const char *entry, sigil_profile_file *f, bool *skip) {
     *skip = false;
     memset(f, 0, sizeof(*f));
+    if (p->row->index) return indexed_place(p, entry, f);
     for (int legacy = 0; legacy < 2; legacy++) {
         for (size_t a = 0; a < p->row->area_count; a++) {
             const sigil_layout_area *row_area = &p->row->areas[a];

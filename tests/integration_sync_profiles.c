@@ -835,6 +835,114 @@ static void check_skyline(void) {
     root_free(&root);
 }
 
+/* ---- Ryujinx ---------------------------------------------------------------------- */
+
+#define RYU_INDEX "bis/system/save/8000000000000000/0/imkvdb.arc"
+#define RYU_SAVES "bis/user/save/"
+#define RYU_TITLE "0100ABCD12345000"
+#define RYU_USER  "00000000000000010000000000000000"
+
+typedef struct {
+    uint64_t program, user_high, user_low, id;
+    uint8_t  type, space, state;
+} ryu_entry;
+
+/* An imkvdb.arc holding `n` save data entries (LibHac KeyValueArchive). */
+static void put_ryu_index(mem_root *root, const ryu_entry *e, size_t n) {
+    size_t len = 0xC + n * (0xC + 0x40 + 0x40);
+    uint8_t *buf = (uint8_t *)calloc(1, len);
+    sigil_write_le32(buf, 0x564B4D49u);
+    sigil_write_le32(buf + 8, (uint32_t)n);
+    for (size_t i = 0; i < n; i++) {
+        uint8_t *at = buf + 0xC + i * (0xC + 0x80);
+        sigil_write_le32(at, 0x4E454D49u);
+        sigil_write_le32(at + 4, 0x40);
+        sigil_write_le32(at + 8, 0x40);
+        uint8_t *key = at + 0xC, *value = key + 0x40;
+        sigil_write_le64(key, e[i].program);
+        sigil_write_le64(key + 0x08, e[i].user_high);
+        sigil_write_le64(key + 0x10, e[i].user_low);
+        key[0x20] = e[i].type;
+        sigil_write_le64(value, e[i].id);
+        value[0x18] = e[i].space;
+        value[0x19] = e[i].state;
+    }
+    root_put(root, RYU_INDEX, buf, len);
+    free(buf);
+}
+
+static void put_ryu_profiles(mem_root *root) {
+    put_text(root, "system/Profiles.json",
+             "{\n  \"profiles\": [\n    {\n      \"user_id\": \"" RYU_USER "\",\n      \"name\": \"Kat \\\"K\\\" Ryu\",\n"
+             "      \"account_state\": \"Open\"\n    }\n  ],\n  \"last_opened\": \"" RYU_USER "\"\n}\n");
+}
+
+/* Folders are named by the id the index gives a save, not by the title: the
+ * index says which folders are the game's, whose account save each is, and
+ * which is the device save. Only a folder's committed copy (0/) is the save. */
+static void check_ryujinx(void) {
+    const uint64_t title = 0x0100ABCD12345000ull;
+    const ryu_entry entries[] = {
+        { title, 1, 0, 0x1, 1, 1, 0 },          /* account save of RYU_USER */
+        { title, 0, 0, 0x2, 3, 1, 0 },          /* device save */
+        { 0x0100000000099000ull, 1, 0, 0x3, 1, 1, 0 },
+        { title, 1, 0, 0x4, 5, 1, 0 },          /* cache storage: not a save */
+        { title, 7, 7, 0x5, 1, 1, 0 },          /* another user's account save */
+    };
+    mem_root root = {0};
+    put_ryu_index(&root, entries, 5);
+    put_ryu_profiles(&root);
+    put_text(&root, RYU_SAVES "0000000000000001/0/save.bin", "account");
+    put_text(&root, RYU_SAVES "0000000000000001/1/save.bin", "working copy");
+    put_text(&root, RYU_SAVES "0000000000000001/TITLEID.txt", RYU_TITLE "\nGame\n");
+    put_text(&root, RYU_SAVES "0000000000000002/0/shared.bin", "device");
+    put_text(&root, RYU_SAVES "0000000000000003/0/other.bin", "another game");
+    put_text(&root, RYU_SAVES "0000000000000004/0/cache.bin", "cache");
+    put_text(&root, RYU_SAVES "0000000000000005/0/save.bin", "another user");
+    game g;
+    make_game(&g, &root, "ryujinx", "switch", RYU_TITLE);
+    sigil_sync_result *r = NULL;
+    expect_rc("ryujinx collect", collect(&g, &r), SIGIL_OK);
+    if (!r || strcmp(r->profile, RYU_USER) != 0 || r->profile_count != 1 || strcmp(r->profiles[0].name, "Kat \"K\" Ryu") != 0) {
+        fail("ryujinx collect", "profile");
+    }
+    if (!unit_has(r, RYU_TITLE "/save.bin") || !unit_has(r, "device/" RYU_TITLE "/shared.bin") ||
+        !unit_all(r, "", "Ryu", 2)) {
+        fail("ryujinx collect", "the game's committed saves under the yuzu forks' names, nothing else");
+    }
+
+    /* Another install gave the game other ids: restore follows its index. */
+    const ryu_entry other_ids[] = { { title, 1, 0, 0x9, 1, 1, 0 }, { title, 0, 0, 0xA, 3, 1, 0 } };
+    mem_root target = {0};
+    put_ryu_index(&target, other_ids, 2);
+    put_ryu_profiles(&target);
+    put_text(&target, RYU_SAVES "0000000000000009/0/save.bin", "older");
+    game t;
+    make_game(&t, &target, "kenjinx", "switch", RYU_TITLE);
+    t.req.overwrite_local = 1;
+    sigil_sync_result *w = NULL;
+    expect_rc("ryujinx restore", restore(&t, r, &w), SIGIL_OK);
+    if (!root_holds(&target, RYU_SAVES "0000000000000009/0/save.bin", "account") ||
+        !root_holds(&target, RYU_SAVES "000000000000000a/0/shared.bin", "device")) {
+        fail("ryujinx restore", "the saves didn't go to the folders the index names");
+    }
+    sigil_sync_result_free(w);
+
+    /* A title the emulator never ran has no folder: refused, nothing written. */
+    mem_root fresh = {0};
+    put_ryu_profiles(&fresh);
+    make_game(&t, &fresh, "ryujinx", "switch", RYU_TITLE);
+    w = NULL;
+    expect_rc("ryujinx restore with no folder", restore(&t, r, &w), SIGIL_ERR_NO_TARGET);
+    if (fresh.writes != 0) fail("ryujinx restore with no folder", "wrote");
+    sigil_sync_result_free(w);
+
+    sigil_sync_result_free(r);
+    root_free(&fresh);
+    root_free(&target);
+    root_free(&root);
+}
+
 /* ---- PSP -------------------------------------------------------------------------- */
 
 /* A PARAM.SFO holding one empty string entry per key. */
@@ -1222,6 +1330,7 @@ int main(void) {
     check_psp();
     check_psp_game_data();
     check_skyline();
+    check_ryujinx();
     check_save_base();
     check_resolve();
     check_list_profiles();

@@ -8,6 +8,15 @@
 #include "save_layout.h"
 
 #define SIGIL_PROFILES_MAX 16
+#define SIGIL_PROFILE_INDEX_MAX 16
+
+/* A save of the game the row's save index names: the folder's id, and the
+ * profile whose account save it is ("" for the device save). */
+typedef struct {
+    uint64_t id;
+    int      area;   /* sigil_save_area */
+    char     profile[SIGIL_PROFILE_ID_MAX];
+} sigil_profile_indexed;
 
 typedef struct {
     const sigil_save_request    *req;
@@ -20,6 +29,8 @@ typedef struct {
     size_t profile_count;
     char   profile[SIGIL_PROFILE_ID_MAX];   /* the profile the request, the root path or the list settles on */
     bool   several;                         /* the list holds several profiles and nothing picks one */
+    sigil_profile_indexed indexed[SIGIL_PROFILE_INDEX_MAX];   /* the game's saves in the row's index */
+    size_t indexed_count;
 } sigil_profile_root;
 
 /* One file of the game's saves. */
