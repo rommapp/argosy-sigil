@@ -121,6 +121,12 @@ other option values, such as Beetle Saturn's `.bkr` from a build older
 than its save-method option. Ask the user, or call again with each
 alternate's `Options`; sigil never picks one itself.
 
+A listing you build yourself has to recurse the way `ListSaveRoot` does,
+into folders as well as files. Sigil tells a PCSX2 folder card from a file
+card by its contents: `memcards/Mcd001.ps2` is a folder card when the
+listing holds paths below it (`memcards/Mcd001.ps2/_pcsx2_superblock`), and
+a file card when it is listed alone.
+
 On a layout with profiles (`eden`, `citron`, `sudachi`, `yuzu`, `cemu`,
 `vita3k`, `rpcs3`) and on the PSP layouts (`ppsspp`, `ppsspp_standalone`,
 `psp_console`, which keep no profiles), the save root may be any folder
