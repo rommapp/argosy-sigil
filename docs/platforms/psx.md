@@ -52,7 +52,9 @@ console's), and that POPS boots a folder sigil created from nothing.
 
 ## Sync
 
-The unit is one per-game card, a raw PS1 card.
+The unit is one per-game card, a raw PS1 card, holding the game's saves
+from its own card and from the shared cards beside it
+([whose saves](../sync.md#whose-saves)).
 Restore writes a PS1 card back in the form it found: a DexDrive `.gme`
 keeps its header, with the frame copies following the directory and a
 slot's comment kept only beside the save it was written for; a PSP or Vita

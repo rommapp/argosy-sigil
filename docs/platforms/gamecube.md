@@ -101,3 +101,5 @@ GameCube-specific refusals, on top of the general ones in [Sync](../sync.md):
 
 - Dolphin's Android package for other flavours, and whether its DocumentsProvider exposes the User folder to a sync client, are unconfirmed.
 - sigil reads only slot A. Slot B (`MemoryCardB...`, `Card B`) has no layout row.
+- A GCI folder the user moved (`GCIFolderAPath`) takes Dolphin's newer region names, `JPN` where the default folder has `JAP` (Config/MainSettings.cpp `GetGCIFolderPath`); sigil knows only the default folder.
+- Korean discs use the `JAP` folder: Dolphin has no Korean GameCube region and maps NTSC-K to `JAP`.
