@@ -94,6 +94,8 @@ Sigil.locateSaves(
                                                 //   Pass all of them; only the keys the row names are read.
     profile: String? = null,                    // optional. Layouts with profiles: the profile whose saves
                                                 //   to take, by SigilProfile.id.
+    fileAccess: SigilFileAccess = PosixFileAccess,  // optional. How sigil reaches the files; see File
+                                                //   access below.
 ): SigilSaveUnit                                // Hashes empty, except on a layout with profiles given a
                                                 //   saveRoot, where sigil reads the profile list and fills
                                                 //   them.
@@ -171,6 +173,7 @@ When you need to compare with the server.
 Sigil.hashSaves(
     saves: SigilSaveUnit,   // required. Step 2.
     saveRoot: String,       // required. Directory its paths are relative to.
+    fileAccess: SigilFileAccess = PosixFileAccess,  // optional.
 ): SigilSaveUnit            // Same unit with contentHash and identityHash filled.
                             //   Raises SigilException (I/O code) when a member cannot be opened.
 ```
@@ -276,6 +279,7 @@ Sigil.collect(
     companions: List<SigilCompanion> = emptyList(),   // Games whose saves this game reads, in the order they go on.
     repair: Boolean = false,                // Rebuild what SigilException.DAMAGED named, where sigil can.
     profile: String? = null,                // Layouts with profiles: the profile whose saves to take.
+    fileAccess: SigilFileAccess = PosixFileAccess,   // How sigil reads, writes and removes the files.
 ): SigilSyncResult
 
 Sigil.restore(unit: ByteArray, /* same inputs */, overwriteLocal: Boolean = false): SigilSyncResult
@@ -352,6 +356,7 @@ what a card holds.
 ```kotlin
 Sigil.listCard(
     path: String,               // required. The card file. Its format is detected from the content.
+    fileAccess: SigilFileAccess = PosixFileAccess,  // optional. Reads the card as (folder, name).
 ): SigilCardListing             // Raises SigilException with UNSUPPORTED_FORMAT when the file is
                                 //   not a card sigil reads.
 
@@ -376,16 +381,45 @@ data class SigilCardEntry(
 )
 ```
 
+## File access
+
+Every call that touches files reads, writes, lists and removes them
+through a `SigilFileAccess`. The default, `PosixFileAccess`, uses
+`java.io.File`. On Android 11 and later an app can't open files under
+another app's `Android/data` that way, even with storage permission, so
+pass your own implementation: a DocumentsContract layer or a root shell.
+
+```kotlin
+interface SigilFileAccess {
+    fun list(root: String, path: String): List<SigilFileEntry>?   // The folder's entries; null when no
+                                                                  //   folder is there.
+    fun read(root: String, path: String): ByteArray?              // The whole file; null when unreadable.
+    fun write(root: String, path: String, data: ByteArray): Boolean   // Makes the folders above it.
+    fun remove(root: String, path: String): Boolean               // A path ending in / is a folder sigil
+                                                                  //   emptied first.
+}
+
+data class SigilFileEntry(name: String, isDirectory: Boolean)
+```
+
+Each call gets the save root as you passed it and a path relative to it:
+`/`-separated, never starting with `/`, never holding a `..` segment, and
+`""` for the root itself. `list` must name folders as well as files,
+since sigil recurses into them. A call that throws, or returns `null` or
+`false` for a file that's there, raises `SigilException.IO`; sigil never
+takes a failed read as "no saves". `null` from `list` means the folder
+doesn't exist, which is not an error.
+
 ## Helpers
 
 ```kotlin
 Sigil.contentStem(contentPath: String): String        // Stem the save is named after.
 Sigil.layoutSubdirs(core: String): List<String>       // Subfolders the core writes into.
-Sigil.listSaveRoot(root: File, core: String): List<String>   // Below root too, where a layout with
-                                                             //   profiles has its base.
+Sigil.listSaveRoot(root: String, core: String,              // Below root too, where a layout with
+    fileAccess: SigilFileAccess = PosixFileAccess): List<String>   //   profiles has its base.
 Sigil.saveBase(core: String, path: String): Pair<String, String>   // (base, profile) for a path.
-Sigil.listProfiles(core: String, saveRoot: String): List<SigilProfile>   // The emulator's profiles;
-                                                                         //   UNSUPPORTED_FORMAT without profiles.
+Sigil.listProfiles(core: String, saveRoot: String,            // The emulator's profiles;
+    fileAccess: SigilFileAccess = PosixFileAccess): List<SigilProfile>   //   UNSUPPORTED_FORMAT without profiles.
 Sigil.platformSlug(slug: String?): String             // Canonical slug, or "auto".
 Sigil.loadHeaderKeyFromProdKeys(prodKeysPath: String): ByteArray   // 32 bytes.
 Sigil.version(): String

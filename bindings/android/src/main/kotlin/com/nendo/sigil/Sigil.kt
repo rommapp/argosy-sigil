@@ -296,6 +296,59 @@ class SigilSyncResult(
 }
 
 /**
+ * File access under a save root, for a caller that reaches its files some way other than
+ * java.io.File: Android's DocumentsContract, a root shell. Each call gets the save root as the
+ * caller passed it and a path relative to that root, '/'-separated, never starting with '/' and
+ * never holding a ".." segment; "" names the root itself. A call that fails throws, or returns
+ * null or false, and sigil raises [SigilException] with [SigilException.IO] for it rather than
+ * taking the files as absent.
+ */
+interface SigilFileAccess {
+    /** The entries of the folder at [path], or null when no folder is there. */
+    fun list(root: String, path: String): List<SigilFileEntry>?
+
+    /** The whole file at [path], or null when it can't be read. */
+    fun read(root: String, path: String): ByteArray?
+
+    /** Writes [data] as the file at [path], making the folders above it. */
+    fun write(root: String, path: String, data: ByteArray): Boolean
+
+    /** Removes the file at [path], or the folder when [path] ends in '/' (sigil empties it first). */
+    fun remove(root: String, path: String): Boolean
+}
+
+/** One entry of a folder, as [SigilFileAccess.list] returns it. */
+data class SigilFileEntry(val name: String, val isDirectory: Boolean)
+
+/** [SigilFileAccess] through java.io.File, what every call uses unless given another. */
+object PosixFileAccess : SigilFileAccess {
+    private fun file(root: String, path: String) = if (path.isEmpty()) java.io.File(root) else java.io.File(root, path)
+
+    override fun list(root: String, path: String): List<SigilFileEntry>? {
+        val dir = file(root, path)
+        if (!dir.isDirectory) return null
+        val children = dir.listFiles() ?: throw java.io.IOException("can't list $dir")
+        return children.mapNotNull { child ->
+            when {
+                child.isDirectory -> SigilFileEntry(child.name, true)
+                child.isFile -> SigilFileEntry(child.name, false)
+                else -> null
+            }
+        }
+    }
+
+    override fun read(root: String, path: String): ByteArray? = runCatching { file(root, path).readBytes() }.getOrNull()
+
+    override fun write(root: String, path: String, data: ByteArray): Boolean = runCatching {
+        val target = file(root, path)
+        target.parentFile?.let { parent -> if (!parent.isDirectory) parent.mkdirs() }
+        target.writeBytes(data)
+    }.isSuccess
+
+    override fun remove(root: String, path: String): Boolean = file(root, path.trimEnd('/')).delete()
+}
+
+/**
  * A game whose saves this game reads, as a sequel reads its prequel's. [unit] is its unit from
  * RomM for restore, or null to leave its saves as they are.
  */
@@ -348,7 +401,8 @@ object Sigil {
         optionValues: Array<String>,
         listing: Array<String>,
         rootPath: String?,
-        profile: String?
+        profile: String?,
+        fileAccess: SigilFileAccess
     ): SigilSaveUnit
 
     @JvmStatic private external fun nativeHashSaves(
@@ -357,10 +411,15 @@ object Sigil {
         shape: Int,
         memberPaths: Array<String>,
         memberEntries: Array<String>,
-        memberRoles: IntArray
+        memberRoles: IntArray,
+        fileAccess: SigilFileAccess
     ): Array<String>
 
-    @JvmStatic private external fun nativeListCard(path: String): SigilCardListing
+    @JvmStatic private external fun nativeListCard(
+        rootPath: String,
+        name: String,
+        fileAccess: SigilFileAccess
+    ): SigilCardListing
 
     @JvmStatic private external fun nativeSync(
         unit: ByteArray?,
@@ -384,7 +443,8 @@ object Sigil {
         companionIds: Array<Array<String>>,
         companionUnits: Array<ByteArray?>,
         repair: Boolean,
-        profile: String?
+        profile: String?,
+        fileAccess: SigilFileAccess
     ): SigilSyncResult
     @JvmStatic private external fun nativeLayoutSubdirs(layout: String): Array<String>
     @JvmStatic private external fun nativeSaveBase(layout: String, path: String): Array<String>
@@ -392,7 +452,8 @@ object Sigil {
     @JvmStatic private external fun nativeListProfiles(
         layout: String,
         rootPath: String,
-        listing: Array<String>
+        listing: Array<String>,
+        fileAccess: SigilFileAccess
     ): List<SigilProfile>
     @JvmStatic private external fun nativeContentStem(contentPath: String): String
     @JvmStatic private external fun nativePlatformSlug(slug: String?): String
@@ -455,10 +516,11 @@ object Sigil {
         saveRoot: String? = null,
         listing: List<String>? = null,
         options: Map<String, String> = emptyMap(),
-        profile: String? = null
+        profile: String? = null,
+        fileAccess: SigilFileAccess = PosixFileAccess
     ): SigilSaveUnit {
         val root = saveRoot?.let { rooted(core, it, profile) }
-        val paths = listing ?: root?.let { listSaveRoot(java.io.File(it.first), core) } ?: emptyList()
+        val paths = listing ?: root?.let { listSaveRoot(it.first, core, fileAccess) } ?: emptyList()
         return nativeLocateSaves(
             core,
             game.platformSlug,
@@ -472,7 +534,8 @@ object Sigil {
             options.values.toTypedArray(),
             paths.toTypedArray(),
             root?.first,
-            root?.second ?: profile
+            root?.second ?: profile,
+            fileAccess
         )
     }
 
@@ -491,9 +554,9 @@ object Sigil {
      * as when collect or restore raised [SigilException.AMBIGUOUS]. Raises [SigilException] with
      * [SigilException.UNSUPPORTED_FORMAT] for a core whose saves aren't kept per profile.
      */
-    fun listProfiles(core: String, saveRoot: String): List<SigilProfile> {
+    fun listProfiles(core: String, saveRoot: String, fileAccess: SigilFileAccess = PosixFileAccess): List<SigilProfile> {
         val (root, _) = rooted(core, saveRoot, null)
-        return nativeListProfiles(core, root, listSaveRoot(java.io.File(root), core).toTypedArray())
+        return nativeListProfiles(core, root, listSaveRoot(root, core, fileAccess).toTypedArray(), fileAccess)
     }
 
     /** The folder to list and write under for [saveRoot], and the profile: one given wins. */
@@ -503,7 +566,7 @@ object Sigil {
     }
 
     /** [saves] with [SigilSaveUnit.contentHash] and [SigilSaveUnit.identityHash] computed from the files under [saveRoot]. */
-    fun hashSaves(saves: SigilSaveUnit, saveRoot: String): SigilSaveUnit {
+    fun hashSaves(saves: SigilSaveUnit, saveRoot: String, fileAccess: SigilFileAccess = PosixFileAccess): SigilSaveUnit {
         if (saves.members.isEmpty()) return saves
         val hashes = nativeHashSaves(
             saveRoot,
@@ -511,7 +574,8 @@ object Sigil {
             saves.shape.code,
             saves.members.map { it.path }.toTypedArray(),
             saves.members.map { it.entry }.toTypedArray(),
-            saves.members.map { it.role.code }.toIntArray()
+            saves.members.map { it.role.code }.toIntArray(),
+            fileAccess
         )
         return saves.copy(contentHash = hashes[0], identityHash = hashes[1])
     }
@@ -535,10 +599,11 @@ object Sigil {
         claimed: List<String> = emptyList(),
         companions: List<SigilCompanion> = emptyList(),
         repair: Boolean = false,
-        profile: String? = null
+        profile: String? = null,
+        fileAccess: SigilFileAccess = PosixFileAccess
     ): SigilSyncResult =
         sync(null, game, core, contentPath, saveRoot, listing, options, gameIds, state, unmanaged, false, claimed,
-            companions, repair, profile)
+            companions, repair, profile, fileAccess)
 
     /**
      * Puts [unit], and each companion's unit given, back under [saveRoot] and reads them back.
@@ -571,10 +636,11 @@ object Sigil {
         claimed: List<String> = emptyList(),
         companions: List<SigilCompanion> = emptyList(),
         repair: Boolean = false,
-        profile: String? = null
+        profile: String? = null,
+        fileAccess: SigilFileAccess = PosixFileAccess
     ): SigilSyncResult =
         sync(unit, game, core, contentPath, saveRoot, listing, options, gameIds, state, unmanaged, overwriteLocal,
-            claimed, companions, repair, profile)
+            claimed, companions, repair, profile, fileAccess)
 
     private fun sync(
         unit: ByteArray?,
@@ -591,10 +657,11 @@ object Sigil {
         claimed: List<String>,
         companions: List<SigilCompanion>,
         repair: Boolean,
-        profile: String?
+        profile: String?,
+        fileAccess: SigilFileAccess
     ): SigilSyncResult {
         val (root, picked) = rooted(core, saveRoot, profile)
-        val paths = listing ?: listSaveRoot(java.io.File(root), core)
+        val paths = listing ?: listSaveRoot(root, core, fileAccess)
         return nativeSync(
             unit,
             root,
@@ -617,12 +684,17 @@ object Sigil {
             companions.map { it.gameIds.toTypedArray() }.toTypedArray(),
             companions.map { it.unit }.toTypedArray(),
             repair,
-            picked
+            picked,
+            fileAccess
         )
     }
 
     /** The saves on the memory card at [path]. The card format is detected from its content. */
-    fun listCard(path: String): SigilCardListing = nativeListCard(path)
+    fun listCard(path: String, fileAccess: SigilFileAccess = PosixFileAccess): SigilCardListing {
+        val slash = path.lastIndexOf('/')
+        val root = if (slash > 0) path.substring(0, slash) else if (slash == 0) "/" else "."
+        return nativeListCard(root, path.substring(slash + 1), fileAccess)
+    }
 
     /** Subfolders under the save root a layout writes into, so the caller knows what to list. */
     fun layoutSubdirs(layout: String): List<String> = nativeLayoutSubdirs(layout).toList()
@@ -630,49 +702,57 @@ object Sigil {
     /**
      * Root-relative paths of the files directly in [root] plus those under the layout's
      * subfolders, the listing [locateSaves] expects. On a layout with profiles whose base sits
-     * below [root], the subfolders under each such base.
+     * below [root], the subfolders under each such base. Raises [SigilException] with
+     * [SigilException.IO] when [fileAccess] fails to list a folder.
      */
-    fun listSaveRoot(root: java.io.File, layout: String): List<String> {
+    fun listSaveRoot(root: String, layout: String, fileAccess: SigilFileAccess = PosixFileAccess): List<String> {
         val out = ArrayList<String>()
-        root.listFiles()?.forEach { if (it.isFile) out.add(it.name) }
+        entries(fileAccess, root, "")?.forEach { if (!it.isDirectory) out.add(it.name) }
         val top = nativeLayoutTop(layout)
-        val bases = if (top != null && !java.io.File(root, top).isDirectory) {
-            basesBelow(root, top).ifEmpty { listOf("") }
+        val bases = if (top != null && entries(fileAccess, root, top) == null) {
+            basesBelow(fileAccess, root, top).ifEmpty { listOf("") }
         } else {
             listOf("")
         }
         for (base in bases) {
             layoutSubdirs(layout).forEach { subdir ->
                 val relative = if (base.isEmpty()) subdir else "$base/$subdir"
-                listRecursive(java.io.File(root, relative), relative, SUBDIR_LIST_DEPTH, out)
+                listRecursive(fileAccess, root, relative, SUBDIR_LIST_DEPTH, out)
             }
         }
         return out
     }
 
+    /** The folder's entries, or null when there is none; a failed listing is [SigilException.IO]. */
+    private fun entries(fileAccess: SigilFileAccess, root: String, path: String): List<SigilFileEntry>? = try {
+        fileAccess.list(root, path)
+    } catch (e: Exception) {
+        throw SigilException(SigilException.IO, e.message ?: "can't list $path")
+    }
+
     /** Root-relative folders under [root] that hold the layout's [top] folder. */
-    private fun basesBelow(root: java.io.File, top: String): List<String> {
+    private fun basesBelow(fileAccess: SigilFileAccess, root: String, top: String): List<String> {
         val found = ArrayList<String>()
-        fun walk(dir: java.io.File, relative: String, depth: Int) {
+        fun walk(relative: String, depth: Int) {
             if (depth == 0) return
-            dir.listFiles()?.filter { it.isDirectory }?.forEach { child ->
+            entries(fileAccess, root, relative)?.filter { it.isDirectory }?.forEach { child ->
                 if (child.name == top) {
                     if (relative.isNotEmpty()) found.add(relative)
                 } else {
-                    walk(child, if (relative.isEmpty()) child.name else "$relative/${child.name}", depth - 1)
+                    walk(if (relative.isEmpty()) child.name else "$relative/${child.name}", depth - 1)
                 }
             }
         }
-        walk(root, "", BASE_SEARCH_DEPTH)
+        walk("", BASE_SEARCH_DEPTH)
         return found
     }
 
-    private fun listRecursive(dir: java.io.File, relative: String, depth: Int, out: MutableList<String>) {
-        if (depth == 0 || !dir.isDirectory) return
-        dir.listFiles()?.forEach { file ->
-            val rel = "$relative/${file.name}"
-            if (file.isFile) out.add(rel)
-            else if (file.isDirectory) listRecursive(file, rel, depth - 1, out)
+    private fun listRecursive(fileAccess: SigilFileAccess, root: String, relative: String, depth: Int,
+                              out: MutableList<String>) {
+        if (depth == 0) return
+        entries(fileAccess, root, relative)?.forEach { entry ->
+            val rel = "$relative/${entry.name}"
+            if (entry.isDirectory) listRecursive(fileAccess, root, rel, depth - 1, out) else out.add(rel)
         }
     }
 

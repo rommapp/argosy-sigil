@@ -261,6 +261,7 @@ _JNI_PARAM_TYPES = {
     "Boolean": "jboolean",
     "ByteArray": "jbyteArray",
     "IntArray": "jintArray",
+    "SigilFileAccess": "jobject",
 }
 
 

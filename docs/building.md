@@ -92,6 +92,13 @@ has a page under `docs/platforms/` that documents it, every platform page
 states its status, and every relative link and anchor in the README and
 `docs/` resolves.
 
+The Kotlin binding's JVM tests (`bindings/android/src/test`) run on this
+machine against the JNI library built for the host JDK. Build it with
+`-DSIGIL_BUILD_JNI_HOST=ON`, which puts `libsigil-jni` in
+`build/bindings/`. Then run `:sigil:testDebugUnitTest` from a Gradle
+project that includes `bindings/android` as `:sigil`, passing
+`-PsigilHostJniDir=<that folder>` when the build folder isn't `build/`.
+
 ## Testing
 
 ```sh

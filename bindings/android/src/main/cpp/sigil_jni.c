@@ -2,13 +2,11 @@
 #include "sigil.h"
 #include "save_name.h"
 #include "utf16.h"
-#include <errno.h>
 #include <jni.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 /* `s` as standard UTF-8 in memory the caller frees with jni_free, or NULL for
@@ -373,17 +371,84 @@ Java_com_nendo_sigil_Sigil_nativeExtract(JNIEnv *env, jclass clazz,
 
 /* ---- save units ------------------------------------------------------------ */
 
+/* The caller's SigilFileAccess and the save root its calls are relative to.
+ * Every file sigil opens, writes or removes goes through it. */
 typedef struct {
-    const char *root;
-} open_ctx;
+    JNIEnv *env;
+    jobject access;
+    jstring root;
+} access_ctx;
+
+static jclass g_access_class = NULL;
+static jmethodID g_access_read = NULL;
+static jmethodID g_access_write = NULL;
+static jmethodID g_access_remove = NULL;
+
+static bool load_access_class(JNIEnv *env) {
+    if (g_access_read && g_access_write && g_access_remove) return true;
+    if (!g_access_class) g_access_class = global_class(env, "com/nendo/sigil/SigilFileAccess");
+    if (!g_access_class) return false;
+    g_access_read = find_method(env, g_access_class, "read", "(Ljava/lang/String;Ljava/lang/String;)[B");
+    g_access_write = find_method(env, g_access_class, "write", "(Ljava/lang/String;Ljava/lang/String;[B)Z");
+    g_access_remove = find_method(env, g_access_class, "remove", "(Ljava/lang/String;Ljava/lang/String;)Z");
+    return g_access_read && g_access_write && g_access_remove;
+}
+
+/* A failed or throwing call is an I/O error to sigil; the Java exception is
+ * cleared so the native call can finish and raise SIGIL_ERR_IO itself. */
+static bool access_threw(JNIEnv *env) {
+    if (!(*env)->ExceptionCheck(env)) return false;
+    (*env)->ExceptionClear(env);
+    return true;
+}
+
+typedef struct {
+    uint8_t *data;
+    size_t len;
+} bytes_io;
+
+static int bytes_read(void *ctx, uint64_t off, void *buf, size_t len) {
+    bytes_io *b = (bytes_io *)ctx;
+    if (off >= b->len) return 0;
+    size_t n = len < b->len - (size_t)off ? len : b->len - (size_t)off;
+    memcpy(buf, b->data + off, n);
+    return (int)n;
+}
+
+static int64_t bytes_size(void *ctx) { return (int64_t)((bytes_io *)ctx)->len; }
+
+static void bytes_close(void *ctx) {
+    bytes_io *b = (bytes_io *)ctx;
+    free(b->data);
+    free(b);
+}
 
 static sigil_io *open_member(void *ctx, const char *relative_path) {
-    open_ctx *o = (open_ctx *)ctx;
-    if (!o->root) return NULL;
-    char path[SIGIL_SAVE_PATH_MAX * 2];
-    int n = snprintf(path, sizeof(path), "%s/%s", o->root, relative_path);
-    if (n <= 0 || (size_t)n >= sizeof(path)) return NULL;
-    return sigil_io_open_file(path);
+    access_ctx *a = (access_ctx *)ctx;
+    JNIEnv *env = a->env;
+    jstring jpath = jni_string(env, relative_path);
+    jbyteArray data = jpath ? (jbyteArray)(*env)->CallObjectMethod(env, a->access, g_access_read, a->root, jpath) : NULL;
+    if (jpath) (*env)->DeleteLocalRef(env, jpath);
+    if (access_threw(env) || !data) return NULL;
+    jsize len = (*env)->GetArrayLength(env, data);
+    bytes_io *b = (bytes_io *)calloc(1, sizeof(*b));
+    sigil_io *io = (sigil_io *)calloc(1, sizeof(*io));
+    if (b) b->data = (uint8_t *)malloc(len ? (size_t)len : 1);
+    if (!b || !io || !b->data) {
+        if (b) free(b->data);
+        free(b);
+        free(io);
+        (*env)->DeleteLocalRef(env, data);
+        return NULL;
+    }
+    (*env)->GetByteArrayRegion(env, data, 0, len, (jbyte *)b->data);
+    (*env)->DeleteLocalRef(env, data);
+    b->len = (size_t)len;
+    io->read = bytes_read;
+    io->size = bytes_size;
+    io->close = bytes_close;
+    io->ctx = b;
+    return io;
 }
 
 static jobject member_list(JNIEnv *env, const sigil_save_member *members, size_t count) {
@@ -482,9 +547,11 @@ Java_com_nendo_sigil_Sigil_nativeLocateSaves(JNIEnv *env, jclass clazz,
                                               jstring jcontent, jstring jtitle_id, jstring jraw_serial,
                                               jstring jsave_id, jint features, jobjectArray jn64,
                                               jobjectArray jopt_keys, jobjectArray jopt_values,
-                                              jobjectArray jlisting, jstring jroot, jstring jprofile) {
+                                              jobjectArray jlisting, jstring jroot, jstring jprofile,
+                                              jobject jaccess) {
     (void)clazz;
-    if (!jlayout || !jcontent) { throw_sigil(env, SIGIL_ERR_INVALID_ARG); return NULL; }
+    if (!jlayout || !jcontent || !jaccess) { throw_sigil(env, SIGIL_ERR_INVALID_ARG); return NULL; }
+    if (!load_access_class(env)) { throw_binding_broken(env, "SigilFileAccess"); return NULL; }
 
     const char *layout   = jni_utf8(env, jlayout);
     const char *platform = jplatform ? jni_utf8(env, jplatform) : NULL;
@@ -536,10 +603,10 @@ Java_com_nendo_sigil_Sigil_nativeLocateSaves(JNIEnv *env, jclass clazz,
     req.listing_count = (size_t)listing_count;
     req.root_path = root;
     req.profile = profile;
-    open_ctx octx = { root };
+    access_ctx actx = { env, jaccess, jroot };
     if (root && sigil_save_layout_top(layout)) {
         req.open = open_member;
-        req.open_ctx = &octx;
+        req.open_ctx = &actx;
     }
 
     sigil_save_unit *unit = NULL;
@@ -591,13 +658,14 @@ JNIEXPORT jobjectArray JNICALL
 Java_com_nendo_sigil_Sigil_nativeHashSaves(JNIEnv *env, jclass clazz,
                                             jstring jroot, jstring jkey, jint shape,
                                             jobjectArray jpaths, jobjectArray jentries,
-                                            jintArray jroles) {
+                                            jintArray jroles, jobject jaccess) {
     (void)clazz;
     jclass string_class = (*env)->FindClass(env, "java/lang/String");
-    if (!jroot || !jkey || !jpaths || !jentries || !jroles || !string_class) {
+    if (!jroot || !jkey || !jpaths || !jentries || !jroles || !jaccess || !string_class) {
         throw_sigil(env, SIGIL_ERR_INVALID_ARG);
         return NULL;
     }
+    if (!load_access_class(env)) { throw_binding_broken(env, "SigilFileAccess"); return NULL; }
 
     jsize path_count = 0, entry_count = 0;
     const char **paths   = borrow_strings(env, jpaths, &path_count);
@@ -625,8 +693,8 @@ Java_com_nendo_sigil_Sigil_nativeHashSaves(JNIEnv *env, jclass clazz,
                 unit.members[i].present = 1;
             }
             unit.member_count = (size_t)path_count;
-            open_ctx octx = { root };
-            rc = sigil_save_hash(&unit, open_member, &octx);
+            access_ctx actx = { env, jaccess, jroot };
+            rc = sigil_save_hash(&unit, open_member, &actx);
         }
     }
 
@@ -699,12 +767,15 @@ static jobject card_entry_list(JNIEnv *env, const sigil_card_entry *entries, siz
 }
 
 JNIEXPORT jobject JNICALL
-Java_com_nendo_sigil_Sigil_nativeListCard(JNIEnv *env, jclass clazz, jstring jpath) {
+Java_com_nendo_sigil_Sigil_nativeListCard(JNIEnv *env, jclass clazz, jstring jroot, jstring jname,
+                                          jobject jaccess) {
     (void)clazz;
-    if (!jpath) { throw_sigil(env, SIGIL_ERR_INVALID_ARG); return NULL; }
-    const char *path = jni_utf8(env, jpath);
-    sigil_io *io = path ? sigil_io_open_file(path) : NULL;
-    if (path) jni_free(path);
+    if (!jroot || !jname || !jaccess) { throw_sigil(env, SIGIL_ERR_INVALID_ARG); return NULL; }
+    if (!load_access_class(env)) { throw_binding_broken(env, "SigilFileAccess"); return NULL; }
+    const char *name = jni_utf8(env, jname);
+    access_ctx actx = { env, jaccess, jroot };
+    sigil_io *io = name ? open_member(&actx, name) : NULL;
+    if (name) jni_free(name);
     if (!io) { throw_sigil(env, SIGIL_ERR_IO); return NULL; }
 
     sigil_card_listing *listing = NULL;
@@ -765,46 +836,30 @@ static jobject name_list(JNIEnv *env, char (*items)[SIGIL_CARD_NAME_MAX], size_t
     return list;
 }
 
-/* Creates the folders above path that aren't there. A folder that already
- * exists is left alone before mkdir runs, so a storage root the app can't
- * write to (/storage/emulated) doesn't fail the write. */
-static int make_parents(char *path) {
-    for (char *p = path + 1; *p; p++) {
-        if (*p != '/') continue;
-        *p = '\0';
-        struct stat st;
-        int rc = stat(path, &st) == 0 && S_ISDIR(st.st_mode) ? 0 : mkdir(path, 0755);
-        *p = '/';
-        if (rc != 0 && errno != EEXIST) return -1;
-    }
-    return 0;
-}
-
-static int write_member(void *ctx, const char *relative_path, const uint8_t *data, size_t len) {
-    open_ctx *o = (open_ctx *)ctx;
-    char path[SIGIL_SAVE_PATH_MAX * 2];
-    int n = snprintf(path, sizeof(path), "%s/%s", o->root, relative_path);
-    if (n <= 0 || (size_t)n >= sizeof(path) || make_parents(path) != 0) return -1;
-    FILE *f = fopen(path, "wb");
-    if (!f) return -1;
-    size_t wrote = fwrite(data, 1, len, f);
-    int closed = fclose(f);
-    return wrote == len && closed == 0 ? 0 : -1;
-}
-
-static int remove_member(void *ctx, const char *relative_path) {
-    open_ctx *o = (open_ctx *)ctx;
-    char path[SIGIL_SAVE_PATH_MAX * 2];
-    int n = snprintf(path, sizeof(path), "%s/%s", o->root, relative_path);
-    if (n <= 0 || (size_t)n >= sizeof(path)) return -1;
-    if (path[n - 1] == '/') return rmdir(path) == 0 ? 0 : -1;
-    return unlink(path) == 0 ? 0 : -1;
-}
-
 static jbyteArray byte_array(JNIEnv *env, const uint8_t *data, size_t len) {
     jbyteArray out = (*env)->NewByteArray(env, (jsize)len);
     if (out && len) (*env)->SetByteArrayRegion(env, out, 0, (jsize)len, (const jbyte *)data);
     return out;
+}
+
+static int write_member(void *ctx, const char *relative_path, const uint8_t *data, size_t len) {
+    access_ctx *a = (access_ctx *)ctx;
+    JNIEnv *env = a->env;
+    jstring jpath = jni_string(env, relative_path);
+    jbyteArray jdata = jpath ? byte_array(env, data, len) : NULL;
+    jboolean ok = jdata ? (*env)->CallBooleanMethod(env, a->access, g_access_write, a->root, jpath, jdata) : JNI_FALSE;
+    if (jpath) (*env)->DeleteLocalRef(env, jpath);
+    if (jdata) (*env)->DeleteLocalRef(env, jdata);
+    return !access_threw(env) && ok ? 0 : -1;
+}
+
+static int remove_member(void *ctx, const char *relative_path) {
+    access_ctx *a = (access_ctx *)ctx;
+    JNIEnv *env = a->env;
+    jstring jpath = jni_string(env, relative_path);
+    jboolean ok = jpath ? (*env)->CallBooleanMethod(env, a->access, g_access_remove, a->root, jpath) : JNI_FALSE;
+    if (jpath) (*env)->DeleteLocalRef(env, jpath);
+    return !access_threw(env) && ok ? 0 : -1;
 }
 
 typedef struct {
@@ -884,9 +939,11 @@ Java_com_nendo_sigil_Sigil_nativeSync(JNIEnv *env, jclass clazz,
                                        jobjectArray jlisting, jobjectArray jgame_ids,
                                        jbyteArray jstate, jboolean unmanaged, jboolean overwrite_local,
                                        jobjectArray jclaimed, jobjectArray jcompanion_ids,
-                                       jobjectArray jcompanion_units, jboolean repair, jstring jprofile) {
+                                       jobjectArray jcompanion_units, jboolean repair, jstring jprofile,
+                                       jobject jaccess) {
     (void)clazz;
-    if (!jroot || !jlayout || !jcontent) { throw_sigil(env, SIGIL_ERR_INVALID_ARG); return NULL; }
+    if (!jroot || !jlayout || !jcontent || !jaccess) { throw_sigil(env, SIGIL_ERR_INVALID_ARG); return NULL; }
+    if (!load_access_class(env)) { throw_binding_broken(env, "SigilFileAccess"); return NULL; }
 
     const char *root     = jni_utf8(env, jroot);
     const char *profile  = jprofile ? jni_utf8(env, jprofile) : NULL;
@@ -931,7 +988,7 @@ Java_com_nendo_sigil_Sigil_nativeSync(JNIEnv *env, jclass clazz,
     if (save_id)  strncpy(result.save_id, save_id, sizeof(result.save_id) - 1);
     copy_n64_fields(env, jn64, &result);
 
-    open_ctx octx = { root };
+    access_ctx actx = { env, jaccess, jroot };
     sigil_sync_request req;
     memset(&req, 0, sizeof(req));
     req.struct_version = SIGIL_SYNC_REQUEST_V1;
@@ -946,7 +1003,7 @@ Java_com_nendo_sigil_Sigil_nativeSync(JNIEnv *env, jclass clazz,
     req.save.listing = listing;
     req.save.listing_count = (size_t)listing_count;
     req.save.open = open_member;
-    req.save.open_ctx = &octx;
+    req.save.open_ctx = &actx;
     req.save.root_path = root;
     req.save.profile = profile;
     req.game_ids = ids;
@@ -974,7 +1031,7 @@ Java_com_nendo_sigil_Sigil_nativeSync(JNIEnv *env, jclass clazz,
     req.repair = repair ? 1 : 0;
     req.write = write_member;
     req.remove = remove_member;
-    req.write_ctx = &octx;
+    req.write_ctx = &actx;
 
     sigil_sync_result *r = NULL;
     int rc = !claims_valid || !companions_valid ? SIGIL_ERR_INVALID_ARG
@@ -1077,15 +1134,16 @@ Java_com_nendo_sigil_Sigil_nativeSaveBase(JNIEnv *env, jclass clazz, jstring jla
 
 JNIEXPORT jobject JNICALL
 Java_com_nendo_sigil_Sigil_nativeListProfiles(JNIEnv *env, jclass clazz, jstring jlayout, jstring jroot,
-                                               jobjectArray jlisting) {
+                                               jobjectArray jlisting, jobject jaccess) {
     (void)clazz;
-    if (!jlayout || !jroot) { throw_sigil(env, SIGIL_ERR_INVALID_ARG); return NULL; }
+    if (!jlayout || !jroot || !jaccess) { throw_sigil(env, SIGIL_ERR_INVALID_ARG); return NULL; }
+    if (!load_access_class(env)) { throw_binding_broken(env, "SigilFileAccess"); return NULL; }
     const char *layout = jni_utf8(env, jlayout);
     const char *root = jni_utf8(env, jroot);
     jsize listing_count = 0;
     const char **listing = borrow_strings(env, jlisting, &listing_count);
 
-    open_ctx octx = { root };
+    access_ctx actx = { env, jaccess, jroot };
     sigil_save_request req;
     memset(&req, 0, sizeof(req));
     req.struct_version = SIGIL_SAVE_REQUEST_V1;
@@ -1094,7 +1152,7 @@ Java_com_nendo_sigil_Sigil_nativeListProfiles(JNIEnv *env, jclass clazz, jstring
     req.listing_count = (size_t)listing_count;
     req.root_path = root;
     req.open = open_member;
-    req.open_ctx = &octx;
+    req.open_ctx = &actx;
     sigil_save_profile *profiles = NULL;
     size_t count = 0;
     int rc = listing ? sigil_save_profiles(&req, &profiles, &count) : SIGIL_ERR_OOM;

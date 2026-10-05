@@ -51,4 +51,18 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    testOptions {
+        unitTests.all { test ->
+            // The JVM tests load a host build of the JNI library: the sigil_jni_host target,
+            // built by the repo's CMake when a JDK is found (docs/building.md).
+            val hostLib = providers.gradleProperty("sigilHostJniDir")
+                .getOrElse(file("../../build/bindings").absolutePath)
+            test.systemProperty("java.library.path", hostLib)
+        }
+    }
+}
+
+dependencies {
+    testImplementation("junit:junit:4.13.2")
 }

@@ -194,6 +194,22 @@ if(SIGIL_BUILD_CLI)
     set_target_properties(sigil_cli PROPERTIES OUTPUT_NAME sigil)
 endif()
 
+# ---- Android binding on this host ----------------------------------------------
+# The JNI library built against the host JDK, so the Kotlin binding's JVM
+# tests run without a device (docs/building.md, "Bindings").
+option(SIGIL_BUILD_JNI_HOST "Build the Android binding's JNI library for this host's JDK" OFF)
+if(SIGIL_BUILD_JNI_HOST)
+    find_package(JNI REQUIRED)
+    set(jni_dir ${CMAKE_CURRENT_SOURCE_DIR}/bindings/android/src/main/cpp)
+    add_library(sigil_jni_host SHARED ${jni_dir}/sigil_jni.c)
+    target_include_directories(sigil_jni_host PRIVATE ${JNI_INCLUDE_DIRS} ${jni_dir})
+    target_link_libraries(sigil_jni_host PRIVATE sigil)
+    set_target_properties(sigil_jni_host PROPERTIES OUTPUT_NAME sigil-jni
+        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bindings RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bindings)
+    set_target_properties(sigil sigil_chdr sigil_zlib sigil_zstd sigil_lzma sigil_aes
+        PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
+
 # ---- Tests -------------------------------------------------------------------
 if(SIGIL_BUILD_TESTS)
     enable_testing()
