@@ -633,6 +633,8 @@ static void check_named_slot(const sigil_sync_result *first) {
     g.req.save.option_count = 1;
     if (sigil_collect(&g.req, &r) != SIGIL_OK || !r->data || strcmp(r->identity_hash, first->identity_hash) != 0) {
         fail("named slot", "Slot1_Filename didn't name the folder card holding the save");
+    } else if (strcmp(r->artifact, "Ace Combat 04 (USA).ps2") != 0) {
+        fail("named slot", "a card named without an extension gives an artifact without .ps2");
     }
     sigil_sync_result_free(r);
     root_free(&root);

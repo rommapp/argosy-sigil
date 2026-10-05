@@ -60,13 +60,15 @@ static int load_card_file(const sigil_sync_request *req, const char *path, sigil
     return SIGIL_OK;
 }
 
-/* Sets the artifact to the content stem with the extension of `path`. */
-static void artifact_from(const sigil_sync_request *req, const char *path, char artifact[SIGIL_SAVE_ENTRY_MAX]) {
+/* Sets the artifact to the content stem with the extension of `path`, or the
+ * kind's card extension when `path` has none (a folder card named test/). */
+static void artifact_from(const sigil_sync_request *req, const sigil_sync_kind *kind, const char *path,
+                          char artifact[SIGIL_SAVE_ENTRY_MAX]) {
     char stem[SIGIL_SAVE_ENTRY_MAX];
     sigil_content_stem(req->save.content_path, stem, sizeof(stem));
     const char *base = strrchr(path, '/');
     const char *ext = strrchr(base ? base : path, '.');
-    snprintf(artifact, SIGIL_SAVE_ENTRY_MAX, "%s%s", stem, ext ? ext : "");
+    snprintf(artifact, SIGIL_SAVE_ENTRY_MAX, "%s%s", stem, ext ? ext : kind->raw_ext ? kind->raw_ext : "");
 }
 
 /* SIGIL_ERR_AMBIGUOUS, naming the files one per line in `problem`, when more
@@ -128,7 +130,7 @@ int sigil_sync_gather_cards(const sigil_sync_ctx *x, sigil_sync_cards *s, char a
             if (folder[i] || sigil_sync_listed(req, shared[i])) { pick = i; break; }
         }
         snprintf(s->primary_path, SIGIL_SAVE_PATH_MAX, "%s", shared[pick]);
-        artifact_from(req, shared[pick], artifact);
+        artifact_from(req, x->kind, shared[pick], artifact);
     }
     if (s->kind->raw_ext && s->kind->new_form && s->kind->new_form(req, s->primary_path) != SIGIL_FORM_RAW) {
         char stem[SIGIL_SAVE_ENTRY_MAX];

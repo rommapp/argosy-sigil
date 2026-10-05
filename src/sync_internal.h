@@ -78,8 +78,9 @@ typedef struct {
     void   (*save_key)(const void *save, char out[SIGIL_CARD_NAME_MAX]);
     /* Optional. The form a new card at `path` for this game is formatted in. */
     int    (*new_form)(const sigil_sync_request *req, const char *path);
-    /* Optional. A unit is a raw card: when the game's card file is in another
-     * form (a .vmp), the unit is named <stem> with this extension instead. */
+    /* Optional. The extension of a unit that is a raw card: the unit takes it
+     * when the game's card file is in another form (a .vmp), or its name has
+     * no extension (a folder card named test/). */
     const char *raw_ext;
     /* Optional. Writes the files the emulator needs beside card file `path`
      * after restore wrote it, when they aren't there (POPS's PARAM.SFO). */

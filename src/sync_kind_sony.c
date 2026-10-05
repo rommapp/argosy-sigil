@@ -215,5 +215,5 @@ const sigil_sync_kind sigil_sync_ps2_kind = {
     .load = ps2_load, .blank = ps2_blank, .free_card = ps2_free_card, .size = sigil_sync_no_size,
     .unit_size = sigil_sync_no_unit_size, .list = ps2_list, .extract = ps2_extract, .free_save = ps2_free_save,
     .inject = ps2_inject, .cost = ps2_cost, .remove = ps2_remove, .verify = ps2_verify, .image = ps2_image,
-    .identity = ps2_identity, .folder_cards = true,
+    .identity = ps2_identity, .raw_ext = ".ps2", .folder_cards = true,
 };
