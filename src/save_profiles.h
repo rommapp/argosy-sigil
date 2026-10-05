@@ -36,6 +36,7 @@ typedef struct {
 /* One file of the game's saves. */
 typedef struct {
     int  area;                          /* sigil_save_area */
+    const sigil_layout_area *folder;    /* the row's folder it is in; NULL on a row with a save index */
     char path[SIGIL_SAVE_PATH_MAX];     /* relative to the save root */
     char entry[SIGIL_SAVE_ENTRY_MAX];   /* its name in the unit */
 } sigil_profile_file;

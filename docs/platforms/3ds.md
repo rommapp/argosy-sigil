@@ -61,23 +61,27 @@ no user accounts.
 
 | Layout | Files (role, option) | Shared | Verified |
 |---|---|---|---|
-| `azahar`, `citra`, `lime3ds` | folder: `sdmc/Nintendo 3DS/00000000000000000000000000000000/00000000000000000000000000000000/title/{save_id}/data/`, holding `00000001/` and `00000001.metadata` | | emulator source |
+| `azahar`, `citra`, `lime3ds` | folder: `sdmc/Nintendo 3DS/00000000000000000000000000000000/00000000000000000000000000000000/title/{save_id}/data/`, holding `00000001/` and `00000001.metadata`; folder: `sdmc/Nintendo 3DS/00000000000000000000000000000000/00000000000000000000000000000000/extdata/00000000/{extdata_id}/` | | emulator source |
 
 The base folder is the one holding `sdmc/`: Azahar's user folder, or the
 folder a libretro core keeps its tree in under the frontend's save folder.
 `{save_id}` is the title id as its two folders (`00040000/00033500`).
+`{extdata_id}` is the low half of the title id shifted right 8 bits, as 8
+lowercase hex digits (`00000335`).
 
 ## Sync
 
-The unit is a zip of the title's `data/` folder under the title id's two
-folders: `00040000/00033500/00000001/...` and
-`00040000/00033500/00000001.metadata`. Installed content beside it
-(`content/`) stays out. The rules for folder layouts are in
-[sync](../sync.md) and [profiles](../save-units.md#profiles).
+The unit is a zip of the title's `data/` folder and its extdata folder
+under the title id's two folders: `00040000/00033500/data/00000001/...`,
+`00040000/00033500/data/00000001.metadata` and
+`00040000/00033500/extdata/...`. Installed content beside them
+(`content/`) stays out. A unit without `extdata/` members leaves the
+extdata on disk alone, and restore doesn't count that extdata as a local
+change. The rules for folder layouts are in [sync](../sync.md) and
+[profiles](../save-units.md#profiles).
 
 ## Open items
 
-- Extra data (extdata, `sdmc/Nintendo 3DS/.../extdata/`) doesn't travel: the extdata ids a title uses don't follow from its title id in general.
-- Check one 3DS title known to use shared extdata.
+- A title whose extdata id isn't its low title id shifted right 8 bits, or one that uses shared extdata, syncs its `data/` folder only.
 - The libretro core's folder under the frontend's save folder is unconfirmed.
 - How much key handling is in scope for reading the 3DS exheader?

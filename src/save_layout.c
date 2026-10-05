@@ -396,16 +396,23 @@ static const char *const RYUJINX_SUBDIRS[] = { "bis/user/save", "bis/system/save
  * (core/file_sys/archive_source_sd_savedata.cpp, hle/service/fs/archive.h):
  * sdmc/Nintendo 3DS/<id0>/<id1>/title/<high>/<low>/data/ holds the save as
  * 00000001/ and 00000001.metadata beside it, both ids all zeros. {save_id} is
- * the title id as those two folders. The 3DS has no user accounts. */
+ * the title id as those two folders. The title's extdata sits under
+ * extdata/00000000/, named by {extdata_id}; a unit may leave it out. The 3DS
+ * has no user accounts. Argosy's units from before sigil hold the two folders
+ * as data/ and extdata/. */
 static const sigil_layout_area CTR_AREAS[] = {
     { "sdmc/Nintendo 3DS/00000000000000000000000000000000/00000000000000000000000000000000/title/{save_id}/data/",
-      "{save_id}/", SIGIL_SAVE_AREA_DEVICE, false, NULL },
+      "{save_id}/data/", SIGIL_SAVE_AREA_DEVICE, false, "data/", false },
+    { "sdmc/Nintendo 3DS/00000000000000000000000000000000/00000000000000000000000000000000/extdata/00000000/"
+      "{extdata_id}/",
+      "{save_id}/extdata/", SIGIL_SAVE_AREA_DEVICE, false, "extdata/", true },
 };
 static const sigil_layout_profiles CTR_FOLDERS = {
     "sdmc", 0, NULL, CTR_AREAS, COUNT(CTR_AREAS), NULL, 0, false, false, NULL, NULL, 2,
 };
 static const char *const CTR_SUBDIRS[] = {
     "sdmc/Nintendo 3DS/00000000000000000000000000000000/00000000000000000000000000000000/title",
+    "sdmc/Nintendo 3DS/00000000000000000000000000000000/00000000000000000000000000000000/extdata/00000000",
 };
 
 /* Cemu (src/Cafe/TitleList/SaveInfo.cpp, Account.cpp): the mlc's

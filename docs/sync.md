@@ -18,7 +18,7 @@ and passes back. The calls and their fields are on each language's page
 | Dreamcast | `vmu_A1.bin`, or a zip of the VMUs present | [dreamcast](platforms/dreamcast.md#sync) |
 | Switch, Wii U, PS Vita, PS3 | a zip of the game's save folders, without the profile id | [switch](platforms/switch.md#sync), [wiiu](platforms/wiiu.md#sync), [psvita](platforms/psvita.md#sync), [ps3](platforms/ps3.md#sync) |
 | PSP | a zip of the game's save folders | [psp](platforms/psp.md#sync) |
-| 3DS | a zip of the title's save folder and its metadata | [3ds](platforms/3ds.md#sync) |
+| 3DS | a zip of the title's save folder, its metadata and its extdata | [3ds](platforms/3ds.md#sync) |
 
 Every volume in a unit is raw, whatever form the emulator stores it in;
 restore writes each file back in the emulator's form (gzip, byte
@@ -38,6 +38,7 @@ next collect then gives the save in sigil's form; upload that.
 | GameCube | a raw `.gci`, or a flat zip of `.gci` files; of two files with one identity, the first by name, as Dolphin loads a folder |
 | Saturn, Sega CD, Dreamcast | a raw volume file as the emulator stored it (gzip and byte expansion included), or a flat zip of them under their on-disk names, each matched to its volume by the layout's file names |
 | Wii U | a zip naming the account folder by its id (`<save_id>/user/80000001/`) |
+| 3DS | a zip rooted at `data/` and `extdata/` |
 | Switch | one folder rooted at `<title>/`: the device save for the titles that keep theirs on the device (Animal Crossing: New Horizons, Nintendo Switch Sports, 1-2-Switch, Ring Fit Adventure, the four Labo kits, Go Vacation), the account save for any other |
 
 ## Whose saves

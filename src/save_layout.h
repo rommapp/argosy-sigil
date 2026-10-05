@@ -83,6 +83,7 @@ typedef struct {
     bool        rebuilt;     /* the emulator writes it again by itself: restore skips it when it is out of
                                 the root's reach instead of refusing */
     const char *legacy;      /* an older unit's name for the folder, {profile} standing for any id, or NULL */
+    bool        optional;    /* a unit may leave the folder out: restore then keeps what is there (3DS extdata) */
 } sigil_layout_area;
 
 /* A layout whose saves are folders, kept per user profile when it has an

@@ -2,8 +2,7 @@
 /* Folder saves kept per user profile: the yuzu forks, Cemu, Vita3K and RPCS3,
  * against the saves and profile lists pulled from an AYN Odin 3. */
 #include "save_corpus.h"
-#include "mem_root.h"
-#include "sigil_internal.h"
+#include "legacy_units.h"
 #include <stdbool.h>
 
 #define TEST_SKIP    77
@@ -977,38 +976,82 @@ static void check_ryujinx(void) {
 
 /* ---- 3DS -------------------------------------------------------------------------- */
 
-#define CTR_TITLE "sdmc/Nintendo 3DS/00000000000000000000000000000000/00000000000000000000000000000000/title/"
+#define CTR_ROOT  "sdmc/Nintendo 3DS/00000000000000000000000000000000/00000000000000000000000000000000/"
+#define CTR_TITLE CTR_ROOT "title/"
+#define CTR_EXT   CTR_ROOT "extdata/00000000/"
 
 /* Azahar keeps a title's save as data/00000001/ with 00000001.metadata beside
- * it, under the title id split in two folders: both travel, other titles
- * don't, and a restore writes them back in a data folder that has none. */
+ * it, under the title id split in two folders, and its extra data under
+ * extdata/00000000/<low id >> 8>: all of it travels, other titles' doesn't,
+ * and a restore writes it back where there was none. */
 static void check_3ds(void) {
     mem_root root = {0};
-    put_text(&root, CTR_TITLE "00040000/00033500/data/00000001/main", "save");
-    put_text(&root, CTR_TITLE "00040000/00033500/data/00000001.metadata", "meta");
-    put_text(&root, CTR_TITLE "00040000/00033501/data/00000001/main", "another title");
-    put_text(&root, CTR_TITLE "00040000/00033500/content/00000000.app", "installed game");
+    put_text(&root, CTR_TITLE "00040000/00113200/data/00000001/main", "save");
+    put_text(&root, CTR_TITLE "00040000/00113200/data/00000001.metadata", "meta");
+    put_text(&root, CTR_EXT "00001132/00000000/00000001", "town");
+    put_text(&root, CTR_EXT "00001133/00000000/00000001", "another title's town");
+    put_text(&root, CTR_TITLE "00040000/00113300/data/00000001/main", "another title");
+    put_text(&root, CTR_TITLE "00040000/00113200/content/00000000.app", "installed game");
     game g;
-    make_game(&g, &root, "azahar", "3ds", "00040000/00033500");
+    make_game(&g, &root, "azahar", "3ds", "00040000/00113200");
     sigil_sync_result *r = NULL;
     expect_rc("3ds collect", collect(&g, &r), SIGIL_OK);
-    if (!unit_has(r, "00040000/00033500/00000001/main") || !unit_has(r, "00040000/00033500/00000001.metadata") ||
-        !unit_all(r, "00040000/00033500/", NULL, 2)) {
-        fail("3ds collect", "the save folder and its metadata, nothing else");
+    if (!unit_has(r, "00040000/00113200/data/00000001/main") || !unit_has(r, "00040000/00113200/data/00000001.metadata") ||
+        !unit_has(r, "00040000/00113200/extdata/00000000/00000001") || !unit_all(r, "00040000/00113200/", NULL, 3)) {
+        fail("3ds collect", "the save, its metadata and its extdata, nothing else");
     }
 
     mem_root fresh = {0};
     game t;
-    make_game(&t, &fresh, "citra", "3ds", "00040000/00033500");
+    make_game(&t, &fresh, "citra", "3ds", "00040000/00113200");
     t.req.save.root_path = "/storage/emulated/0/citra-emu";
     sigil_sync_result *w = NULL;
     expect_rc("3ds restore", restore(&t, r, &w), SIGIL_OK);
-    if (!root_holds(&fresh, CTR_TITLE "00040000/00033500/data/00000001/main", "save") ||
-        !root_holds(&fresh, CTR_TITLE "00040000/00033500/data/00000001.metadata", "meta")) {
+    if (!root_holds(&fresh, CTR_TITLE "00040000/00113200/data/00000001/main", "save") ||
+        !root_holds(&fresh, CTR_TITLE "00040000/00113200/data/00000001.metadata", "meta") ||
+        !root_holds(&fresh, CTR_EXT "00001132/00000000/00000001", "town")) {
         fail("3ds restore", "files");
     }
     sigil_sync_result_free(w);
+
+    /* A unit without extdata leaves the extdata there alone. */
+    const char *const data_only[] = { "00040000/00113200/data/00000001/main", "newer" };
+    sigil_sync_result *partial = unit_of(data_only, 1);
+    g.req.overwrite_local = 1;
+    w = NULL;
+    expect_rc("3ds unit without extdata", restore(&g, partial, &w), SIGIL_OK);
+    if (!root_holds(&root, CTR_EXT "00001132/00000000/00000001", "town")) fail("3ds unit without extdata", "extdata removed");
+
+    /* The extdata it kept is no local change against the next such unit. */
+    keep_state(&g, w);
+    const char *const data_next[] = { "00040000/00113200/data/00000001/main", "newest" };
+    sigil_sync_result *next = unit_of(data_next, 1);
+    g.req.overwrite_local = 0;
+    sigil_sync_result *w2 = NULL;
+    expect_rc("3ds second unit without extdata", restore(&g, next, &w2), SIGIL_OK);
+    if (!root_holds(&root, CTR_TITLE "00040000/00113200/data/00000001/main", "newest")) {
+        fail("3ds second unit without extdata", "save not written");
+    }
+    sigil_sync_result_free(w2);
+    unit_of_free(next);
+    sigil_sync_result_free(w);
+    unit_of_free(partial);
+
+    /* Argosy's uploads from before it used sigil are rooted at data/ and extdata/. */
+    const char *const old_pairs[] = {
+        "data/00000001/main", "save", "data/00000001.metadata", "meta", "extdata/00000000/00000001", "town",
+    };
+    sigil_sync_result *old = unit_of(old_pairs, 3);
+    mem_root from_old = {0};
+    make_game(&t, &from_old, "azahar", "3ds", "00040000/00113200");
+    w = NULL;
+    expect_rc("3ds argosy upload", restore(&t, old, &w), SIGIL_OK);
+    if (!roots_same(&from_old, &fresh)) fail("3ds argosy upload", "restores other files than sigil's unit");
+    sigil_sync_result_free(w);
+    unit_of_free(old);
+
     sigil_sync_result_free(r);
+    root_free(&from_old);
     root_free(&fresh);
     root_free(&root);
 }

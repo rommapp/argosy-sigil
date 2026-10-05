@@ -17,9 +17,14 @@
 typedef struct {
     char profile[SIGIL_PROFILE_ID_MAX];
     char save_id[SIGIL_SAVE_ENTRY_MAX];
+    char extdata_id[16];
 } folder_vars;
 
 static char *var_slot(folder_vars *v, const char *t, size_t n, size_t *cap) {
+    if (n == 12 && strncmp(t, "{extdata_id}", 12) == 0) {
+        *cap = sizeof(v->extdata_id);
+        return v->extdata_id;
+    }
     if (n == 9 && strncmp(t, "{profile}", 9) == 0) {
         *cap = sizeof(v->profile);
         return v->profile;
@@ -120,6 +125,35 @@ static bool save_id_fits(const sigil_profile_root *p, const char *name) {
     size_t n = strlen(p->save_id);
     if (!n) return false;
     return p->prefix ? strncmp(name, p->save_id, n) == 0 : strcmp(name, p->save_id) == 0;
+}
+
+/* A 3DS title's extra data folder: the low half of its id shifted right 8
+ * bits, as 8 lowercase hex digits (00113200 gives 00001132); "" when the
+ * save id has no hex low half. */
+static void extdata_id_of(const char *save_id, char out[16]) {
+    const char *low = strrchr(save_id, '/');
+    low = low ? low + 1 : save_id;
+    char *end = NULL;
+    unsigned long value = strtoul(low, &end, 16);
+    if (!*low || *end) {
+        out[0] = '\0';
+        return;
+    }
+    snprintf(out, 16, "%08lx", value >> 8);
+}
+
+/* The folder a walk bound is the game's: by its save id, or by the extdata id
+ * the save id gives. A name holding neither, an older unit's, stands for the
+ * game. Fills in whichever `v` lacks, so a template with either expands. */
+static bool game_fits(const sigil_profile_root *p, folder_vars *v) {
+    char extdata[16];
+    extdata_id_of(p->save_id, extdata);
+    if (!p->save_id[0]) return false;
+    if (v->save_id[0] && !save_id_fits(p, v->save_id)) return false;
+    if (!v->save_id[0] && v->extdata_id[0] && strcmp(v->extdata_id, extdata) != 0) return false;
+    if (!v->save_id[0]) snprintf(v->save_id, sizeof(v->save_id), "%s", p->save_id);
+    if (!v->extdata_id[0]) snprintf(v->extdata_id, sizeof(v->extdata_id), "%s", extdata);
+    return true;
 }
 
 /* ---- where the root sits ------------------------------------------------------- */
@@ -316,7 +350,7 @@ static bool inside_save_folder(const sigil_profile_root *p) {
     for (size_t i = 0; i < p->row->area_count && p->below[0]; i++) {
         folder_vars v;
         const char *rest = NULL;
-        if (in_folder(p->row, p->row->areas[i].template_, p->below, &v, &rest) && save_id_fits(p, v.save_id)) return true;
+        if (in_folder(p->row, p->row->areas[i].template_, p->below, &v, &rest) && game_fits(p, &v)) return true;
     }
     return false;
 }
@@ -818,7 +852,7 @@ static const sigil_layout_area *area_of(const sigil_profile_root *p, const char 
         folder_vars v;
         const char *rest = NULL;
         if (area->area == SIGIL_SAVE_AREA_ACCOUNT && !profile[0]) continue;
-        if (!in_folder(p->row, area->template_, base_path, &v, &rest) || !save_id_fits(p, v.save_id)) continue;
+        if (!in_folder(p->row, area->template_, base_path, &v, &rest) || !game_fits(p, &v)) continue;
         if (area->area == SIGIL_SAVE_AREA_ACCOUNT && strcmp(v.profile, profile) != 0) continue;
         if (ignored(p->row, rest) || rest[strlen(rest) - 1] == '/') return NULL;
         char folder[SIGIL_SAVE_PATH_MAX];
@@ -846,6 +880,7 @@ int sigil_profile_files(const sigil_profile_root *p, const char *profile, sigil_
         const sigil_layout_area *area = area_of(p, profile, base_path, f->entry);
         if (!area) continue;
         f->area = area->area;
+        f->folder = p->row->index ? NULL : area;
         snprintf(f->path, sizeof(f->path), "%s", p->req->listing[i]);
         (*count)++;
     }
@@ -880,8 +915,9 @@ int sigil_profile_place(const sigil_profile_root *p, const char *entry, sigil_pr
             const char *name = legacy ? row_area->legacy : row_area->entry;
             folder_vars v;
             const char *rest = NULL;
-            if (!name || !in_folder(p->row, name, entry, &v, &rest) || !save_id_fits(p, v.save_id)) continue;
+            if (!name || !in_folder(p->row, name, entry, &v, &rest) || !game_fits(p, &v)) continue;
             f->area = row_area->area;
+            f->folder = row_area;
             if (!expand(row_area->entry, &v, rest, f->entry, sizeof(f->entry))) return SIGIL_ERR_NOT_FOUND;
             if (ignored(p->row, rest)) {
                 *skip = true;

@@ -123,6 +123,7 @@ typedef struct {
     size_t            count;
     char            (*paths)[SIGIL_SAVE_PATH_MAX];   /* where each member goes; "" for one restore skips */
     int              *areas;
+    const sigil_layout_area **folders;               /* the row's folder each member goes in, or NULL */
     sigil_named_md5  *parts;                         /* under the name collect gives each member */
     char              content[33];                   /* RomM's hash of the unit as it came */
     bool              carried[AREA_COUNT];           /* the unit holds files of the area, by AREAS */
@@ -132,6 +133,7 @@ static void incoming_free(incoming_unit *u) {
     if (u->members) sigil_zip_members_free(u->members, u->count);
     free(u->paths);
     free(u->areas);
+    free(u->folders);
     free(u->parts);
 }
 
@@ -193,8 +195,9 @@ static int read_unit(const sigil_sync_ctx *x, const profile_sync *s, const uint8
     }
     u->paths = calloc(u->count ? u->count : 1, SIGIL_SAVE_PATH_MAX);
     u->areas = (int *)calloc(u->count ? u->count : 1, sizeof(*u->areas));
+    u->folders = (const sigil_layout_area **)calloc(u->count ? u->count : 1, sizeof(const sigil_layout_area *));
     u->parts = (sigil_named_md5 *)calloc(u->count ? u->count : 1, sizeof(*u->parts));
-    if (!u->paths || !u->areas || !u->parts) return SIGIL_ERR_OOM;
+    if (!u->paths || !u->areas || !u->folders || !u->parts) return SIGIL_ERR_OOM;
     for (size_t i = 0; i < u->count; i++) {
         snprintf(u->parts[i].name, sizeof(u->parts[i].name), "%s", u->members[i].name);
         sigil_md5_of(u->members[i].data, u->members[i].len, u->parts[i].md5);
@@ -215,6 +218,7 @@ static int read_unit(const sigil_sync_ctx *x, const profile_sync *s, const uint8
         snprintf(u->paths[i], SIGIL_SAVE_PATH_MAX, "%s", f.path);
         snprintf(u->parts[i].name, sizeof(u->parts[i].name), "%s", f.entry);
         u->areas[i] = skip ? SIGIL_SAVE_AREA_NONE : f.area;
+        u->folders[i] = skip ? NULL : f.folder;
         if (!skip) u->carried[area_index(f.area)] = true;
         if (u->paths[i][0] && !sigil_sync_path_inside(u->paths[i])) return SIGIL_ERR_IO;
         if (u->paths[i][0] && placed_twice(u, i)) return SIGIL_ERR_UNSUPPORTED_FORMAT;
@@ -227,21 +231,36 @@ typedef struct {
     size_t              count;
     sigil_named_md5    *parts;
     int                *areas;
+    int                *compared;   /* areas, SIGIL_SAVE_AREA_NONE for a file restore keeps whatever the unit holds */
 } local_files;
 
 static void local_free(local_files *l) {
     free(l->files);
     free(l->parts);
     free(l->areas);
+    free(l->compared);
 }
 
-static int read_local(const sigil_sync_ctx *x, const profile_sync *s, local_files *l) {
+static bool carries_folder(const incoming_unit *u, const sigil_layout_area *folder) {
+    for (size_t i = 0; i < u->count; i++) {
+        if (u->folders[i] == folder) return true;
+    }
+    return false;
+}
+
+/* A file in an optional folder the unit leaves out: restore keeps it. */
+static bool kept(const incoming_unit *u, const sigil_profile_file *f) {
+    return f->folder && f->folder->optional && !carries_folder(u, f->folder);
+}
+
+static int read_local(const sigil_sync_ctx *x, const profile_sync *s, const incoming_unit *u, local_files *l) {
     memset(l, 0, sizeof(*l));
     int rc = sigil_profile_files(&s->root, s->root.profile, &l->files, &l->count);
     if (rc != SIGIL_OK) return rc;
     l->parts = (sigil_named_md5 *)calloc(l->count ? l->count : 1, sizeof(*l->parts));
     l->areas = (int *)calloc(l->count ? l->count : 1, sizeof(*l->areas));
-    if (!l->parts || !l->areas) return SIGIL_ERR_OOM;
+    l->compared = (int *)calloc(l->count ? l->count : 1, sizeof(*l->compared));
+    if (!l->parts || !l->areas || !l->compared) return SIGIL_ERR_OOM;
     for (size_t i = 0; i < l->count; i++) {
         uint8_t *data = NULL;
         size_t len = 0;
@@ -251,6 +270,7 @@ static int read_local(const sigil_sync_ctx *x, const profile_sync *s, local_file
         sigil_md5_of(data, len, l->parts[i].md5);
         free(data);
         l->areas[i] = l->files[i].area;
+        l->compared[i] = kept(u, &l->files[i]) ? SIGIL_SAVE_AREA_NONE : l->files[i].area;
     }
     return SIGIL_OK;
 }
@@ -264,7 +284,7 @@ static int check_areas(const sigil_sync_ctx *x, const profile_sync *s, const inc
     for (size_t a = 0; a < AREA_COUNT; a++) {
         if (!u->carried[a]) continue;
         char mine[33], theirs[33];
-        identity_of(l->parts, l->areas, l->count, AREAS[a], mine);
+        identity_of(l->parts, l->compared, l->count, AREAS[a], mine);
         identity_of(u->parts, u->areas, u->count, AREAS[a], theirs);
         bool same = false;
         const char *last = sigil_sync_state_get(&x->state, "synced", s->area_keys[a]);
@@ -285,7 +305,8 @@ static bool placed(const incoming_unit *u, const char *path) {
 
 /* A local file of an area the unit carries that the unit lacks. */
 static bool goes(const incoming_unit *u, const local_files *l, size_t i) {
-    return u->carried[area_index(l->areas[i])] && !placed(u, l->files[i].path);
+    return l->compared[i] != SIGIL_SAVE_AREA_NONE && u->carried[area_index(l->compared[i])] &&
+           !placed(u, l->files[i].path);
 }
 
 static bool holds(const local_files *l, const char *path, const char *md5) {
@@ -319,7 +340,7 @@ int sigil_sync_restore_profiles(sigil_sync_ctx *x, const sigil_layout_profiles *
     memset(&l, 0, sizeof(l));
     int rc = open_sync(x, row, &s, r);
     if (rc == SIGIL_OK) rc = read_unit(x, &s, unit, len, &u, r);
-    if (rc == SIGIL_OK) rc = read_local(x, &s, &l);
+    if (rc == SIGIL_OK) rc = read_local(x, &s, &u, &l);
     bool already = false;
     if (rc == SIGIL_OK) {
         r->problem[0] = '\0';
