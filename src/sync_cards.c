@@ -8,6 +8,22 @@ void sigil_sync_cards_free(sigil_sync_cards *s) {
     s->count = 0;
 }
 
+/* Every byte 0xFF: the erased card AetherSX2, NetherSX2 and ARMSX2 create
+ * for a slot never used. It holds nothing, as an empty file doesn't. */
+static bool erased(const sigil_io *io) {
+    uint8_t buf[4096];
+    uint64_t off = 0;
+    for (;;) {
+        size_t got = 0;
+        if (sigil_io_read_upto(io, off, buf, sizeof(buf), &got) != SIGIL_OK) return false;
+        if (!got) return off > 0;
+        for (size_t i = 0; i < got; i++) {
+            if (buf[i] != 0xFF) return false;
+        }
+        off += got;
+    }
+}
+
 static int load_card_file(const sigil_sync_request *req, const char *path, sigil_sync_cards *s) {
     if (s->count >= SYNC_MAX_CARD_FILES) return SIGIL_OK;
     for (size_t i = 0; i < s->count; i++) {
@@ -15,7 +31,7 @@ static int load_card_file(const sigil_sync_request *req, const char *path, sigil
     }
     sigil_io *io = req->save.open(req->save.open_ctx, path);
     if (!io) return sigil_sync_listed(req, path) ? SIGIL_ERR_IO : SIGIL_OK;
-    if (io->size && io->size(io->ctx) == 0) {
+    if ((io->size && io->size(io->ctx) == 0) || erased(io)) {
         sigil_io_close(io);
         return SIGIL_OK;
     }

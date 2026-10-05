@@ -403,6 +403,33 @@ static void check_unreadable_card(const sigil_sync_result *first) {
     }
     sigil_sync_result_free(r);
     root_free(&root);
+
+    /* An erased card, every byte 0xFF (AetherSX2's and ARMSX2's unused slot), is no card either:
+     * collect reads the game's saves from the card beside it, restore may format it. */
+    uint8_t *blank = (uint8_t *)malloc(len);
+    memset(blank, 0xFF, len);
+    mem_root two = {0};
+    root_put(&two, "Mcd001.ps2", card, len);
+    root_put(&two, "Mcd002.ps2", blank, len);
+    make_game(&g, &two, "Ace Combat 04 (USA).iso", "SLUS-20152", false);
+    sigil_sync_result *seen = NULL;
+    if (sigil_collect(&g.req, &seen) != SIGIL_OK || !seen->data) {
+        fail("erased card", "an erased slot 2 card stopped collect from the card beside it");
+    }
+    sigil_sync_result_free(seen);
+    root_free(&two);
+    mem_root one = {0};
+    root_put(&one, "Mcd001.ps2", blank, len);
+    make_game(&g, &one, "Ace Combat 04 (USA).iso", "SLUS-20152", false);
+    r = NULL;
+    mem_file *f = NULL;
+    if (sigil_restore(&g.req, newer, newer_len, &r) != SIGIL_OK || !(f = root_find(&one, "Mcd001.ps2")) ||
+        memcmp(f->data, "Sony PS2 Memory Card Format", 27) != 0) {
+        fail("erased card", "an erased card didn't take the restore");
+    }
+    sigil_sync_result_free(r);
+    root_free(&one);
+    free(blank);
     free(card);
     free(newer);
 }
@@ -577,6 +604,37 @@ static void check_argosy_uploads(const sigil_sync_result *first) {
         root_free(&from_unit);
         free(zip);
     }
+    root_free(&root);
+}
+
+/* Slot1_Filename names slot 1's card: ARMSX2's folder card test/ with no
+ * Mcd001.ps2 beside it, and an erased mcd002.ps2. */
+static void check_named_slot(const sigil_sync_result *first) {
+    mem_root root = {0};
+    put_superblock(&root, "memcards/test");
+    if (!first || !put_sample_folder(&root, "memcards/test", "ace-combat-04-aethersx2")) {
+        fail("named slot", "setup failed");
+        root_free(&root);
+        return;
+    }
+    uint8_t *erased = (uint8_t *)malloc(8650752);
+    memset(erased, 0xFF, 8650752);
+    root_put(&root, "memcards/mcd002.ps2", erased, 8650752);
+    free(erased);
+    game g;
+    make_standalone(&g, &root, "Ace Combat 04 (USA).iso", "SLUS-20152");
+    sigil_sync_result *r = NULL;
+    if (sigil_collect(&g.req, &r) != SIGIL_OK || r->data) fail("named slot", "the default names found a card that isn't there");
+    sigil_sync_result_free(r);
+    r = NULL;
+    g.option.key = "Slot1_Filename";
+    g.option.value = "test";
+    g.req.save.options = &g.option;
+    g.req.save.option_count = 1;
+    if (sigil_collect(&g.req, &r) != SIGIL_OK || !r->data || strcmp(r->identity_hash, first->identity_hash) != 0) {
+        fail("named slot", "Slot1_Filename didn't name the folder card holding the save");
+    }
+    sigil_sync_result_free(r);
     root_free(&root);
 }
 
@@ -1557,6 +1615,7 @@ int main(void) {
     check_broken_own_save(first);
     check_restore_foreign_unit();
     check_folder_collect(first);
+    check_named_slot(first);
     check_argosy_uploads(first);
     check_folder_restore(first);
     check_unopenable_folder_file(first);

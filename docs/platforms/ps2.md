@@ -37,7 +37,7 @@ platform=ps2 title_id=SLUS-20152 raw_serial=SLUS_201.52 save_id=BASLUS-20152 usa
 | Layout | Files (role, option) | Shared | Verified |
 |---|---|---|---|
 | `pcsx2` | `{stem}.ps2` primary when `pcsx2_shared_memory_cards` = `disabled` | `Mcd001.ps2`, `Mcd002.ps2` when `enabled` (default). The core keeps them in `<system>/pcsx2/memcards/`, so pass that folder as the save root | emulator source |
-| `pcsx2_standalone` | | `memcards/Mcd001.ps2`, `memcards/Mcd002.ps2`, each a file card or a folder card (a directory of save folders and `_pcsx2_superblock`). Covers PCSX2, AetherSX2, NetherSX2 and ARMSX2; the save root is the folder that holds `memcards/` | emulator source; live memory cards |
+| `pcsx2_standalone` | | `memcards/{pcsx2_slot1}`, `memcards/{pcsx2_slot2}`: the cards `Slot1_Filename` and `Slot2_Filename` name (`Mcd001.ps2`, `Mcd002.ps2` by default), each a file card or a folder card (a directory of save folders and `_pcsx2_superblock`). Covers PCSX2, AetherSX2, NetherSX2 and ARMSX2; the save root is the folder that holds `memcards/` | emulator source; live memory cards |
 
 `pcsx2` matches any platform; `pcsx2_standalone` matches `ps2` only. The
 `pcsx2_standalone` layout lists `memcards`, which
@@ -69,6 +69,8 @@ General refusals and `companions` are in [sync](../sync.md).
 
 ## Open items
 
-- ePSXe, AetherSX2 and NetherSX2 are closed source, so their per-game naming, Android paths and folder-card support are unconfirmed. NetherSX2 on Android keeps two 8 MB file cards, `Mcd001.ps2` and `Mcd002.ps2`, under its app folder's `memcards/`; a card it creates and never formats has no superblock, so `sigil_card_list` reports `SIGIL_ERR_UNSUPPORTED_FORMAT` for it. A real PCSX2-family file card with saves is still wanted.
+- ePSXe, AetherSX2 and NetherSX2 are closed source, so their per-game naming, Android paths and folder-card support are unconfirmed. NetherSX2 on Android keeps two 8 MB file cards, `Mcd001.ps2` and `Mcd002.ps2`, under its app folder's `memcards/`; a card it creates and never formats has every byte 0xFF, so `sigil_card_list` reports `SIGIL_ERR_UNSUPPORTED_FORMAT` for it, while collect and restore count it as no card, as an empty file. A real PCSX2-family file card with saves is still wanted.
+- Pass the slot's card name as an option when the user picked a card other than `Mcd001.ps2` or `Mcd002.ps2`: `Slot1_Filename`, `Slot2_Filename`, as PCSX2's `[MemoryCards]` section names it, the file or folder name under `memcards/`.
+- File cards of 16, 32 and 64 MB load (the card's superblock gives its size), but no sample of one has been through collect and restore; a new card restore creates is always 8 MB.
 - PCSX2 per-game file-card override key names and default data paths per OS are unconfirmed.
 - Which attributes `.max` drops relative to `.psu` is unconfirmed.

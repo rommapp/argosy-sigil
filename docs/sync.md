@@ -97,7 +97,9 @@ managed restore also refuses a shared volume holding any corrupt save,
 which the swap would drop; unmanaged keeps it in place. `repair` rebuilds
 the structures sigil can rebuild (a `.vmp` signature, a PCSX2 index or
 superblock) and changes none of the rest: sigil never writes over saves it
-can't read. An empty file counts as no card.
+can't read. An empty card file counts as no card, and so does one with
+every byte 0xFF, the erased card AetherSX2, NetherSX2 and ARMSX2 create for
+a slot never used: collect passes over it and restore may format it.
 
 ## Writing and removing
 

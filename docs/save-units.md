@@ -85,7 +85,7 @@ Each row names one core (`layout`), optionally one platform, its member
 templates, the shared files it may write, and the subfolders it writes
 into. Template variables: `{stem}`, `{romset}` (same as the stem),
 `{title_id}`, `{save_id}`, `{cart_size}`, `{nvram_version}`,
-`{left_index}`, `{right_index}`, `{dc_vmu_id}`, `{disc_id}`,
+`{left_index}`, `{right_index}`, `{pcsx2_slot1}`, `{pcsx2_slot2}`, `{dc_vmu_id}`, `{disc_id}`,
 `{pcsx_serial}`, `{gc_region}`, `{n64_header}`, `{n64_md5_8}`,
 `{n64_md5_lower}`, `{n64_md5_n64}`. A template ending in `/` names a folder
 whose whole subtree is the member. A `*` in a template stands for any run
@@ -108,6 +108,9 @@ whatever size the unit's cart was; saves that don't fit return
 `{left_index}` and `{right_index}` are `beetle_psx_hw_memcard_left_index`
 (default `0`) and `beetle_psx_hw_memcard_right_index` (default `1`), or
 the `beetle_psx_` keys of the same names on `mednafen_psx`.
+`{pcsx2_slot1}` and `{pcsx2_slot2}` are `Slot1_Filename` (default
+`Mcd001.ps2`) and `Slot2_Filename` (default `Mcd002.ps2`), the card names
+in PCSX2's `[MemoryCards]` section.
 `{dc_vmu_id}` is the Dreamcast product number (`title_id`) with each of
 ` /\:*?|<>` replaced by `_`, as flycast names a per-game VMU.
 `{disc_id}` is `save_id` with only its letters and digits (`SLUS-01040`

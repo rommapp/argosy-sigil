@@ -260,6 +260,14 @@ static const char *variable_value(const expand_ctx *ctx, const char *name, size_
         const char *v = sigil_save_option_value(req, "opera_nvram_version");
         return v ? v : "0";
     }
+    if (len == 11 && strncmp(name, "pcsx2_slot1", 11) == 0) {
+        const char *v = sigil_save_option_value(req, "Slot1_Filename");
+        return v && *v ? v : "Mcd001.ps2";
+    }
+    if (len == 11 && strncmp(name, "pcsx2_slot2", 11) == 0) {
+        const char *v = sigil_save_option_value(req, "Slot2_Filename");
+        return v && *v ? v : "Mcd002.ps2";
+    }
     if (len == 10 && strncmp(name, "left_index", 10) == 0) return beetle_psx_index(req, "memcard_left_index", "0");
     if (len == 11 && strncmp(name, "right_index", 11) == 0) return beetle_psx_index(req, "memcard_right_index", "1");
     return NULL;

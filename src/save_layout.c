@@ -263,12 +263,13 @@ static const sigil_layout_shared LRPS2_SHARED[] = {
 };
 
 /* Standalone PCSX2 and its forks (AetherSX2, NetherSX2, ARMSX2), rooted at
- * the data folder that holds memcards/. Slots 1 and 2 default to Mcd001.ps2
- * and Mcd002.ps2 (Pcsx2Config.cpp, MemoryCardFile.cpp); each is a file card,
- * or a folder card when the name is a directory (MemoryCardFolder.cpp). */
+ * the data folder that holds memcards/. Each slot's card is named by
+ * [MemoryCards] Slot1_Filename and Slot2_Filename, Mcd001.ps2 and Mcd002.ps2
+ * by default (Pcsx2Config.cpp, MemoryCardFile.cpp); each is a file card, or
+ * a folder card when the name is a directory (MemoryCardFolder.cpp). */
 static const sigil_layout_shared PCSX2_STANDALONE_SHARED[] = {
-    S("memcards/Mcd001.ps2"),
-    S("memcards/Mcd002.ps2"),
+    S("memcards/{pcsx2_slot1}"),
+    S("memcards/{pcsx2_slot2}"),
 };
 static const char *const PCSX2_STANDALONE_SUBDIRS[] = { "memcards" };
 
