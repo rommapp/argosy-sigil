@@ -483,12 +483,18 @@ int sigil_sync_build_unit(const sigil_sync_saves *saves, int owner, const sigil_
 
 /* ---- reading units ------------------------------------------------------------- */
 
+static int compare_member_names(const void *a, const void *b) {
+    return strcmp((*(const sigil_zip_member *const *)a)->name, (*(const sigil_zip_member *const *)b)->name);
+}
+
 /* A unit of save files: each goes onto a scratch card, which lists the
  * game's saves as any card does. A full scratch card hands its saves over
  * and a fresh one takes the rest, so a unit isn't held to one card's
  * directory: a GCI folder can hold more saves of a game than Dolphin loads,
- * and the restore's folder check names the one it wouldn't. Two saves of
- * one identity make the unit malformed. */
+ * and the restore's folder check names the one it wouldn't. The files are
+ * taken in name order and a later one of an identity already taken is
+ * dropped, as Dolphin loads a GCI folder (a zip of one a client made from
+ * the folder carries the stale copies Dolphin skips). */
 static int file_unit_saves(const sigil_sync_ctx *x, const uint8_t *unit, size_t len, size_t who,
                            sigil_sync_saves *out) {
     sigil_zip_member *members = NULL;
@@ -497,19 +503,27 @@ static int file_unit_saves(const sigil_sync_ctx *x, const uint8_t *unit, size_t 
     int rc = zip ? sigil_zip_read_mem(unit, len, SYNC_MAX_UNIT_MEMBER, &members, &count) : SIGIL_OK;
     size_t files = zip ? count : 1;
     char (*keys)[SIGIL_CARD_NAME_MAX] = rc == SIGIL_OK ? calloc(files + 1, SIGIL_CARD_NAME_MAX) : NULL;
+    const sigil_zip_member **order = rc == SIGIL_OK ? calloc(files + 1, sizeof(*order)) : NULL;
+    for (size_t i = 0; order && zip && i < count; i++) order[i] = &members[i];
+    if (order && zip) qsort(order, count, sizeof(*order), compare_member_names);
     void *card = NULL;
     int format = 0;
-    if (rc == SIGIL_OK) rc = keys ? x->kind->blank(&card, &format, SIGIL_DEVICE_NONE, 0, SIGIL_FORM_RAW, NULL)
-                                  : SIGIL_ERR_OOM;
+    if (rc == SIGIL_OK) rc = keys && order ? x->kind->blank(&card, &format, SIGIL_DEVICE_NONE, 0, SIGIL_FORM_RAW, NULL)
+                                           : SIGIL_ERR_OOM;
+    size_t taken = 0;
     for (size_t i = 0; i < files && rc == SIGIL_OK; i++) {
         void *save = NULL;
-        rc = x->kind->file_to_save(zip ? members[i].data : unit, zip ? members[i].len : len, &save);
+        rc = x->kind->file_to_save(zip ? order[i]->data : unit, zip ? order[i]->len : len, &save);
         if (rc != SIGIL_OK) break;
-        x->kind->save_key(save, keys[i]);
-        for (size_t k = 0; k < i && rc == SIGIL_OK; k++) {
-            if (strcmp(keys[k], keys[i]) == 0) rc = SIGIL_ERR_UNSUPPORTED_FORMAT;
+        x->kind->save_key(save, keys[taken]);
+        bool seen = false;
+        for (size_t k = 0; k < taken && !seen; k++) seen = strcmp(keys[k], keys[taken]) == 0;
+        if (seen) {
+            x->kind->free_save(save);
+            continue;
         }
-        if (rc == SIGIL_OK) rc = x->kind->inject(card, save);
+        taken++;
+        rc = x->kind->inject(card, save);
         if (rc == SIGIL_ERR_NO_SPACE) {
             rc = sigil_sync_add_card_saves(x, card, format, SIGIL_DEVICE_NONE, SIZE_MAX, who, out);
             x->kind->free_card(card);
@@ -522,6 +536,7 @@ static int file_unit_saves(const sigil_sync_ctx *x, const uint8_t *unit, size_t 
     if (rc == SIGIL_OK) rc = sigil_sync_add_card_saves(x, card, format, SIGIL_DEVICE_NONE, SIZE_MAX, who, out);
     if (card) x->kind->free_card(card);
     free(keys);
+    free(order);
     sigil_zip_members_free(members, count);
     return rc == SIGIL_ERR_EXISTS ? SIGIL_ERR_UNSUPPORTED_FORMAT : rc;
 }

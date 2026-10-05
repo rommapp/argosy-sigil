@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "save_corpus.h"
-#include "mem_root.h"
+#include "legacy_units.h"
 #include "card_gamecube.h"
 #include <stdbool.h>
 
@@ -133,6 +133,61 @@ static sigil_sync_result *nfsu2_unit(void) {
     root_free(&root);
     free(gci);
     return r;
+}
+
+/* Restores `old` and `unit` into empty roots as dolphin_standalone keeps
+ * them, raw card mode or GCI folder, and wants the same files from both. */
+static void expect_same_restore(const char *where, const char *title_id, const char *serial, const char *content,
+                                bool raw, const uint8_t *old, size_t old_len, const sigil_sync_result *unit) {
+    mem_root from_old = {0}, from_unit = {0};
+    game a, b;
+    make_game(&a, &from_old, "dolphin_standalone", title_id, serial, content);
+    make_game(&b, &from_unit, "dolphin_standalone", title_id, serial, content);
+    if (raw) {
+        raw_mode(&a);
+        raw_mode(&b);
+    }
+    sigil_sync_result *ra = NULL, *rb = NULL;
+    if (!old || !unit) {
+        fail(where, "setup failed");
+    } else {
+        int rc_old = sigil_restore(&a.req, old, old_len, &ra);
+        int rc_unit = sigil_restore(&b.req, unit->data, unit->len, &rb);
+        char what[64];
+        snprintf(what, sizeof(what), "restore failed: old %d, unit %d", rc_old, rc_unit);
+        if (rc_old != SIGIL_OK || rc_unit != SIGIL_OK) fail(where, what);
+        else if (!roots_same(&from_old, &from_unit)) fail(where, "the old upload restores other files than sigil's unit");
+    }
+    sigil_sync_result_free(ra);
+    sigil_sync_result_free(rb);
+    root_free(&from_old);
+    root_free(&from_unit);
+}
+
+/* Argosy uploaded a game's .gci files as the one file, or a flat zip of them
+ * under their names in Dolphin's GCI folder. */
+static void check_argosy_uploads(const sigil_sync_result *nfsu2) {
+    size_t gci_len = 0, zip_len = 0;
+    uint8_t *gci = sample("nfsu2-gci", NULL, &gci_len);
+    expect_same_restore("argosy gamecube raw gci", NFSU2, "GUGE", NFSU2_ISO, false, gci, gci_len, nfsu2);
+    expect_same_restore("argosy gamecube raw gci to a card", NFSU2, "GUGE", NFSU2_ISO, true, gci, gci_len, nfsu2);
+    free(gci);
+
+    mem_root root = {0};
+    uint8_t *data[6] = { 0 };
+    size_t lens[6] = { 0 };
+    bool have = put_fzero(&root, SA_FOLDER, NULL);
+    for (size_t i = 0; have && i < 6; i++) {
+        data[i] = sample("fzero-gx-dolphin-gci-set", FZERO_FILES[i], &lens[i]);
+        have = data[i] != NULL;
+    }
+    sigil_sync_result *fzero = have ? unit_from(&root, "dolphin_standalone", FZERO, "GFZE", FZERO_DISC, false) : NULL;
+    uint8_t *zip = have ? legacy_zip(FZERO_FILES, data, lens, 6, &zip_len) : NULL;
+    expect_same_restore("argosy gamecube zip", FZERO, "GFZE", FZERO_DISC, false, zip, zip_len, fzero);
+    free(zip);
+    sigil_sync_result_free(fzero);
+    for (size_t i = 0; i < 6; i++) free(data[i]);
+    root_free(&root);
 }
 
 static uint32_t first_block_of(const uint8_t *card, size_t len, const char *name) {
@@ -927,27 +982,37 @@ static void check_dolphin_folder_rules(const sigil_sync_result *nfsu2) {
     sigil_sync_result_free(many);
     root_free(&root);
 
-    /* A unit holding two saves of one identity is malformed, next to each
-     * other or 128 saves apart, where the copy lands past the first scratch
-     * card's 127. */
+    /* A unit holding two files of one identity keeps the first in name order
+     * and drops the other, as Dolphin loads a GCI folder: the copy comes
+     * first in the zip but last by name, next to the original or 126 saves
+     * apart. */
     static sigil_zip_member members[129];
-    for (size_t gap = 1; gap <= 128; gap += 127) {
+    for (size_t gap = 1; gap <= 126; gap += 125) {
         bool built = true;
         for (size_t i = 0; i <= gap; i++) {
             char name[8];
-            snprintf(name, sizeof(name), "g%03zu", i == gap ? (size_t)0 : i);
-            snprintf(members[i].name, sizeof(members[i].name), "m%03zu.gci", i);
+            snprintf(name, sizeof(name), "g%03zu", i == 0 ? (size_t)0 : i - 1);
+            snprintf(members[i].name, sizeof(members[i].name), i == 0 ? "z-copy.gci" : "m%03zu.gci", i);
             members[i].data = gci_of(like, "GUGE", name, 1, &members[i].len);
             built = built && members[i].data;
+            if (i == 0 && members[i].data) members[i].data[GC_DENTRY_SIZE] = 0x5A;
         }
         uint8_t *zip = NULL;
         size_t zip_len = 0;
         memset(&root, 0, sizeof(root));
-        if (!built || sigil_zip_store(members, gap + 1, &zip, &zip_len) != SIGIL_OK ||
-            restore_nfsu2(&root, zip, zip_len, NULL, NULL, 0, NULL, &r) != SIGIL_ERR_UNSUPPORTED_FORMAT ||
-            root.writes != 0) {
-            fail("dolphin folder", gap == 1 ? "a unit holding one save twice restored"
-                                            : "a unit holding one save twice, 128 saves apart, restored");
+        bool kept_first = false, kept_copy = false;
+        int rc = built && sigil_zip_store(members, gap + 1, &zip, &zip_len) == SIGIL_OK
+                     ? restore_nfsu2(&root, zip, zip_len, NULL, NULL, 0, NULL, &r)
+                     : SIGIL_ERR_INVALID_ARG;
+        for (size_t f = 0; f < root.count; f++) {
+            const mem_file *file = &root.files[f];
+            if (file->len <= GC_DENTRY_SIZE || memcmp(file->data + GCI_NAME, "g000", 5) != 0) continue;
+            kept_first = kept_first || file->data[GC_DENTRY_SIZE] == 0;
+            kept_copy = kept_copy || file->data[GC_DENTRY_SIZE] == 0x5A;
+        }
+        if (rc != SIGIL_OK || root.count != gap || !kept_first || kept_copy) {
+            fail("dolphin folder", gap == 1 ? "a unit holding one save twice didn't keep the first by name"
+                                            : "a unit holding one save twice, 126 saves apart, didn't keep the first by name");
         }
         sigil_sync_result_free(r);
         r = NULL;
@@ -1327,6 +1392,7 @@ int main(void) {
     if (card) root_put(&card_root, LIB_RAW, card, card_len);
     sigil_sync_result *raw_unit = unit_from(&card_root, "dolphin", FZERO, "GFZE", FZERO_DISC, true);
     sigil_sync_result *nfsu2 = nfsu2_unit();
+    check_argosy_uploads(nfsu2);
     check_digit_suffix(nfsu2);
     check_companion_removal(nfsu2);
     check_raw_card_forms(raw_unit);
