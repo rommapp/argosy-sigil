@@ -7,13 +7,36 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
+import org.junit.Assume.assumeTrue
+import org.junit.BeforeClass
 import org.junit.Test
 
 /**
  * Collect and restore through a caller's [SigilFileAccess]. The roots are names no file system
  * holds, so a call that reached for java.io.File or fopen would find nothing.
+ *
+ * The tests need the host build of libsigil-jni (docs/building.md, "Bindings"). Without it they
+ * skip, so an app that includes this module runs its own tests unaffected; sigil's own harness
+ * sets `sigil.requireHostJni` so a missing library fails there instead.
  */
 class FileAccessTest {
+    companion object {
+        @BeforeClass
+        @JvmStatic
+        fun hostLibrary() {
+            val loaded = try {
+                System.loadLibrary("sigil-jni")
+                true
+            } catch (e: UnsatisfiedLinkError) {
+                false
+            }
+            if (!loaded && System.getProperty("sigil.requireHostJni") == "true") {
+                fail("no host build of libsigil-jni on java.library.path")
+            }
+            assumeTrue("no host build of libsigil-jni on java.library.path", loaded)
+        }
+    }
+
     /** Files in memory under one root, keyed by root-relative path; records every path it is handed. */
     private class MemoryAccess(val files: MutableMap<String, ByteArray> = HashMap()) : SigilFileAccess {
         val paths = ArrayList<String>()
