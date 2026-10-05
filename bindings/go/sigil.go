@@ -338,7 +338,7 @@ func LoadHeaderKeyFromProdKeys(path string) ([]byte, error) {
 }
 
 // Extract reads the title ID from path. Pass PlatformAuto to sniff from
-// the file extension. opts may be nil. docs/go.md defines every input.
+// the file extension. opts may be nil. docs/quickstart-guides/go.md defines every input.
 func Extract(path string, platform Platform, opts *Options) (*Result, error) {
 	cpath := C.CString(path)
 	defer C.free(unsafe.Pointer(cpath))
@@ -866,7 +866,7 @@ func fillSaveRequest(a *cAllocs, creq *C.sigil_save_request, game *Result, core,
 // LocateSaves returns the files under a save root that belong to game when
 // core runs contentPath. No save is read; on a layout with profiles the
 // emulator's profile list is, when opts.SaveRoot is given, and the hashes are
-// filled. opts may be nil. docs/go.md defines every input.
+// filled. opts may be nil. docs/quickstart-guides/go.md defines every input.
 func LocateSaves(game *Result, core, contentPath string, opts *LocateOptions) (*SaveUnit, error) {
 	if game == nil {
 		return nil, ErrInvalidArg
@@ -1296,7 +1296,7 @@ func runSync(unit []byte, game *Result, core, contentPath, saveRoot string, opts
 }
 
 // Collect gathers game's saves under saveRoot into the unit that travels to
-// RomM. Store the returned State once the unit reached RomM. docs/go.md
+// RomM. Store the returned State once the unit reached RomM. docs/quickstart-guides/go.md
 // defines every input.
 func Collect(game *Result, core, contentPath, saveRoot string, opts *SyncOptions) (*SyncResult, error) {
 	return runSync(nil, game, core, contentPath, saveRoot, opts)

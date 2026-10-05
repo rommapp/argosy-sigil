@@ -34,7 +34,7 @@ commands above in that shell.
 
 ## Use
 
-[docs/go.md](../../docs/go.md): identify, locate, hash, sync, with what
+[docs/quickstart-guides/go.md](../../docs/quickstart-guides/go.md): identify, locate, hash, sync, with what
 each call requires and returns.
 
 ## Notes

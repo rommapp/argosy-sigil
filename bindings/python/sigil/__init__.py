@@ -711,7 +711,7 @@ def locate_saves(
     """The files under a save root that belong to `game` when `core` runs `content_path`.
 
     No save is read; on a layout with profiles the emulator's profile list is, when `save_root`
-    is given. docs/python.md defines every input.
+    is given. docs/quickstart-guides/python.md defines every input.
     """
     keepalive: list[object] = []
     root = None
@@ -954,7 +954,7 @@ def collect(
     """`game`'s saves under `save_root` gathered into the unit that travels to RomM.
 
     Store the returned `state` once the unit, `holding` and each changed companion unit reached
-    RomM. Raises SigilDamagedError and SigilAmbiguousError as `restore` does. docs/python.md
+    RomM. Raises SigilDamagedError and SigilAmbiguousError as `restore` does. docs/quickstart-guides/python.md
     defines every input.
     """
     return _sync(None, game, core, content_path, save_root, listing, options, game_ids, state, mode, False, claimed,

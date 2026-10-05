@@ -47,7 +47,7 @@ includeBuild("../argosy-sigil/bindings/android") {
 
 ## Usage
 
-[docs/kotlin.md](../../docs/kotlin.md): identify, locate, hash, with
+[docs/quickstart-guides/kotlin.md](../../docs/quickstart-guides/kotlin.md): identify, locate, hash, sync, with
 what each call requires and returns.
 
 ## ABI

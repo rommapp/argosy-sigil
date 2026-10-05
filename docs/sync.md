@@ -4,8 +4,8 @@
 RomM; `sigil_restore` puts a unit back and reads it back. Sigil keeps what
 it must remember between calls in an opaque state blob the caller stores
 and passes back. The calls and their fields are on each language's page
-([C](c.md#sync), [Python](python.md#sync), [Go](go.md#sync),
-[Kotlin](kotlin.md#sync)); this page has the rules they share.
+([C](quickstart-guides/c.md#sync), [Python](quickstart-guides/python.md#sync),
+[Go](quickstart-guides/go.md#sync), [Kotlin](quickstart-guides/kotlin.md#sync)); this page has the rules they share.
 
 ## What syncs
 

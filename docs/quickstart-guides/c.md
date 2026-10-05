@@ -1,10 +1,10 @@
 # C
 
 `#include <sigil.h>`, link `libsigil` and its bundled decompression and
-crypto libs ([building.md](building.md)). Every call returns `SIGIL_OK` or a
+crypto libs ([building.md](../building.md)). Every call returns `SIGIL_OK` or a
 negative `SIGIL_ERR_*`; `sigil_strerror(code)` names it. The caller sets
 `struct_version` on every struct it passes. Paths are UTF-8 on every
-system, Windows included ([building.md](building.md#windows)).
+system, Windows included ([building.md](../building.md#windows)).
 
 ## 1. Identify the game
 
@@ -160,7 +160,7 @@ typedef struct {
 For a libretro core, pass the core's name without `_libretro`
 (`genesis_plus_gx`, `mednafen_psx_hw`). For a standalone emulator, pass
 its layout id (`dolphin_standalone`, `pcsx2_standalone`, `eden`).
-[platforms/](platforms/README.md#layouts) lists every id with its
+[platforms/](../platforms/README.md#layouts) lists every id with its
 emulator. An id with no row gets the libretro default (`<stem>.srm`, plus
 `<stem>.rtc` when the cart has a clock), which fits an unlisted libretro
 core but names nothing an unlisted standalone emulator writes.
@@ -178,7 +178,7 @@ and Wii U also keep device saves every profile shares. The PSP layouts
 (`ppsspp`, `ppsspp_standalone`, `psp_console`) keep save folders the same
 way with no profiles, so everything below applies to them except picking a
 profile.
-[save-units.md](save-units.md#profiles) has the folders. The root is the emulator's base folder, the one holding
+[save-units.md](../save-units.md#profiles) has the folders. The root is the emulator's base folder, the one holding
 `nand/`, `mlc01/`, `ux0/`, `dev_hdd0/` or `PSP/`; a root above it works when the
 listing reaches below, and a root inside it works when `root_path` says
 where it is. `sigil_save_base` turns any path into the base and the
@@ -314,7 +314,7 @@ files that make up the game's save, and you package them yourself:
 This path writes whole files, so it can't merge a game's saves into a
 shared memory card or a profile folder the way `sigil_restore` does. Use
 `sigil_collect` and `sigil_restore` wherever they cover the system. Hash
-rules: [save-units.md](save-units.md#hash).
+rules: [save-units.md](../save-units.md#hash).
 
 ## Memory cards
 
@@ -356,10 +356,10 @@ typedef struct {
 ## Sync
 
 `sigil_collect` gathers one game's saves into the unit that travels to RomM;
-`sigil_restore` puts a unit back and reads it back. [sync.md](sync.md) has
+`sigil_restore` puts a unit back and reads it back. [sync.md](../sync.md) has
 the rules every system shares (whose saves, managed and unmanaged, damaged
 files, companions, refusals); each system's page under
-[platforms/](platforms/README.md) has what its unit holds.
+[platforms/](../platforms/README.md) has what its unit holds.
 
 ```c
 typedef struct {
@@ -454,7 +454,7 @@ typedef struct {
 ```
 
 Restore refuses, writing nothing, with the codes in
-[sync.md, Refusals](sync.md#refusals), which also says what `problem`
+[sync.md, Refusals](../sync.md#refusals), which also says what `problem`
 names for each. Collect refuses with `SIGIL_ERR_DAMAGED`,
 `SIGIL_ERR_AMBIGUOUS` and `SIGIL_ERR_IO` in the same way. With each of
 these the call still sets `*out`; free it as usual.
