@@ -44,6 +44,15 @@ def test_every_layout_row_has_a_page_that_documents_it():
         assert row, f"{pages[layout]} Save layouts has no table row for `{layout}`"
 
 
+def test_every_layout_row_says_what_restore_writes():
+    text = (PLATFORMS / "README.md").read_text()
+    section = text[text.index("## Restore targets") :]
+    rows = re.findall(r"^\| ([^|\n]*) \|", section, re.MULTILINE)
+    named = {name for row in rows for name in re.findall(r"`([a-z0-9_]+)`", row)}
+    for layout in _layout_ids():
+        assert layout in named, f"{layout} has no row in docs/platforms/README.md, Restore targets"
+
+
 def test_every_platform_page_says_its_status():
     for page in sorted(PLATFORMS.glob("*.md")):
         if page.name == "README.md":

@@ -139,3 +139,65 @@ section, fails `bindings/python/test_docs.py`.
 | `ppsspp` | [psp](psp.md) | PPSSPP | libretro core |
 | `ppsspp_standalone` | [psp](psp.md) | PPSSPP | standalone |
 | `psp_console` | [psp](psp.md) | PSP games on a PSP, or on a PS Vita (Adrenaline, the PSP emulator) | console |
+
+## Restore targets
+
+What `restore` writes for each layout, relative to the save root: under
+the default options first, then under the options that change it. Use it
+to tell what a request for a layout produces before asking for it, as a
+server that restores for a client without sigil does.
+
+The last column says what restore needs to build the target from nothing:
+
+- **yes**: restore into an empty folder gives the file the emulator reads.
+- **with `profile`**: the same, once the request names the user profile
+  whose account save to write.
+- **send the container**: the target is a card or volume every game
+  shares. Restore into an empty folder makes a new one holding only this
+  game's saves, which would replace the user's. Restore into the user's
+  own container instead, and only this game's saves change
+  ([sync](../sync.md#whose-saves)).
+- **one of the game's files**: the emulator names its files from a
+  database sigil doesn't have, so restore takes the name from a file of
+  the game already there.
+- **located only**: collect and restore don't cover the layout yet. The
+  stored file is what the emulator reads.
+
+Option keys are the core option or setting the emulator uses; `=` gives a
+value, and the default is the first listed.
+
+| Layout | Writes by default | Options that change it | From nothing |
+|---|---|---|---|
+| `libretro`, and any core with no row | `{stem}.srm`; `{stem}.rtc` on a clock cart (GB, GBC, N64) | | yes |
+| `vba_next`, `gpsp` | `{stem}.srm` (GBA) | | located only |
+| `mgba_standalone`, `vbam_standalone`, `sameboy_standalone`, `gearboy_standalone` | `{stem}.sav`: the RAM, the clock appended on a clock cart | | yes |
+| `bsnes` | `{stem}.srm`, `{stem}.rtc`, `{stem}.psr` | | located only |
+| `genesis_plus_gx` | Sega CD: `scd_U.brm`, `scd_E.brm` or `scd_J.brm` by the disc's region, and `{cart_size}_cart.brm` | `genesis_plus_gx_system_bram=per game`: `{stem}.brm`; `genesis_plus_gx_cart_bram=per game`: `{stem}_{cart_size}_cart.brm`; `genesis_plus_gx_region_detect` picks the region file | send the container; yes per game |
+| `mednafen_psx_hw`, `mednafen_psx` | `{stem}.srm` | `*_use_mednafen_memcard0_method=mednafen`: `{stem}.{left_index}.mcr`, and `{stem}.{right_index}.mcr` with `*_enable_memcard1=enabled`; `*_shared_memory_cards=enabled`: `mednafen_psx_libretro_shared.{index}.mcr` (shared). `*` is `beetle_psx_hw` or `beetle_psx` | yes; send the container when shared |
+| `pcsx_rearmed` | slot 1 `{stem}.srm`; slot 2 `pcsx-card2.mcd` (shared) | `pcsx_rearmed_memcard1=serial`: `{pcsx_serial}_1.mcd`, `=shared`: `pcsx-card1.mcd`; `pcsx_rearmed_memcard2=serial`: `{pcsx_serial}_2.mcd` | yes for slot 1; send the container when shared |
+| `vita_pops` | `PSP/SAVEDATA/{disc_id}/SCEVMC0.VMP`, `SCEVMC1.VMP` | | yes |
+| `swanstation` | `{stem}.srm` | `swanstation_MemoryCards_Card1Type=PerGame`: `{title_id}_1.mcd`, `=PerGameTitle`: `{stem}_1.mcd`, `=Shared`: `duckstation_shared_card_1.mcd`; `Card2Type` the same for slot 2 | yes; send the container when shared |
+| `duckstation` | `memcards/{stem}_1.mcd` (`Card1Type=PerGameTitle`) | `Card1Type=PerGame`: `memcards/{title_id}_1.mcd`, `=PerGameFileTitle`: `memcards/{stem}_1.mcd`, `=Shared`: `memcards/shared_card_1.mcd`; `Card2Type` the same for slot 2 | yes for `PerGame` and `PerGameFileTitle`; the default names the card after DuckStation's game database title, which sigil spells only for a game the database lacks; send the container when shared |
+| `armsx1` | `slot1.mcd`, `slot2.mcd` (shared) | | send the container |
+| `pcsx2` | `Mcd001.ps2`, `Mcd002.ps2` (shared) | `pcsx2_shared_memory_cards=disabled`: `{stem}.ps2` | send the container; yes per game |
+| `pcsx2_standalone` | `memcards/Mcd001.ps2`, `memcards/Mcd002.ps2` (shared, a file or folder card) | `Slot1_Filename`, `Slot2_Filename` name each slot's card | send the container |
+| `mednafen_saturn` | `{stem}.srm` | `beetle_saturn_save_method=mednafen`: `{stem}.bkr`, `{stem}.bcr`, `{stem}.smpc`; `beetle_saturn_shared_int=enabled`: `mednafen_saturn_libretro_shared.bkr`; `beetle_saturn_shared_ext=enabled`: `mednafen_saturn_libretro_shared.bcr` (shared) | yes; send the container when shared |
+| `kronos` | `kronos/saturn/{stem}.ram`, `kronos/saturn/{stem}-ext512K.ram` | `kronos_addon_cartridge` sizes the cart file (`-ext1M`, `-ext2M`, `-ext4M`); `kronos_use_beetle_saves=enabled`: `{stem}.bkr`, `{stem}.bcr` | yes |
+| `yabause` | `{stem}.srm` | | yes |
+| `yabasanshiro` | `yabasanshiro/backup.bin` (shared) | | send the container |
+| `dolphin`, `dolphin_standalone` | the game's `.gci` files in `User/GC/{gc_region}/Card A/` (`dolphin_standalone`: `GC/{gc_region}/Card A/`) | `SlotA=1`: `User/GC/MemoryCardA.{gc_region}.raw` (shared), `MemoryCardSize` naming smaller cards (`.59.raw` to `.1019.raw`) | yes; send the container for a raw card |
+| `flycast` | `vmu_save_A1.bin` and the other ports, shared, in the system folder's `dc/` | `reicast_per_content_vmus=VMU A1`: `{dc_vmu_id}.A1.bin`; `=All VMUs`: every port as `{dc_vmu_id}.{port}.bin` | send the container; yes per game |
+| `flycast_standalone` | `{dc_vmu_id}_vmu_save_A1.bin`; other ports `vmu_save_{port}.bin` (shared) | `PerGameVmu=no`: `vmu_save_A1.bin` (shared) | yes for A1; send the container when shared |
+| `mednafen_ngp`, `opera`, `pokemini`, `handy`, `melonds`, `fbneo`, `mame2003_plus`, `dosbox_pure`, `same_cdi`, `nestopia` | see each platform's page | | located only |
+| `mupen64plus_next`, `parallel_n64` | `{stem}.srm` | | yes |
+| `mupen64plus_standalone` | `*-{n64_md5_8}.eep`, `.sra`, `.fla`, `.mpk` | | one of the game's files |
+| `m64plus_fz` | `GameData/*{n64_md5_lower}/SramData/*.eep`, `.sra`, `.fla`, `.mpk` | | one of the game's files |
+| `project64` | `Save/*-{n64_md5_n64}/*.eep`, `.sra`, `.fla`, `*_Cont_<n>.mpk` | `Unique Game Dir=0`: `Save/{n64_header}.eep` and the rest | one of the game's files; yes with `Unique Game Dir=0` |
+| `eden`, `citron`, `sudachi`, `yuzu`, `lemon` | `nand/user/save/0000000000000000/{profile}/{save_id}/`; device saves under the all-zero user | | with `profile` (a device save needs none) |
+| `skyline`, `strato` | `switch/nand/user/save/0000000000000000/<fixed user>/{save_id}/`; device saves under the all-zero user | | yes |
+| `ryujinx`, `kenjinx` | `bis/user/save/<index id>/0/`, and new entries in `bis/system/save/8000000000000000/0/imkvdb.arc` and `lastPublishedId` for a game never run | | send the emulator's save index and `system/Profiles.json`; restore returns them updated |
+| `cemu` | `mlc01/usr/save/00050000/{save_id}/meta/`, `user/common/`, `user/{profile}/` | | with `profile` (a unit without an account save needs none) |
+| `azahar`, `citra`, `lime3ds` | `sdmc/Nintendo 3DS/<32 zeros>/<32 zeros>/title/{save_id}/data/`, and the title's `extdata/00000000/{extdata_id}/` | | yes |
+| `vita3k` | `ux0/user/{profile}/savedata/{save_id}/` | | with `profile` |
+| `rpcs3`, `aps3e`, `armsx3` | `dev_hdd0/home/{profile}/savedata/{save_id}*/` | | with `profile` |
+| `ppsspp`, `ppsspp_standalone`, `psp_console` | `PSP/SAVEDATA/{save_id}*/` | | yes |

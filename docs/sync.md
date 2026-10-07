@@ -22,6 +22,9 @@ and passes back. The calls and their fields are on each language's page
 | GB, GBC | the cart RAM; on a cart with a clock, a zip of `save.sram` and `clock.rtc` | [gb](platforms/gb.md#sync) |
 | N64 | a zip of the save types the game uses (`eeprom`, `pak1` to `pak4`, `sram`, `flash`), whichever emulator wrote them | [n64](platforms/n64.md#sync) |
 
+What restore writes for each layout, and which options change it, is in
+[restore targets](platforms/README.md#restore-targets).
+
 Every volume in a unit is raw, whatever form the emulator stores it in;
 restore writes each file back in the emulator's form (gzip, byte
 expansion), and a file the emulator hasn't created yet in the form and
