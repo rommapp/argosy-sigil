@@ -323,6 +323,115 @@ static size_t volume_names(const uint8_t *data, size_t len, const char *name) {
     return n;
 }
 
+/* `vol` with one data byte of the save named `name` flipped: a newer save. */
+static void flip_saturn_save(uint8_t *vol, size_t len, const char *name) {
+    sigil_card_listing *l = NULL;
+    sigil_io *io = mem_root_io(vol, len);
+    if (sigil_card_list(io, &l) == SIGIL_OK) {
+        for (size_t i = 0; i < l->entry_count; i++) {
+            if (strncmp(l->entries[i].name, name, strlen(name)) == 0) vol[(size_t)l->entries[i].first_block * 64 + 0x10] ^= 0x01;
+        }
+    }
+    sigil_card_listing_free(l);
+    sigil_io_close(io);
+}
+
+/* A Saturn volume holding `base` (a volume) with the saves of each BUP sample injected. */
+static uint8_t *volume_adding(const uint8_t *base, size_t base_len, const char *const *bup_ids, size_t n, size_t *len) {
+    sigil_saturn_volume v;
+    sigil_io *io = mem_root_io(base, base_len);
+    uint8_t *out = NULL;
+    bool ok = sigil_saturn_volume_load(io, &v) == SIGIL_OK;
+    sigil_io_close(io);
+    for (size_t i = 0; ok && i < n; i++) {
+        size_t bup_len = 0;
+        uint8_t *bup = sample(&g_saturn, "saturn", bup_ids[i], NULL, &bup_len);
+        ok = bup && sigil_saturn_inject(&v, bup, bup_len) == SIGIL_OK;
+        free(bup);
+    }
+    if (ok && sigil_saturn_volume_write(&v, &out, len) != SIGIL_OK) out = NULL;
+    if (ok || out) sigil_saturn_volume_free(&v);
+    return out;
+}
+
+static sigil_sync_result *collect_per_game(const uint8_t *vol, size_t len, const char *stem, const char *id) {
+    mem_root root = {0};
+    char path[256], content[256];
+    snprintf(path, sizeof(path), "%s.srm", stem);
+    snprintf(content, sizeof(content), "%s.cue", stem);
+    root_put(&root, path, vol, len);
+    game g;
+    make_game(&g, &root, "mednafen_saturn", "saturn", 0, content, id);
+    sigil_sync_result *r = NULL;
+    sigil_collect(&g.req, &r);
+    root_free(&root);
+    return r;
+}
+
+/* RomM's merge for a client without sigil, with a companion: the client
+ * sends its shared volume, the server collects it once with no state, then
+ * restores the game's unit with the companion's into it, unmanaged. Both
+ * saves come out new, and a third game's save stays as it was. */
+static void check_saturn_shared_server_merge(void) {
+    size_t own_len = 0;
+    uint8_t *own = sample(&g_saturn, "saturn", "rayman-bkr-bcr", "Rayman (USA) (R2)-internal.bkr", &own_len);
+    if (!own) { fail("saturn shared merge", "setup failed"); return; }
+    static const char *const OLD[] = { "three-dirty-dwarves-bup", "pandra-zwei-bup" };
+    size_t sent_len = 0, dwarves_len = 0;
+    uint8_t *sent = volume_adding(own, own_len, OLD, 2, &sent_len);
+    uint8_t *dwarves_vol = volume_with("three-dirty-dwarves-bup", NULL, &dwarves_len);
+    if (!sent || !dwarves_vol) { fail("saturn shared merge", "setup failed"); free(own); free(sent); free(dwarves_vol); return; }
+
+    flip_saturn_save(own, own_len, "RAYMAN");
+    flip_saturn_save(dwarves_vol, dwarves_len, "THREE_DIRTY");
+    sigil_sync_result *rayman = collect_per_game(own, own_len, "Rayman (USA) (R2)", "T-17701G");
+    sigil_sync_result *dwarves = collect_per_game(dwarves_vol, dwarves_len, "Three Dirty Dwarves (USA)", "T-30401H");
+
+    static const sigil_save_option SHARED[] = {
+        { "beetle_saturn_save_method", "mednafen" }, { "beetle_saturn_shared_int", "enabled" },
+    };
+    mem_root server = {0};
+    root_put(&server, "mednafen_saturn_libretro_shared.bkr", sent, sent_len);
+    game g;
+    make_game(&g, &server, "mednafen_saturn", "saturn", 0, "Rayman (USA) (R2).cue", "T-17701G");
+    g.req.save.options = SHARED;
+    g.req.save.option_count = 2;
+    g.req.mode = SIGIL_SYNC_UNMANAGED;
+    with_companion(&g, "T-30401H", NULL);
+    sigil_sync_result *seen = NULL, *w = NULL, *back = NULL;
+    int rc_seen = sigil_collect(&g.req, &seen);
+    with_companion(&g, "T-30401H", dwarves);
+    g.req.state = seen ? seen->state : NULL;
+    g.req.state_len = seen ? seen->state_len : 0;
+    g.req.overwrite_local = 1;
+    int rc = rayman && dwarves ? sigil_restore(&g.req, rayman->data, rayman->len, &w) : -1;
+    if (rc_seen != SIGIL_OK || rc != SIGIL_OK) {
+        char what[96];
+        snprintf(what, sizeof(what), "collect %d, restore %d (%s)", rc_seen, rc, w ? w->problem : "");
+        fail("saturn shared merge", what);
+    } else {
+        refresh(&g, &server);
+        with_companion(&g, "T-30401H", NULL);
+        g.req.state = w->state;
+        g.req.state_len = w->state_len;
+        mem_file *f = root_find(&server, "mednafen_saturn_libretro_shared.bkr");
+        if (sigil_collect(&g.req, &back) != SIGIL_OK || strcmp(back->identity_hash, rayman->identity_hash) != 0 ||
+            back->companion_count != 1 || strcmp(back->companions[0].identity_hash, dwarves->identity_hash) != 0) {
+            fail("saturn shared merge", "the game's or the companion's save isn't the new one");
+        }
+        if (!f || volume_names(f->data, f->len, "PANDRA_ZWEI") != 1) fail("saturn shared merge", "a third game's save went");
+    }
+    sigil_sync_result_free(back);
+    sigil_sync_result_free(w);
+    sigil_sync_result_free(seen);
+    sigil_sync_result_free(rayman);
+    sigil_sync_result_free(dwarves);
+    root_free(&server);
+    free(own);
+    free(sent);
+    free(dwarves_vol);
+}
+
 /* Saturn, no ids: the companion's save goes on the game's own per-game
  * volume, and collect still tells it apart by the owner restore recorded. */
 static void check_saturn(void) {
@@ -412,6 +521,7 @@ int main(void) {
 
     check_ps1();
     check_saturn();
+    check_saturn_shared_server_merge();
 
     corpus_free(&g_psx);
     corpus_free(&g_saturn);

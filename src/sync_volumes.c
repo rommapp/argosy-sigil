@@ -59,19 +59,36 @@ static int gather_volumes(const sigil_sync_ctx *x, volume_set *s, sigil_sync_res
 }
 
 /* The save-name table gives the game this save by one of its ids. */
-static bool in_name_table(const sigil_sync_ctx *x, const char *name) {
+/* The save-name table gives `name` to the game with `title_id` (or NULL) and `game_ids`. */
+static bool named_for(const sigil_sync_ctx *x, const char *name, const char *title_id, const char *const *game_ids,
+                      size_t count) {
     const char *ids[1 + 64];
     size_t n = 0;
-    if (x->req->save.result && x->req->save.result->title_id[0]) ids[n++] = x->req->save.result->title_id;
-    for (size_t i = 0; i < x->req->game_id_count && n < sizeof(ids) / sizeof(ids[0]); i++) ids[n++] = x->req->game_ids[i];
+    if (title_id && title_id[0]) ids[n++] = title_id;
+    for (size_t i = 0; i < count && n < sizeof(ids) / sizeof(ids[0]); i++) ids[n++] = game_ids[i];
     return n > 0 && sigil_save_names_match(sigil_save_name_table, sigil_save_name_table_count, x->kind->platform, name,
                                            ids, n);
+}
+
+static bool in_name_table(const sigil_sync_ctx *x, const char *name) {
+    const sigil_result *game = x->req->save.result;
+    return named_for(x, name, game ? game->title_id : NULL, x->req->game_ids, x->req->game_id_count);
+}
+
+/* The request companion the save-name table gives `name` to, or SIZE_MAX. */
+static size_t named_companion(const sigil_sync_ctx *x, const char *name) {
+    for (size_t c = 0; c < x->req->companion_count; c++) {
+        const sigil_sync_companion *k = &x->req->companions[c];
+        if (named_for(x, name, NULL, k->game_ids, k->game_id_count)) return c;
+    }
+    return SIZE_MAX;
 }
 
 /* Who a save on volume file `f` belongs to: the user's claim, then the owner
  * the state learned (on a per-game file only a companion's counts), then
  * the per-game file's game, then in managed mode the game a shared volume
- * was swapped in for, then the save-name table. */
+ * was swapped in for, then the save-name table, the game's ids before each
+ * companion's. */
 static int volume_owner(const sigil_sync_ctx *x, const volume_file *f, const char *name, char other[SYNC_KEY_MAX],
                         size_t *companion) {
     other[0] = '\0';
@@ -90,7 +107,12 @@ static int volume_owner(const sigil_sync_ctx *x, const volume_file *f, const cha
     if (f->target.per_game) return SYNC_OWN_GAME;
     const char *prepared = sigil_sync_state_get(&x->state, "prepared", f->key);
     if (x->req->mode == SIGIL_SYNC_MANAGED && prepared && strcmp(prepared, x->game) == 0) return SYNC_OWN_GAME;
-    return in_name_table(x, name) ? SYNC_OWN_GAME : SYNC_OWN_NONE;
+    if (in_name_table(x, name)) return SYNC_OWN_GAME;
+    size_t c = named_companion(x, name);
+    if (c == SIZE_MAX) return SYNC_OWN_NONE;
+    snprintf(other, SYNC_KEY_MAX, "%s", x->companion_keys[c]);
+    *companion = c;
+    return SYNC_OWN_COMPANION;
 }
 
 /* A corrupt save on `f` that may be the game's or a companion's: one the

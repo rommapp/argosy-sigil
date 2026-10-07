@@ -70,7 +70,8 @@ learned it belongs to, else, in managed mode, to the game the volume was
 last swapped in for, else to the game the save-name table gives it by one
 of the ids in `title_id` or `game_ids` (`src/save_names.c`; Saturn and
 Sega CD product codes as the disc header spells them, Dreamcast product
-numbers). The rest are unclaimed saves; see below.
+numbers), else to the companion the table gives it by one of that
+companion's `game_ids`. The rest are unclaimed saves; see below.
 
 ### Unclaimed saves
 
