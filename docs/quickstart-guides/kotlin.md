@@ -418,6 +418,8 @@ doesn't exist, which is not an error.
 ```kotlin
 Sigil.contentStem(contentPath: String): String        // Stem the save is named after.
 Sigil.layoutSubdirs(core: String): List<String>       // Subfolders the core writes into.
+Sigil.layouts(platform: String? = null): List<SigilLayout>   // Layout rows, their options and
+                                                             //   region option.
 Sigil.listSaveRoot(root: String, core: String,              // Below root too, where a layout with
     fileAccess: SigilFileAccess = PosixFileAccess): List<String>   //   profiles has its base.
 Sigil.saveBase(core: String, path: String): Pair<String, String>   // (base, profile) for a path.

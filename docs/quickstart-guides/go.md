@@ -410,6 +410,8 @@ type CardEntry struct {
 ```go
 sigil.ContentStem(contentPath string) string             // Stem the save is named after.
 sigil.LayoutSubdirs(core string) []string                // Subfolders the core writes into.
+sigil.Layouts(platform string) ([]Layout, error)         // Layout rows, their options and region
+                                                         //   option; "" for all.
 sigil.ListSaveRoot(root, core string) ([]string, error)  // Below root too, where a layout with
                                                          //   profiles has its base.
 sigil.SaveBase(core, path string) (base, profile string, err error)   // The base and profile for a path.

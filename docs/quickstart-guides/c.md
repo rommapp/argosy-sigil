@@ -511,6 +511,9 @@ typedef struct {
 ```c
 const char *sigil_content_stem(const char *content_path, char *out, size_t cap);   /* Stem the save is named after. */
 size_t sigil_save_layout_subdirs(const char *layout, const char **out, size_t cap); /* Subfolders the core writes into. */
+int sigil_layouts(const char *platform, sigil_layout_info **out, size_t *count);   /* Layout rows, their options and
+                                                                                     region option; NULL for all. */
+void sigil_layouts_free(sigil_layout_info *layouts);
 sigil_platform sigil_platform_from_slug(const char *slug);   /* SIGIL_PLATFORM_AUTO when unknown. */
 const char *sigil_platform_to_slug(sigil_platform p);
 int sigil_load_header_key_from_prod_keys(const char *path, uint8_t out[32]);

@@ -36,6 +36,8 @@ __all__ = [
     "SigilKeysIncompatibleError",
     "SigilNotFoundError",
     "SigilOOMError",
+    "SigilLayout",
+    "SigilLayoutOption",
     "SigilProfile",
     "SigilResult",
     "SigilSaveAlternate",
@@ -47,6 +49,7 @@ __all__ = [
     "extract",
     "hash_saves",
     "layout_subdirs",
+    "layouts",
     "list_card",
     "list_profiles",
     "list_save_root",
@@ -317,6 +320,32 @@ class SigilProfile:
 
 
 @dataclass(frozen=True)
+class SigilLayoutOption:
+    """A core option a layout reads. `values` is empty for a free-form value. `default` is the value
+    an absent option counts as, "" when the layout's files need it set."""
+
+    key: str
+    values: tuple[str, ...]
+    default: str
+
+
+@dataclass(frozen=True)
+class SigilLayout:
+    """One layout row. `id` is what collect and restore take as `core`; `platform` is "" for a row
+    that applies to any platform. `region_option` names the option that picks a shared file by the
+    disc's region, or "". `profiles` is True when an account save needs a user profile;
+    `needs_existing` when restore can name a new file only after one of the game's files already
+    there, or the emulator's save index."""
+
+    id: str
+    platform: str
+    options: tuple[SigilLayoutOption, ...]
+    region_option: str
+    profiles: bool
+    needs_existing: bool
+
+
+@dataclass(frozen=True)
 class SigilSaveAlternate:
     """A file under the save root the layout would take with other option values: a save kept under
     another mode or by an older build of the core. Passing `options` takes it."""
@@ -527,6 +556,30 @@ def layout_subdirs(layout: str) -> list[str]:
     out = ffi.new("const char *[]", _SUBDIR_CAP)
     n = lib.sigil_save_layout_subdirs(layout.encode("utf-8"), out, _SUBDIR_CAP)
     return [ffi.string(out[i]).decode("utf-8") for i in range(n)]
+
+
+def layouts(platform: str | None = None) -> tuple[SigilLayout, ...]:
+    """The layout rows for `platform` (a slug, aliases accepted), or every row: the libretro default
+    row first, then each row limited to that platform and each row that applies to any."""
+    out = ffi.new("sigil_layout_info **")
+    count = ffi.new("size_t *")
+    rc = lib.sigil_layouts(platform.encode("utf-8") if platform else ffi.NULL, out, count)
+    if rc != lib.SIGIL_OK:
+        _raise_error(rc)
+    try:
+        return tuple(_layout(out[0][i]) for i in range(count[0]))
+    finally:
+        lib.sigil_layouts_free(out[0])
+
+
+def _layout(info) -> SigilLayout:
+    options = tuple(
+        SigilLayoutOption(key=_text(o.key), values=tuple(_text(o.values[j]) for j in range(o.value_count)),
+                          default=_text(o.default_value))
+        for o in (info.options[i] for i in range(info.option_count)))
+    return SigilLayout(id=_text(info.id), platform=_text(info.platform), options=options,
+                       region_option=_text(info.region_option), profiles=bool(info.profiles),
+                       needs_existing=bool(info.needs_existing))
 
 
 def save_base(layout: str, path: str | os.PathLike[str]) -> tuple[str, str]:

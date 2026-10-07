@@ -382,6 +382,8 @@ SigilCardEntry(
 ```python
 sigil.content_stem(content_path: str) -> str                  # Stem the save is named after.
 sigil.layout_subdirs(core: str) -> list[str]                   # Subfolders the core writes into.
+sigil.layouts(platform: str | None = None) -> tuple[SigilLayout, ...]   # Layout rows, their options
+                                                                        #   and region option.
 sigil.list_save_root(root: str | PathLike, core: str) -> list[str]   # Below root too, where a
                                                                      #   layout with profiles has its base.
 sigil.save_base(core: str, path: str | PathLike) -> tuple[str, str]  # (base, profile) for a path.

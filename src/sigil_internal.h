@@ -324,6 +324,20 @@ size_t sigil_save_shared_paths(const sigil_save_request *req, char (*out)[SIGIL_
 /** The request's value for option `key`, or NULL when it gives none. */
 const char *sigil_save_option_value(const sigil_save_request *req, const char *key);
 
+/**
+ * The core option template variable `var` (`len` bytes, without braces)
+ * reads on `layout`, written to `key`, and the value it takes when the
+ * request gives none in `*fallback`; NULL for a variable no option sets.
+ */
+const char *sigil_save_variable_option(const char *layout, const char *var, size_t len, char key[64],
+                                       const char **fallback);
+
+/** genesis_plus_gx_cart_size's values, at most `cap`; returns how many. */
+size_t sigil_gpgx_cart_values(const char **out, size_t cap);
+
+/** A layout region option's values, the default first, at most `cap`; returns how many. */
+size_t sigil_region_option_values(const char **out, size_t cap);
+
 /** `path` is in the request's listing. */
 bool sigil_save_listed(const sigil_save_request *req, const char *path);
 

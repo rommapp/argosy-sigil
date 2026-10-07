@@ -571,6 +571,18 @@ def test_layout_subdirs_names_the_core_folders():
     assert sigil.layout_subdirs("gambatte") == []
 
 
+def test_layouts_report_options_and_region():
+    rows = sigil.layouts("segacd")
+    assert rows[0].id == "libretro"
+    assert all(r.platform in ("segacd", "") for r in rows)
+    gpgx = next(r for r in rows if r.id == "genesis_plus_gx")
+    assert gpgx.region_option == "genesis_plus_gx_region_detect"
+    region = next(o for o in gpgx.options if o.key == gpgx.region_option)
+    assert region.default == "auto" and "pal" in region.values
+    ryujinx = next(r for r in sigil.layouts() if r.id == "ryujinx")
+    assert ryujinx.platform == "switch" and ryujinx.profiles and ryujinx.needs_existing
+
+
 GB = sigil.SigilResult.persisted("gb", "", "", 0)
 GB_RTC = sigil.SigilResult.persisted("gbc", "", "", sigil.FEATURE_RTC)
 

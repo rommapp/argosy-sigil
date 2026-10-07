@@ -106,9 +106,56 @@ static const gpgx_cart GPGX_CARTS[] = {
     { "4meg", "4Mbit", 512u * 1024u },
 };
 
+/* The core options template variables read, with the value each takes when
+ * the request gives none. Beetle PSX's card indexes take the build's prefix:
+ * beetle_psx_ on the software core, beetle_psx_hw_ otherwise. */
+typedef struct {
+    const char *var;
+    const char *key;
+    const char *fallback;
+    bool        beetle_prefix;
+} variable_option;
+
+static const variable_option VARIABLE_OPTIONS[] = {
+    { "cart_size", "genesis_plus_gx_cart_size", "4meg", false },
+    { "nvram_version", "opera_nvram_version", "0", false },
+    { "pcsx2_slot1", "Slot1_Filename", "Mcd001.ps2", false },
+    { "pcsx2_slot2", "Slot2_Filename", "Mcd002.ps2", false },
+    { "left_index", "memcard_left_index", "0", true },
+    { "right_index", "memcard_right_index", "1", true },
+};
+
+const char *sigil_save_variable_option(const char *layout, const char *var, size_t len, char key[64],
+                                       const char **fallback) {
+    for (size_t i = 0; i < sizeof(VARIABLE_OPTIONS) / sizeof(VARIABLE_OPTIONS[0]); i++) {
+        const variable_option *o = &VARIABLE_OPTIONS[i];
+        if (strlen(o->var) != len || strncmp(o->var, var, len) != 0) continue;
+        bool software = layout && strcmp(layout, "mednafen_psx") == 0;
+        snprintf(key, 64, "%s%s", o->beetle_prefix ? (software ? "beetle_psx_" : "beetle_psx_hw_") : "", o->key);
+        *fallback = o->fallback;
+        return key;
+    }
+    return NULL;
+}
+
+/* The request's value for the option variable `var` (`len` bytes) reads, or
+ * its fallback; NULL for a variable no option sets. */
+static const char *variable_option_value(const sigil_save_request *req, const char *var, size_t len) {
+    char key[64];
+    const char *fallback = NULL;
+    if (!sigil_save_variable_option(req->layout, var, len, key, &fallback)) return NULL;
+    const char *v = sigil_save_option_value(req, key);
+    return v && *v ? v : fallback;
+}
+
+size_t sigil_gpgx_cart_values(const char **out, size_t cap) {
+    size_t n = 0;
+    for (size_t i = 0; i < sizeof(GPGX_CARTS) / sizeof(GPGX_CARTS[0]) && n < cap; i++) out[n++] = GPGX_CARTS[i].value;
+    return n;
+}
+
 static const gpgx_cart *gpgx_cart_for(const sigil_save_request *req) {
-    const char *value = sigil_save_option_value(req, "genesis_plus_gx_cart_size");
-    if (!value) value = "4meg";
+    const char *value = variable_option_value(req, "cart_size", 9);
     for (size_t i = 0; i < sizeof(GPGX_CARTS) / sizeof(GPGX_CARTS[0]); i++) {
         if (strcmp(GPGX_CARTS[i].value, value) == 0) return &GPGX_CARTS[i];
     }
@@ -229,16 +276,6 @@ static void expand_ctx_init(expand_ctx *ctx, const sigil_save_request *req) {
     n64_md5_forms(req, ctx->n64_md5_8, ctx->n64_md5_lower, sizeof(ctx->n64_md5_lower));
 }
 
-/* A Beetle PSX card index, read under the option prefix of the build the row
- * names: beetle_psx_ for the software core, beetle_psx_hw_ otherwise. */
-static const char *beetle_psx_index(const sigil_save_request *req, const char *suffix, const char *fallback) {
-    char key[64];
-    bool software = req->layout && strcmp(req->layout, "mednafen_psx") == 0;
-    snprintf(key, sizeof(key), "%s%s", software ? "beetle_psx_" : "beetle_psx_hw_", suffix);
-    const char *v = sigil_save_option_value(req, key);
-    return v ? v : fallback;
-}
-
 static const char *variable_value(const expand_ctx *ctx, const char *name, size_t len) {
     const sigil_save_request *req = ctx->req;
     if (len == 4 && strncmp(name, "stem", 4) == 0) return ctx->stem;
@@ -257,21 +294,7 @@ static const char *variable_value(const expand_ctx *ctx, const char *name, size_
         const gpgx_cart *cart = gpgx_cart_for(req);
         return cart ? cart->name : NULL;
     }
-    if (len == 13 && strncmp(name, "nvram_version", 13) == 0) {
-        const char *v = sigil_save_option_value(req, "opera_nvram_version");
-        return v ? v : "0";
-    }
-    if (len == 11 && strncmp(name, "pcsx2_slot1", 11) == 0) {
-        const char *v = sigil_save_option_value(req, "Slot1_Filename");
-        return v && *v ? v : "Mcd001.ps2";
-    }
-    if (len == 11 && strncmp(name, "pcsx2_slot2", 11) == 0) {
-        const char *v = sigil_save_option_value(req, "Slot2_Filename");
-        return v && *v ? v : "Mcd002.ps2";
-    }
-    if (len == 10 && strncmp(name, "left_index", 10) == 0) return beetle_psx_index(req, "memcard_left_index", "0");
-    if (len == 11 && strncmp(name, "right_index", 11) == 0) return beetle_psx_index(req, "memcard_right_index", "1");
-    return NULL;
+    return variable_option_value(req, name, len);
 }
 
 static bool expand_template(const expand_ctx *ctx, const char *template_, char *out, size_t cap) {
@@ -759,11 +782,22 @@ size_t sigil_save_shared_paths(const sigil_save_request *req, char (*out)[SIGIL_
     return n;
 }
 
+/* The values of a layout's region option, the first its default, each with
+ * the region it forces (0: the disc's). */
+static const struct { const char *value; char region; } REGION_VALUES[] = {
+    { "auto", 0 }, { "ntsc-u", 'U' }, { "pal", 'E' }, { "ntsc-j", 'J' },
+};
+
+size_t sigil_region_option_values(const char **out, size_t cap) {
+    size_t n = 0;
+    for (size_t i = 0; i < sizeof(REGION_VALUES) / sizeof(REGION_VALUES[0]) && n < cap; i++) out[n++] = REGION_VALUES[i].value;
+    return n;
+}
+
 static char region_from_option(const char *value) {
-    if (!value) return 0;
-    if (strcmp(value, "ntsc-u") == 0) return 'U';
-    if (strcmp(value, "pal") == 0) return 'E';
-    if (strcmp(value, "ntsc-j") == 0) return 'J';
+    for (size_t i = 0; value && i < sizeof(REGION_VALUES) / sizeof(REGION_VALUES[0]); i++) {
+        if (strcmp(value, REGION_VALUES[i].value) == 0) return REGION_VALUES[i].region;
+    }
     return 0;
 }
 

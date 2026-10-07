@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "save_layout.h"
 #include "card_saturn.h"
+#include <stdlib.h>
 
 #define M(t, r)                 { t, SIGIL_SAVE_ROLE_##r, NULL, NULL, false, SIGIL_DEVICE_NONE }
 #define M_OPT(t, r, k, v, d)    { t, SIGIL_SAVE_ROLE_##r, k, v, d, SIGIL_DEVICE_NONE }
@@ -659,6 +660,120 @@ size_t sigil_layout_rows(const char *layout, const sigil_layout **out, size_t ca
         if (strcmp(LAYOUTS[i].layout, layout) == 0) out[n++] = &LAYOUTS[i];
     }
     return n;
+}
+
+/* ---- catalog -------------------------------------------------------------------- */
+
+static sigil_layout_option *option_for(sigil_layout_info *info, const char *key) {
+    for (size_t i = 0; i < info->option_count; i++) {
+        if (strcmp(info->options[i].key, key) == 0) return &info->options[i];
+    }
+    if (info->option_count == SIGIL_LAYOUT_OPTIONS) return NULL;
+    sigil_layout_option *o = &info->options[info->option_count++];
+    snprintf(o->key, sizeof(o->key), "%s", key);
+    return o;
+}
+
+static void add_value(sigil_layout_option *o, const char *value) {
+    for (size_t i = 0; i < o->value_count; i++) {
+        if (strcmp(o->values[i], value) == 0) return;
+    }
+    if (o->value_count < SIGIL_LAYOUT_OPTION_VALUES) snprintf(o->values[o->value_count++], sizeof(o->values[0]), "%s", value);
+}
+
+/* A file the row names under `key` = `value`; `holds_by_default` when an absent option counts as that value. */
+static void note_option(sigil_layout_info *info, const char *key, const char *value, bool holds_by_default) {
+    sigil_layout_option *o = key && value ? option_for(info, key) : NULL;
+    if (!o) return;
+    add_value(o, value);
+    if (holds_by_default && !o->default_value[0]) snprintf(o->default_value, sizeof(o->default_value), "%s", value);
+}
+
+/* The options `template_`'s variables read. */
+static void note_variables(sigil_layout_info *info, const char *template_) {
+    for (const char *open = strchr(template_, '{'); open; open = strchr(open + 1, '{')) {
+        const char *close = strchr(open, '}');
+        if (!close) return;
+        char key[64];
+        const char *fallback = NULL;
+        size_t len = (size_t)(close - open - 1);
+        if (!sigil_save_variable_option(info->id, open + 1, len, key, &fallback)) continue;
+        sigil_layout_option *o = option_for(info, key);
+        if (!o) continue;
+        if (!o->default_value[0]) snprintf(o->default_value, sizeof(o->default_value), "%s", fallback);
+        if (len == 9 && strncmp(open + 1, "cart_size", 9) == 0) {
+            const char *values[SIGIL_LAYOUT_OPTION_VALUES];
+            size_t n = sigil_gpgx_cart_values(values, SIGIL_LAYOUT_OPTION_VALUES);
+            for (size_t i = 0; i < n; i++) add_value(o, values[i]);
+        }
+    }
+}
+
+/* A template that applies under default options and names files only partly (`*`). */
+static bool partly_named_by_default(const char *template_, const char *key, bool holds, const char *key2, bool holds2) {
+    return strchr(template_, '*') && (!key || holds) && (!key2 || holds2);
+}
+
+static void describe(const sigil_layout *row, sigil_layout_info *info) {
+    memset(info, 0, sizeof(*info));
+    snprintf(info->id, sizeof(info->id), "%s", row->layout);
+    snprintf(info->platform, sizeof(info->platform), "%s", row->platform ? row->platform : "");
+    for (size_t i = 0; i < row->member_count; i++) {
+        const sigil_layout_member *m = &row->members[i];
+        note_option(info, m->opt_key, m->opt_value, m->opt_default);
+        note_option(info, m->opt2_key, m->opt2_value, m->opt2_default);
+        note_variables(info, m->template_);
+        if (partly_named_by_default(m->template_, m->opt_key, m->opt_default, m->opt2_key, m->opt2_default)) {
+            info->needs_existing = 1;
+        }
+    }
+    for (size_t i = 0; i < row->shared_count; i++) {
+        const sigil_layout_shared *s = &row->shared[i];
+        note_option(info, s->opt_key, s->opt_value, s->opt_default);
+        note_option(info, s->opt2_key, s->opt2_value, s->opt2_default);
+        note_variables(info, s->template_);
+    }
+    if (row->region_option) {
+        snprintf(info->region_option, sizeof(info->region_option), "%s", row->region_option);
+        const char *values[SIGIL_LAYOUT_OPTION_VALUES];
+        size_t n = sigil_region_option_values(values, SIGIL_LAYOUT_OPTION_VALUES);
+        for (size_t i = 0; i < n; i++) note_option(info, row->region_option, values[i], i == 0);
+    }
+    const sigil_layout_profiles *p = row->profiles;
+    for (size_t i = 0; p && i < p->area_count; i++) {
+        if (p->areas[i].area == SIGIL_SAVE_AREA_ACCOUNT && !p->fixed_profile) info->profiles = 1;
+        note_variables(info, p->areas[i].template_);
+    }
+    if (p && p->index) {
+        info->profiles = 1;
+        info->needs_existing = 1;
+    }
+}
+
+static bool row_for_platform(const sigil_layout *row, const char *platform) {
+    return !platform || !row->platform || strcmp(row->platform, sigil_layout_platform(platform)) == 0;
+}
+
+int sigil_layouts(const char *platform, sigil_layout_info **out, size_t *count) {
+    if (!out || !count) return SIGIL_ERR_INVALID_ARG;
+    *out = NULL;
+    *count = 0;
+    size_t n = 1;
+    for (size_t i = 0; i < COUNT(LAYOUTS); i++) n += row_for_platform(&LAYOUTS[i], platform);
+    sigil_layout_info *info = (sigil_layout_info *)calloc(n, sizeof(*info));
+    if (!info) return SIGIL_ERR_OOM;
+    describe(&LIBRETRO_DEFAULT, &info[0]);
+    size_t k = 1;
+    for (size_t i = 0; i < COUNT(LAYOUTS); i++) {
+        if (row_for_platform(&LAYOUTS[i], platform)) describe(&LAYOUTS[i], &info[k++]);
+    }
+    *out = info;
+    *count = k;
+    return SIGIL_OK;
+}
+
+void sigil_layouts_free(sigil_layout_info *layouts) {
+    free(layouts);
 }
 
 size_t sigil_save_layout_subdirs(const char *layout, const char **out, size_t cap) {

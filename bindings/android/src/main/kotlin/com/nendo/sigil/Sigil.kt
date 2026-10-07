@@ -181,6 +181,28 @@ data class SigilSaveMember(
 data class SigilProfile(val id: String, val name: String)
 
 /**
+ * A core option a layout reads. [values] is empty for a free-form value. [default] is the value an
+ * absent option counts as, "" when the layout's files need it set.
+ */
+data class SigilLayoutOption(val key: String, val values: List<String>, val default: String)
+
+/**
+ * One layout row. [id] is what collect and restore take as `core`; [platform] is "" for a row that
+ * applies to any platform. [regionOption] names the option that picks a shared file by the disc's
+ * region, or "". [profiles] is true when an account save needs a user profile; [needsExisting] when
+ * restore can name a new file only after one of the game's files already there, or the emulator's
+ * save index.
+ */
+data class SigilLayout(
+    val id: String,
+    val platform: String,
+    val options: List<SigilLayoutOption>,
+    val regionOption: String,
+    val profiles: Boolean,
+    val needsExisting: Boolean,
+)
+
+/**
  * A file under the save root the layout would take with other option values: a save kept under
  * another mode or by an older build of the core. Passing [options] takes it. [shared] marks a
  * file every game shares, as in [SigilSaveUnit.unkeyed].
@@ -455,6 +477,7 @@ object Sigil {
         fileAccess: SigilFileAccess
     ): SigilSyncResult
     @JvmStatic private external fun nativeLayoutSubdirs(layout: String): Array<String>
+    @JvmStatic private external fun nativeLayouts(platform: String?): List<SigilLayout>
     @JvmStatic private external fun nativeSaveBase(layout: String, path: String): Array<String>
     @JvmStatic private external fun nativeLayoutTop(layout: String): String?
     @JvmStatic private external fun nativeListProfiles(
@@ -706,6 +729,13 @@ object Sigil {
 
     /** Subfolders under the save root a layout writes into, so the caller knows what to list. */
     fun layoutSubdirs(layout: String): List<String> = nativeLayoutSubdirs(layout).toList()
+
+    /**
+     * The layout rows for [platform] (a slug, aliases accepted), or every row when it is null: the
+     * libretro default row first, then each row limited to that platform and each row that applies
+     * to any.
+     */
+    fun layouts(platform: String? = null): List<SigilLayout> = nativeLayouts(platform)
 
     /**
      * Root-relative paths of the files directly in [root] plus those under the layout's

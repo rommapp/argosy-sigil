@@ -245,6 +245,29 @@ int    sigil_save_base(const char *layout, const char *path, char *base, size_t 
 const char *sigil_save_layout_top(const char *layout);
 int    sigil_save_profiles(const sigil_save_request *req, sigil_save_profile **out, size_t *count);
 void   sigil_save_profiles_free(sigil_save_profile *profiles);
+
+#define SIGIL_LAYOUT_OPTION_VALUES ...
+#define SIGIL_LAYOUT_OPTIONS ...
+
+typedef struct {
+    char   key[64];
+    char   values[...][32];
+    size_t value_count;
+    char   default_value[32];
+} sigil_layout_option;
+
+typedef struct {
+    char   id[64];
+    char   platform[16];
+    sigil_layout_option options[...];
+    size_t option_count;
+    char   region_option[64];
+    int    profiles;
+    int    needs_existing;
+} sigil_layout_info;
+
+int  sigil_layouts(const char *platform, sigil_layout_info **out, size_t *count);
+void sigil_layouts_free(sigil_layout_info *layouts);
 const char *sigil_content_stem(const char *content_path, char *out, size_t cap);
 
 #define SIGIL_CARD_LISTING_V1 ...

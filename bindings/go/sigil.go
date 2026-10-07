@@ -596,6 +596,66 @@ func LayoutSubdirs(layout string) []string {
 	return subdirs
 }
 
+// LayoutOption is a core option a layout reads. Values is empty for a
+// free-form value. Default is the value an absent option counts as, "" when
+// the layout's files need it set.
+type LayoutOption struct {
+	Key     string
+	Values  []string
+	Default string
+}
+
+// Layout is one layout row. ID is what Collect and Restore take as core;
+// Platform is "" for a row that applies to any platform. RegionOption names
+// the option that picks a shared file by the disc's region, or "". Profiles
+// is true when an account save needs a user profile; NeedsExisting when
+// Restore can name a new file only after one of the game's files already
+// there, or the emulator's save index.
+type Layout struct {
+	ID            string
+	Platform      string
+	Options       []LayoutOption
+	RegionOption  string
+	Profiles      bool
+	NeedsExisting bool
+}
+
+// Layouts returns the layout rows for platform (a slug, aliases accepted),
+// or every row when it is "": the libretro default row first, then each row
+// limited to that platform and each row that applies to any.
+func Layouts(platform string) ([]Layout, error) {
+	var cplatform *C.char
+	if platform != "" {
+		cplatform = C.CString(platform)
+		defer C.free(unsafe.Pointer(cplatform))
+	}
+	var cinfo *C.sigil_layout_info
+	var count C.size_t
+	if err := errFromCode(C.sigil_layouts(cplatform, &cinfo, &count)); err != nil {
+		return nil, err
+	}
+	defer C.sigil_layouts_free(cinfo)
+	out := make([]Layout, 0, int(count))
+	for _, info := range unsafe.Slice(cinfo, int(count)) {
+		layout := Layout{
+			ID:            C.GoString(&info.id[0]),
+			Platform:      C.GoString(&info.platform[0]),
+			RegionOption:  C.GoString(&info.region_option[0]),
+			Profiles:      info.profiles != 0,
+			NeedsExisting: info.needs_existing != 0,
+		}
+		for _, o := range info.options[:info.option_count] {
+			option := LayoutOption{Key: C.GoString(&o.key[0]), Default: C.GoString(&o.default_value[0])}
+			for _, v := range o.values[:o.value_count] {
+				option.Values = append(option.Values, C.GoString(&v[0]))
+			}
+			layout.Options = append(layout.Options, option)
+		}
+		out = append(out, layout)
+	}
+	return out, nil
+}
+
 const (
 	subdirListDepth = 12
 	baseSearchDepth = 5

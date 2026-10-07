@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -679,6 +680,36 @@ func TestLayoutSubdirsNamesTheCoreFolders(t *testing.T) {
 	}
 	if got := LayoutSubdirs("gambatte"); len(got) != 0 {
 		t.Errorf("LayoutSubdirs(gambatte) = %v", got)
+	}
+}
+
+func TestLayoutsReportOptionsAndRegion(t *testing.T) {
+	rows, err := Layouts("segacd")
+	if err != nil || len(rows) == 0 || rows[0].ID != "libretro" {
+		t.Fatalf("Layouts(segacd) = %v, %v", rows, err)
+	}
+	var gpgx *Layout
+	for i := range rows {
+		if rows[i].Platform != "segacd" && rows[i].Platform != "" {
+			t.Errorf("%s is for %s", rows[i].ID, rows[i].Platform)
+		}
+		if rows[i].ID == "genesis_plus_gx" {
+			gpgx = &rows[i]
+		}
+	}
+	if gpgx == nil || gpgx.RegionOption != "genesis_plus_gx_region_detect" {
+		t.Fatalf("genesis_plus_gx = %+v", gpgx)
+	}
+	for _, o := range gpgx.Options {
+		if o.Key == gpgx.RegionOption && (o.Default != "auto" || !slices.Contains(o.Values, "pal")) {
+			t.Errorf("region option = %+v", o)
+		}
+	}
+	all, _ := Layouts("")
+	for _, r := range all {
+		if r.ID == "ryujinx" && (r.Platform != "switch" || !r.Profiles || !r.NeedsExisting) {
+			t.Errorf("ryujinx = %+v", r)
+		}
 	}
 }
 

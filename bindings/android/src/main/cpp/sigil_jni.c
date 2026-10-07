@@ -1169,6 +1169,94 @@ Java_com_nendo_sigil_Sigil_nativeListProfiles(JNIEnv *env, jclass clazz, jstring
     return out;
 }
 
+/* An ArrayList of an option's values, or NULL with an exception pending. */
+static jobject value_list(JNIEnv *env, const char (*items)[32], size_t count) {
+    jobject list = (*env)->NewObject(env, g_list_class, g_list_ctor);
+    for (size_t i = 0; list && i < count; i++) {
+        jstring s = jni_string(env, items[i]);
+        if (s) (*env)->CallBooleanMethod(env, list, g_list_add, s);
+        (*env)->DeleteLocalRef(env, s);
+        if (!s || (*env)->ExceptionCheck(env)) return NULL;
+    }
+    return list;
+}
+
+static jobject layout_option(JNIEnv *env, jclass cls, jmethodID ctor, const sigil_layout_option *o) {
+    jstring jkey = jni_string(env, o->key);
+    jobject jvalues = value_list(env, o->values, o->value_count);
+    jstring jdefault = jni_string(env, o->default_value);
+    jobject out = jkey && jvalues && jdefault ? (*env)->NewObject(env, cls, ctor, jkey, jvalues, jdefault) : NULL;
+    (*env)->DeleteLocalRef(env, jkey);
+    (*env)->DeleteLocalRef(env, jvalues);
+    (*env)->DeleteLocalRef(env, jdefault);
+    return out;
+}
+
+static jobject layout_object(JNIEnv *env, jclass cls, jmethodID ctor, jclass option_cls, jmethodID option_ctor,
+                             const sigil_layout_info *info) {
+    jobject joptions = (*env)->NewObject(env, g_list_class, g_list_ctor);
+    for (size_t i = 0; joptions && i < info->option_count; i++) {
+        jobject o = layout_option(env, option_cls, option_ctor, &info->options[i]);
+        if (o) (*env)->CallBooleanMethod(env, joptions, g_list_add, o);
+        (*env)->DeleteLocalRef(env, o);
+        if (!o || (*env)->ExceptionCheck(env)) {
+            (*env)->DeleteLocalRef(env, joptions);
+            return NULL;
+        }
+    }
+    jstring jid = jni_string(env, info->id);
+    jstring jplatform = jni_string(env, info->platform);
+    jstring jregion = jni_string(env, info->region_option);
+    jobject out = joptions && jid && jplatform && jregion
+        ? (*env)->NewObject(env, cls, ctor, jid, jplatform, joptions, jregion, (jboolean)(info->profiles != 0),
+                            (jboolean)(info->needs_existing != 0))
+        : NULL;
+    (*env)->DeleteLocalRef(env, joptions);
+    (*env)->DeleteLocalRef(env, jid);
+    (*env)->DeleteLocalRef(env, jplatform);
+    (*env)->DeleteLocalRef(env, jregion);
+    return out;
+}
+
+JNIEXPORT jobject JNICALL
+Java_com_nendo_sigil_Sigil_nativeLayouts(JNIEnv *env, jclass clazz, jstring jplatform) {
+    (void)clazz;
+    load_profile_classes(env);
+    jclass cls = find_class(env, "com/nendo/sigil/SigilLayout");
+    jclass option_cls = find_class(env, "com/nendo/sigil/SigilLayoutOption");
+    /* SigilLayout(id, platform, options, regionOption, profiles, needsExisting) */
+    jmethodID ctor = cls ? find_method(env, cls, "<init>",
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;ZZ)V") : NULL;
+    /* SigilLayoutOption(key, values, default) */
+    jmethodID option_ctor = option_cls ? find_method(env, option_cls, "<init>",
+        "(Ljava/lang/String;Ljava/util/List;Ljava/lang/String;)V") : NULL;
+    if (!profile_classes_ready() || !ctor || !option_ctor) {
+        throw_binding_broken(env, "SigilLayout");
+        return NULL;
+    }
+    const char *platform = jplatform ? jni_utf8(env, jplatform) : NULL;
+    sigil_layout_info *info = NULL;
+    size_t count = 0;
+    int rc = sigil_layouts(platform, &info, &count);
+    jni_free(platform);
+    if (rc != SIGIL_OK) {
+        throw_sigil(env, rc);
+        return NULL;
+    }
+    jobject list = (*env)->NewObject(env, g_list_class, g_list_ctor);
+    for (size_t i = 0; list && i < count; i++) {
+        jobject layout = layout_object(env, cls, ctor, option_cls, option_ctor, &info[i]);
+        if (layout) (*env)->CallBooleanMethod(env, list, g_list_add, layout);
+        (*env)->DeleteLocalRef(env, layout);
+        if (!layout || (*env)->ExceptionCheck(env)) {
+            (*env)->DeleteLocalRef(env, list);
+            list = NULL;
+        }
+    }
+    sigil_layouts_free(info);
+    return list;
+}
+
 JNIEXPORT jstring JNICALL
 Java_com_nendo_sigil_Sigil_nativeLayoutTop(JNIEnv *env, jclass clazz, jstring jlayout) {
     (void)clazz;

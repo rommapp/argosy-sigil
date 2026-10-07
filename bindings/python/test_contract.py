@@ -61,6 +61,7 @@ _API_SURFACE = {
     "locate saves": ("fun locateSaves(", "def locate_saves(", "func LocateSaves("),
     "hash saves": ("fun hashSaves(", "def hash_saves(", "func HashSaves("),
     "layout subdirs": ("fun layoutSubdirs(", "def layout_subdirs(", "func LayoutSubdirs("),
+    "layouts": ("fun layouts(", "def layouts(", "func Layouts("),
     "content stem": ("fun contentStem(", "def content_stem(", "func ContentStem("),
     "list save root": ("fun listSaveRoot(", "def list_save_root(", "func ListSaveRoot("),
     "list card": ("fun listCard(", "def list_card(", "func ListCard("),

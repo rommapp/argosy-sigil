@@ -402,6 +402,43 @@ SIGIL_API const char *sigil_save_layout_top(const char *layout);
 SIGIL_API int  sigil_save_profiles(const sigil_save_request *req, sigil_save_profile **out, size_t *count);
 SIGIL_API void sigil_save_profiles_free(sigil_save_profile *profiles);
 
+/* ---- Layout catalog (docs/platforms/README.md, "Layouts", "Restore targets") ---- */
+
+#define SIGIL_LAYOUT_OPTION_VALUES 8
+#define SIGIL_LAYOUT_OPTIONS       16
+
+/* An option the files a layout writes depend on, under the key the emulator
+ * uses: a core option, or a setting of a standalone emulator. */
+typedef struct {
+    char   key[64];
+    char   values[SIGIL_LAYOUT_OPTION_VALUES][32]; /* the values the layout's files depend on; none for a
+                                                       free-form value, such as a card's file name */
+    size_t value_count;
+    char   default_value[32];                       /* the value an absent option counts as; "" when the
+                                                       layout's files need it set */
+} sigil_layout_option;
+
+/* One layout row, as the layout table holds it. */
+typedef struct {
+    char   id[64];                   /* the layout id: `layout` in C, `core` in the bindings */
+    char   platform[16];             /* the platform slug the row is limited to; "" for a row that applies
+                                        to any platform without one of its own */
+    sigil_layout_option options[SIGIL_LAYOUT_OPTIONS];
+    size_t option_count;
+    char   region_option[64];        /* the option that picks a shared file by the disc's region, or "" */
+    int    profiles;                 /* 1 when an account save needs a user profile */
+    int    needs_existing;           /* 1 when restore can name a new file only after one of the game's
+                                        files already there (names from a database sigil lacks), or the
+                                        emulator's save index */
+} sigil_layout_info;
+
+/* The layout rows for `platform` (a slug, aliases accepted), or every row
+ * when it is NULL: the libretro default row first, then each row limited
+ * to that platform and each row that applies to any. `*out` is freed with
+ * sigil_layouts_free. SIGIL_ERR_OOM is the only failure. */
+SIGIL_API int  sigil_layouts(const char *platform, sigil_layout_info **out, size_t *count);
+SIGIL_API void sigil_layouts_free(sigil_layout_info *layouts);
+
 /* The base name RetroArch derives for save files (runloop_path_set_basename):
  * the loaded path's file name without its extension, taking the member name
  * for `archive.zip#member.ext`. Returns `out`. */

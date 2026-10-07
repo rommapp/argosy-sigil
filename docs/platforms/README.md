@@ -62,6 +62,14 @@ the game, because each emulator keeps its saves differently.
 - For a standalone emulator, pass its id from the table, such as
   `dolphin_standalone`, `pcsx2_standalone` or `eden`.
 
+`sigil_layouts()` (`layouts()` in the bindings) returns the same rows
+at run time, filtered by platform. Each row lists the core options its
+files read, with their values and defaults, and names the option that
+picks a shared file by the disc's region. It also says whether an
+account save needs a user profile and whether restore needs one of the
+game's files already there. A server can build its option forms from
+it instead of copying the keys.
+
 An id with no row here gets the libretro default row (`{stem}.srm`, plus
 `{stem}.rtc` when the cart has a clock), documented on
 [gb](gb.md#save-layouts). That fits a libretro core with no row of its
