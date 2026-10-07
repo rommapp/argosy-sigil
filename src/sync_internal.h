@@ -84,6 +84,9 @@ typedef struct {
     void   (*save_key)(const void *save, char out[SIGIL_CARD_NAME_MAX]);
     /* Optional. The form a new card at `path` for this game is formatted in. */
     int    (*new_form)(const sigil_sync_request *req, const char *path);
+    /* Optional. The bytes of a new card for this request, as blank takes
+     * `size`; without it a new card is the kind's default size. */
+    size_t (*new_size)(const sigil_sync_request *req);
     /* Optional. The extension of a unit that is a raw card: the unit takes it
      * when the game's card file is in another form (a .vmp), or its name has
      * no extension (a folder card named test/). */
@@ -108,6 +111,11 @@ extern const sigil_sync_kind sigil_sync_saturn_kind;
 extern const sigil_sync_kind sigil_sync_segacd_kind;
 extern const sigil_sync_kind sigil_sync_vmu_kind;
 extern const sigil_sync_kind sigil_sync_gamecube_kind;
+
+/** The blocks, system blocks included, of the card Dolphin's MemoryCardSize
+ * sets: 64 << n for 0 to 4, 2048 otherwise. Its raw card and its GCI folder
+ * are both that size. */
+uint32_t sigil_gc_card_blocks(const sigil_sync_request *req);
 
 /** The kind for the request's platform, or NULL when sync doesn't cover it. */
 const sigil_sync_kind *sigil_sync_kind_for(const sigil_sync_request *req);

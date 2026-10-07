@@ -44,13 +44,22 @@ static int gc_blank_sized(void **card, size_t size, bool shift_jis) {
     return SIGIL_OK;
 }
 
-/* A new card is Dolphin's default 2043-block card. */
+/* A new card is `size` bytes, Dolphin's default 2043-block card for 0. */
 static int gc_blank(void **card, int *format, int device, size_t size, int form, const void *like) {
     (void)device;
-    (void)size;
     (void)like;
     *format = SIGIL_CARD_FORMAT_GAMECUBE_RAW;
-    return gc_blank_sized(card, GC_MAX_CARD_SIZE, form == SIGIL_FORM_SHIFT_JIS);
+    return gc_blank_sized(card, size ? size : GC_MAX_CARD_SIZE, form == SIGIL_FORM_SHIFT_JIS);
+}
+
+uint32_t sigil_gc_card_blocks(const sigil_sync_request *req) {
+    const char *size = sigil_save_option_value(&req->save, "MemoryCardSize");
+    if (size && size[0] >= '0' && size[0] <= '4' && !size[1]) return 64u << (size[0] - '0');
+    return GC_MAX_CARD_SIZE / GC_BLOCK_SIZE;
+}
+
+static size_t gc_new_size(const sigil_sync_request *req) {
+    return (size_t)sigil_gc_card_blocks(req) * GC_BLOCK_SIZE;
 }
 
 static size_t gc_size(const void *card) { return ((const gc_card *)card)->size; }
@@ -281,6 +290,6 @@ const sigil_sync_kind sigil_sync_gamecube_kind = {
     .unit_size = sigil_sync_no_unit_size, .list = gc_list, .extract = gc_extract,
     .free_save = sigil_sync_blob_free, .inject = gc_inject, .cost = gc_cost, .remove = gc_remove, .verify = gc_verify,
     .image = gc_image, .identity = gc_identity,
-    .save_key = gc_save_key, .new_form = gc_new_form, .save_files = true,
+    .save_key = gc_save_key, .new_form = gc_new_form, .new_size = gc_new_size, .save_files = true,
     .file_name = gc_file_name, .file_to_save = gc_file_to_save, .foreign = gc_foreign,
 };

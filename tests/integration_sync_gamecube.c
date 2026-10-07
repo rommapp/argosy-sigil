@@ -1095,6 +1095,57 @@ static void check_card_size_option(const sigil_sync_result *raw_unit, const sigi
     free(card);
 }
 
+/* A raw card restore makes when there is none is the size MemoryCardSize
+ * sets, as Dolphin creates it (EXI_DeviceMemoryCard: 59 to 1019 data
+ * blocks for 0 to 4, 2043 otherwise), and takes F-Zero GX's saves, bound to
+ * the new card's serial. */
+static void check_new_card_size(const sigil_sync_result *nfsu2, const sigil_sync_result *fzero) {
+    static const struct { const char *value; const char *card; uint32_t blocks; } SIZES[] = {
+        { NULL, LIB_RAW, 2048 },
+        { "-1", LIB_RAW, 2048 },
+        { "4", "User/GC/MemoryCardA.USA.1019.raw", 1024 },
+        { "3", "User/GC/MemoryCardA.USA.507.raw", 512 },
+        { "2", "User/GC/MemoryCardA.USA.251.raw", 256 },
+        { "1", "User/GC/MemoryCardA.USA.123.raw", 128 },
+        { "0", "User/GC/MemoryCardA.USA.59.raw", 64 },
+    };
+    if (!nfsu2 || !fzero) {
+        fail("new card size", "setup failed");
+        return;
+    }
+    for (size_t i = 0; i < sizeof(SIZES) / sizeof(SIZES[0]); i++) {
+        for (size_t which = 0; which < 2; which++) {
+            const sigil_sync_result *unit = which == 0 ? nfsu2 : fzero;
+            mem_root root = {0};
+            game g;
+            if (which == 0) make_game(&g, &root, "dolphin", NFSU2, "GUGE", NFSU2_ISO);
+            else make_game(&g, &root, "dolphin", FZERO, "GFZE", FZERO_DISC);
+            raw_mode(&g);
+            g.options[1].key = "MemoryCardSize";
+            g.options[1].value = SIZES[i].value;
+            g.req.save.option_count = SIZES[i].value ? 2 : 1;
+            sigil_sync_result *r = NULL;
+            int rc = sigil_restore(&g.req, unit->data, unit->len, &r);
+            mem_file *card = root_find(&root, SIZES[i].card);
+            sigil_card_listing *l = NULL;
+            char where[64];
+            snprintf(where, sizeof(where), "new card size %s, %s", SIZES[i].value ? SIZES[i].value : "unset",
+                     which == 0 ? "nfsu2" : "f-zero");
+            if (rc != SIGIL_OK || !card) {
+                fail(where, "restore didn't write the card MemoryCardSize names");
+            } else if (card->len != (size_t)SIZES[i].blocks * GC_BLOCK_SIZE) {
+                fail(where, "the new card isn't the size MemoryCardSize sets");
+            } else if (sigil_gamecube_card_list(card->data, card->len, &l) != SIGIL_OK ||
+                       l->total_blocks != SIZES[i].blocks - GC_SYSTEM_BLOCKS || l->entry_count == 0) {
+                fail(where, "the new card's header doesn't give its size, or it holds no save");
+            }
+            sigil_card_listing_free(l);
+            sigil_sync_result_free(r);
+            root_free(&root);
+        }
+    }
+}
+
 /* A card with every directory entry taken but blocks to spare refuses with
  * no blocks short: what it lacks is a slot. */
 static void check_directory_full(const sigil_sync_result *nfsu2) {
@@ -1400,6 +1451,7 @@ int main(void) {
     check_directory_full(nfsu2);
     check_unopenable_gci(nfsu2);
     check_card_size_option(raw_unit, folder_unit);
+    check_new_card_size(nfsu2, raw_unit);
     check_folder_capacity(nfsu2, folder_unit);
     check_dolphin_folder_rules(nfsu2);
     check_foreign_companions(folder_unit);

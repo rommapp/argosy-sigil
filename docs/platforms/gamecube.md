@@ -52,7 +52,7 @@ The [Wii page](wii.md#identification) covers how sigil finds the disc header ins
 
 | Layout | Files (role, option) | Shared | Verified |
 |---|---|---|---|
-| `dolphin` | | `User/GC/{gc_region}/Card A/`, one `.gci` file per save, when Dolphin.ini's `SlotA` = `8` (default); `User/GC/MemoryCardA.{gc_region}.raw` when `SlotA` = `1`, or `.1019.raw`, `.507.raw`, `.251.raw`, `.123.raw`, `.59.raw` for smaller cards, picked by `MemoryCardSize` (`-1` for 2043 blocks, `4` to `0` for 1019 to 59). Without that option, the one card file there; with two or more there, collect and restore return `SIGIL_ERR_AMBIGUOUS` naming them. `MemoryCardSize` sizes the GCI folder too, and restore refuses a save Dolphin wouldn't load from it | emulator source; live save files |
+| `dolphin` | | `User/GC/{gc_region}/Card A/`, one `.gci` file per save, when Dolphin.ini's `SlotA` = `8` (default); `User/GC/MemoryCardA.{gc_region}.raw` when `SlotA` = `1`, or `.1019.raw`, `.507.raw`, `.251.raw`, `.123.raw`, `.59.raw` for smaller cards, picked by `MemoryCardSize` (`-1` for 2043 blocks, `4` to `0` for 1019 to 59). Without that option, the one card file there; with two or more there, collect and restore return `SIGIL_ERR_AMBIGUOUS` naming them. A raw card restore creates is the size `MemoryCardSize` sets. `MemoryCardSize` sizes the GCI folder too, and restore refuses a save Dolphin wouldn't load from it | emulator source; live save files |
 | `dolphin_standalone` | | as `dolphin`, rooted at Dolphin's User folder (`GC/{gc_region}/Card A/`, `GC/MemoryCardA.{gc_region}.raw`) | emulator source, as `dolphin` |
 
 The libretro core's User folder is the save folder's `User/`, so

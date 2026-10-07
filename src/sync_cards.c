@@ -193,7 +193,8 @@ static size_t primary_card(const sigil_sync_ctx *x, sigil_sync_cards *s, int *rc
     sigil_sync_card_file *f = &s->files[s->count];
     memset(f, 0, sizeof(*f));
     int form = s->kind->new_form ? s->kind->new_form(x->req, s->primary_path) : SIGIL_FORM_RAW;
-    *rc = s->kind->blank(&f->card, &f->format, SIGIL_DEVICE_NONE, 0, form, NULL);
+    size_t size = s->kind->new_size ? s->kind->new_size(x->req) : 0;
+    *rc = s->kind->blank(&f->card, &f->format, SIGIL_DEVICE_NONE, size, form, NULL);
     if (*rc != SIGIL_OK) return 0;
     f->primary = true;
     f->changed = true;

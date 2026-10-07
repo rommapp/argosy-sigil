@@ -139,10 +139,7 @@ static bool file_goes(const sigil_sync_ctx *x, const sigil_sync_save *o, const s
 #define GCI_BLOCK_COUNT       0x38u
 
 static uint32_t folder_data_blocks(const sigil_sync_request *req) {
-    const char *size = sigil_save_option_value(&req->save, "MemoryCardSize");
-    uint32_t total = GC_MAX_CARD_SIZE / GC_BLOCK_SIZE;
-    if (size && size[0] >= '0' && size[0] <= '4' && !size[1]) total = 64u << (size[0] - '0');
-    return total - GC_SYSTEM_BLOCKS;
+    return sigil_gc_card_blocks(req) - GC_SYSTEM_BLOCKS;
 }
 
 /* The game Dolphin runs: the disc's own code, not the other ids its saves
