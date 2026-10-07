@@ -289,6 +289,69 @@ def test_segacd_shared_volume_holds_unclaimed_saves_back(tmp_path):
     assert held.unowned_changed == 0  # a volume no collect had seen
 
 
+def _filled(card: bytes, fills: dict[int, int]) -> bytes:
+    """`card` with each listed block's data set to one byte."""
+    out = bytearray(card)
+    for block, value in fills.items():
+        out[block * 8192 : (block + 1) * 8192] = bytes([value]) * 8192
+    return bytes(out)
+
+
+def test_a_server_merges_a_unit_into_a_card_it_was_sent(tmp_path):
+    """RomM's download for a client without sigil, on a card platform: the client sends its card,
+    the server restores the unit into it with no state and returns the card. The game's save is
+    replaced and the other game's stays, since PS1 saves carry their game's id."""
+    source = tmp_path / "source"
+    server = tmp_path / "server"
+    source.mkdir()
+    server.mkdir()
+    (source / "Chrono Cross.srm").write_bytes(_filled(_ps1_card([("BASLUSP01041CROSS", 2)]), {1: 0x11, 2: 0x11}))
+    unit = sigil.collect(_CROSS, "pcsx_rearmed", "Chrono Cross.cue", source)
+    assert unit.data is not None
+
+    sent = _filled(_ps1_card([("BASLUSP01041CROSS", 2), ("BASLUS-00067OTHER", 1)]), {1: 0x22, 2: 0x22, 3: 0x33})
+    (server / "Chrono Cross.srm").write_bytes(sent)
+    sigil.restore(unit.data, _CROSS, "pcsx_rearmed", "Chrono Cross.cue", server, overwrite_local=True)
+    merged = server / "Chrono Cross.srm"
+    entries = {e.name: e for e in sigil.list_card(merged).entries}
+    assert set(entries) == {"BASLUSP01041CROSS", "BASLUS-00067OTHER"}
+    back = sigil.collect(_CROSS, "pcsx_rearmed", "Chrono Cross.cue", server)
+    assert back.identity_hash == unit.identity_hash
+    card = merged.read_bytes()
+    other = entries["BASLUS-00067OTHER"]
+    assert card[other.first_block * 8192 : (other.first_block + 1) * 8192] == bytes([0x33]) * 8192
+
+
+@pytest.mark.skipif(not _MULTI_BRM.exists(), reason="Sega CD save samples missing")
+def test_a_server_merges_a_unit_into_a_shared_volume_it_was_sent(tmp_path):
+    """RomM's download for a client without sigil: the client sends its shared volume, the server
+    collects it once for a state, claiming the names the unit's saves carry, restores the unit into
+    it, and returns the volume. The game's save is replaced and every other save stays."""
+    source = tmp_path / "source"
+    server = tmp_path / "server"
+    source.mkdir()
+    server.mkdir()
+    (source / "scd_U.brm").write_bytes(_MULTI_BRM.read_bytes())
+    unit = sigil.collect(_LUNAR, "genesis_plus_gx", "Lunar (USA).cue", source, claimed=["SFCD_DAT_09"])
+    assert unit.data is not None
+
+    sent = _MULTI_BRM.read_bytes()
+    (server / "scd_U.brm").write_bytes(sent)
+    with pytest.raises((sigil.SigilUncollectedError, sigil.SigilExistsError)):
+        sigil.restore(unit.data, _LUNAR, "genesis_plus_gx", "Lunar (USA).cue", server,
+                      mode="unmanaged", overwrite_local=True)
+    seen = sigil.collect(_LUNAR, "genesis_plus_gx", "Lunar (USA).cue", server, mode="unmanaged",
+                         claimed=["SFCD_DAT_09"])
+    sigil.restore(unit.data, _LUNAR, "genesis_plus_gx", "Lunar (USA).cue", server,
+                  state=seen.state, mode="unmanaged", overwrite_local=True)
+    merged = tmp_path / "merged.brm"
+    merged.write_bytes((server / "scd_U.brm").read_bytes())
+    original = tmp_path / "original.brm"
+    original.write_bytes(sent)
+    assert sorted(e.name for e in sigil.list_card(merged).entries) == \
+        sorted(e.name for e in sigil.list_card(original).entries)
+
+
 @pytest.mark.skipif(not _MULTI_BRM.exists(), reason="Sega CD save samples missing")
 def test_unowned_changed_counts_saves_new_since_the_last_collect(tmp_path):
     source = tmp_path / "source"
