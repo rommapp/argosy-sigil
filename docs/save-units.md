@@ -186,8 +186,9 @@ area it belongs to:
 | `ryujinx`, `kenjinx` | `bis/user/save/<index id>/0/` | the same | `system/Profiles.json`; `bis/system/save/8000000000000000/0/imkvdb.arc` says whose each folder is |
 | `ppsspp`, `ppsspp_standalone`, `psp_console` | | `PSP/SAVEDATA/{save_id}*/` | none |
 | `azahar`, `citra`, `lime3ds` | | `sdmc/Nintendo 3DS/<id0>/<id1>/title/{save_id}/data/` and `.../extdata/00000000/{extdata_id}/` | none |
+| `dolphin`, `dolphin_standalone` (Wii) | | `User/Wii/title/{category}/{save_id}/data/` (standalone: `Wii/title/...`) | none |
 
-The PSP and 3DS keep no profiles: their rows have device folders alone, so
+The PSP, 3DS and Wii keep no profiles: their rows have device folders alone, so
 nothing below about picking a profile applies to them.
 
 The profile comes from the request, else from the root path when the root

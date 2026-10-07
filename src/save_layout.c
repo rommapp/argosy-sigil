@@ -425,6 +425,29 @@ static const char *const CTR_SUBDIRS[] = {
     "sdmc/Nintendo 3DS/00000000000000000000000000000000/00000000000000000000000000000000/extdata/00000000",
 };
 
+/* Dolphin's Wii NAND (Core/CommonTitles.h, Core/IOS/FS): a title's save is
+ * Wii/title/<category>/<code>/data/, both 8 lowercase hex, beside the
+ * installed content/ that isn't a save. Discs are category 00010000;
+ * WiiWare and Virtual Console 00010001, whose save id carries it. A unit
+ * holds <code>/data/..., the shape Argosy uploaded before sigil. The NAND
+ * sits in the User folder: the libretro core's is the save folder's User/,
+ * and the standalone root is the User folder itself, as for its GameCube
+ * row. The Wii has no user accounts. */
+#define WII_DATA(user) { user "Wii/title/{category}/{save_id}/data/", "{save_id}/data/", SIGIL_SAVE_AREA_DEVICE, false, NULL }
+static const sigil_layout_area WII_AREAS[] = { WII_DATA("User/") };
+static const sigil_layout_area WII_STANDALONE_AREAS[] = { WII_DATA("") };
+static const char *const WII_DROPPED[] = { "{save_id}/content/" };
+static const sigil_layout_profiles WII_FOLDERS = {
+    "User", 0, NULL, WII_AREAS, COUNT(WII_AREAS), NULL, 0, false, false, NULL, NULL, 0, "00010000",
+    WII_DROPPED, COUNT(WII_DROPPED),
+};
+static const sigil_layout_profiles WII_STANDALONE_FOLDERS = {
+    "Wii", 0, NULL, WII_STANDALONE_AREAS, COUNT(WII_STANDALONE_AREAS), NULL, 0, false, false, NULL, NULL, 0, "00010000",
+    WII_DROPPED, COUNT(WII_DROPPED),
+};
+static const char *const WII_SUBDIRS[] = { "User/Wii/title" };
+static const char *const WII_STANDALONE_SUBDIRS[] = { "Wii/title" };
+
 /* Cemu (src/Cafe/TitleList/SaveInfo.cpp, Account.cpp): the mlc's
  * usr/save/00050000/<title low>/ holds meta/, user/<persistent id>/ per
  * account and user/common/ for every account. Cemu writes meta/ again when
@@ -581,6 +604,8 @@ static const sigil_layout LAYOUTS[] = {
     ROW_PROFILES("strato", "switch", SKYLINE_SUBDIRS, SKYLINE_PROFILES),
     ROW_PROFILES("ryujinx", "switch", RYUJINX_SUBDIRS, RYUJINX_PROFILES),
     ROW_PROFILES("kenjinx", "switch", RYUJINX_SUBDIRS, RYUJINX_PROFILES),
+    ROW_PROFILES("dolphin", "wii", WII_SUBDIRS, WII_FOLDERS),
+    ROW_PROFILES("dolphin_standalone", "wii", WII_STANDALONE_SUBDIRS, WII_STANDALONE_FOLDERS),
     ROW_PROFILES("cemu", "wiiu", CEMU_SUBDIRS, CEMU_PROFILES),
     ROW_PROFILES("azahar", "3ds", CTR_SUBDIRS, CTR_FOLDERS),
     ROW_PROFILES("citra", "3ds", CTR_SUBDIRS, CTR_FOLDERS),

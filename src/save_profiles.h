@@ -24,6 +24,7 @@ typedef struct {
     char   above[SIGIL_SAVE_PATH_MAX];      /* the base's folder under the root when the root is above it, or "" */
     char   below[SIGIL_SAVE_PATH_MAX];      /* the root's folder under the base when the root is inside it, or "" */
     char   save_id[SIGIL_SAVE_ENTRY_MAX];   /* the game's save folder name, or the start of each one */
+    char   category[16];                    /* the title category on a row with one (Wii), else "" */
     bool   prefix;                          /* the row's: save_id starts each folder name */
     sigil_save_profile profiles[SIGIL_PROFILES_MAX];
     size_t profile_count;

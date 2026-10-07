@@ -47,7 +47,7 @@ do it yet) or `n/a` (the system has nothing of that kind).
 | [Nintendo 3DS](docs/platforms/3ds.md) | yes | yes | n/a | folder | yes |
 | [Nintendo 64](docs/platforms/n64.md) | yes | yes | n/a | multi | yes |
 | [GameCube](docs/platforms/gamecube.md) | yes | yes | yes | single or multi | yes |
-| [Wii](docs/platforms/wii.md) | yes | no | n/a | folder | no |
+| [Wii](docs/platforms/wii.md) | yes | yes | n/a | folder | yes |
 | [Wii U](docs/platforms/wiiu.md) | yes | yes | n/a | folder | yes |
 | [Switch](docs/platforms/switch.md) | yes | yes | n/a | folder | yes |
 | [Mega Drive, 32X, Master System, Game Gear](docs/platforms/genesis.md) | no | yes | n/a | single | no |

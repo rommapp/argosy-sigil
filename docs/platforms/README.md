@@ -31,7 +31,7 @@ save folder; sigil never searches the drive.
 | Nintendo 64 | [n64](n64.md) | `n64` | yes | synced |
 | Pokémon Mini | [pokemini](pokemini.md) | | no | located |
 | GameCube | [gamecube](gamecube.md) | `gamecube` | yes | synced |
-| Wii | [wii](wii.md) | `wii` | yes | in development |
+| Wii | [wii](wii.md) | `wii` | yes | synced |
 | Wii U | [wiiu](wiiu.md) | `wiiu` | yes | synced |
 | Switch | [switch](switch.md) | `switch` | yes | synced |
 | Mega Drive, 32X, Master System, Game Gear | [genesis](genesis.md) | | no | located |
@@ -185,7 +185,8 @@ value, and the default is the first listed.
 | `kronos` | `kronos/saturn/{stem}.ram`, `kronos/saturn/{stem}-ext512K.ram` | `kronos_addon_cartridge` sizes the cart file (`-ext1M`, `-ext2M`, `-ext4M`); `kronos_use_beetle_saves=enabled`: `{stem}.bkr`, `{stem}.bcr` | yes |
 | `yabause` | `{stem}.srm` | | yes |
 | `yabasanshiro` | `yabasanshiro/backup.bin` (shared) | | send the container |
-| `dolphin`, `dolphin_standalone` | the game's `.gci` files in `User/GC/{gc_region}/Card A/` (`dolphin_standalone`: `GC/{gc_region}/Card A/`) | `SlotA=1`: `User/GC/MemoryCardA.{gc_region}.raw` (shared), `MemoryCardSize` naming smaller cards (`.59.raw` to `.1019.raw`) | yes; send the container for a raw card |
+| `dolphin`, `dolphin_standalone` (Wii) | `User/Wii/title/{category}/{save_id}/data/` (`dolphin_standalone`: `Wii/title/...`); `{category}` is `00010000` for a disc, a WAD's own otherwise | | yes |
+| `dolphin`, `dolphin_standalone` (GameCube) | the game's `.gci` files in `User/GC/{gc_region}/Card A/` (`dolphin_standalone`: `GC/{gc_region}/Card A/`) | `SlotA=1`: `User/GC/MemoryCardA.{gc_region}.raw` (shared), `MemoryCardSize` naming smaller cards (`.59.raw` to `.1019.raw`) | yes; send the container for a raw card |
 | `flycast` | `vmu_save_A1.bin` and the other ports, shared, in the system folder's `dc/` | `reicast_per_content_vmus=VMU A1`: `{dc_vmu_id}.A1.bin`; `=All VMUs`: every port as `{dc_vmu_id}.{port}.bin` | send the container; yes per game |
 | `flycast_standalone` | `{dc_vmu_id}_vmu_save_A1.bin`; other ports `vmu_save_{port}.bin` (shared) | `PerGameVmu=no`: `vmu_save_A1.bin` (shared) | yes for A1; send the container when shared |
 | `mednafen_ngp`, `opera`, `pokemini`, `handy`, `melonds`, `fbneo`, `mame2003_plus`, `dosbox_pure`, `same_cdi`, `nestopia` | see each platform's page | | located only |

@@ -18,12 +18,17 @@ typedef struct {
     char profile[SIGIL_PROFILE_ID_MAX];
     char save_id[SIGIL_SAVE_ENTRY_MAX];
     char extdata_id[16];
+    char category[16];
 } folder_vars;
 
 static char *var_slot(folder_vars *v, const char *t, size_t n, size_t *cap) {
     if (n == 12 && strncmp(t, "{extdata_id}", 12) == 0) {
         *cap = sizeof(v->extdata_id);
         return v->extdata_id;
+    }
+    if (n == 10 && strncmp(t, "{category}", 10) == 0) {
+        *cap = sizeof(v->category);
+        return v->category;
     }
     if (n == 9 && strncmp(t, "{profile}", 9) == 0) {
         *cap = sizeof(v->profile);
@@ -143,12 +148,15 @@ static void extdata_id_of(const char *save_id, char out[16]) {
 }
 
 /* The folder a walk bound is the game's: by its save id, or by the extdata id
- * the save id gives. A name holding neither, an older unit's, stands for the
- * game. Fills in whichever `v` lacks, so a template with either expands. */
+ * the save id gives, in the game's title category. A name holding neither, an
+ * older unit's, stands for the game. Fills in whichever `v` lacks, so a
+ * template with any of them expands. */
 static bool game_fits(const sigil_profile_root *p, folder_vars *v) {
     char extdata[16];
     extdata_id_of(p->save_id, extdata);
     if (!p->save_id[0]) return false;
+    if (v->category[0] && strcmp(v->category, p->category) != 0) return false;
+    if (!v->category[0]) snprintf(v->category, sizeof(v->category), "%s", p->category);
     if (v->save_id[0] && !save_id_fits(p, v->save_id)) return false;
     if (!v->save_id[0] && v->extdata_id[0] && strcmp(v->extdata_id, extdata) != 0) return false;
     if (!v->save_id[0]) snprintf(v->save_id, sizeof(v->save_id), "%s", p->save_id);
@@ -941,6 +949,12 @@ int sigil_profile_root_open(const sigil_save_request *req, const sigil_layout_pr
     p->row = row;
     if (req->result) snprintf(p->save_id, sizeof(p->save_id), "%s", req->result->save_id);
     p->prefix = row->prefix;
+    if (row->category) {
+        const char *slash = strchr(p->save_id, '/');
+        snprintf(p->category, sizeof(p->category), "%.*s", slash ? (int)(slash - p->save_id) : (int)strlen(row->category),
+                 slash ? p->save_id : row->category);
+        if (slash) memmove(p->save_id, slash + 1, strlen(slash + 1) + 1);
+    }
 
     size_t at = 0;
     if (req->root_path && find_top(req->root_path, row->top, &at)) {
@@ -1127,6 +1141,14 @@ int sigil_profile_place(const sigil_profile_root *p, const char *entry, sigil_pr
             *skip = true;
             return SIGIL_OK;
         }
+    }
+    for (size_t d = 0; d < p->row->dropped_count; d++) {
+        folder_vars v;
+        const char *rest = NULL;
+        if (!in_folder(p->row, p->row->dropped[d], entry, &v, &rest) || !game_fits(p, &v)) continue;
+        snprintf(f->entry, sizeof(f->entry), "%s", entry);
+        *skip = true;
+        return SIGIL_OK;
     }
     return SIGIL_ERR_NOT_FOUND;
 }

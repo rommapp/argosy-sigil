@@ -1,7 +1,6 @@
 # Wii
 
-Status: in development
-sigil identifies Wii discs and WADs, but no layout row covers Wii saves yet, so collect and restore don't handle them.
+Status: synced
 
 ## Identification
 
@@ -69,7 +68,32 @@ in its emulated NAND, the game's files as the game wrote them. Saves are
 per title, with no user accounts. A real console exports saves as a
 signed `data.bin`; Dolphin imports and exports that form.
 
+## Save layouts
+
+| Layout | Files (role, option) | Shared | Verified |
+|---|---|---|---|
+| `dolphin` | folder: `User/Wii/title/{category}/{save_id}/data/` | | emulator source |
+| `dolphin_standalone` | folder: `Wii/title/{category}/{save_id}/data/` | | emulator source |
+
+`{category}` is `00010000` for a disc, whose `save_id` is the code alone,
+and the WAD's own category from a `save_id` of `<category>/<code>`. The
+libretro core keeps its NAND in the save folder's `User/`, so its root is
+the save folder; standalone Dolphin's root is its User folder, the one
+holding `Wii/` and `GC/`. The same ids name the GameCube rows, picked by
+the platform.
+
+## Sync
+
+The unit is a zip of the title's `data/` folder under its code:
+`52534245/data/banner.bin`, `52534245/data/...`. The category stays out,
+so the request's own category places it. Installed content beside the
+save (`content/`) stays out of the unit, and restore leaves it out of an
+older unit that carries it: Argosy uploaded the whole title folder,
+rooted at the code, and restores the same as sigil's unit. The rules for
+folder layouts are in [sync](../sync.md) and
+[profiles](../save-units.md#profiles).
+
 ## Open items
 
-- sigil has no layout row for Dolphin's Wii NAND, so `sigil_save_resolve`, collect and restore don't cover Wii saves.
 - Which games write to SD or `shared2/`, and whether Dolphin verifies `data.bin` signatures on import, are unconfirmed.
+- A console's exported `data.bin` isn't read or written.

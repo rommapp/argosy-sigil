@@ -18,6 +18,7 @@ and passes back. The calls and their fields are on each language's page
 | Dreamcast | `vmu_A1.bin`, or a zip of the VMUs present | [dreamcast](platforms/dreamcast.md#sync) |
 | Switch, Wii U, PS Vita, PS3 | a zip of the game's save folders, without the profile id | [switch](platforms/switch.md#sync), [wiiu](platforms/wiiu.md#sync), [psvita](platforms/psvita.md#sync), [ps3](platforms/ps3.md#sync) |
 | PSP | a zip of the game's save folders | [psp](platforms/psp.md#sync) |
+| Wii | a zip of the title's `data/` folder, under its code | [wii](platforms/wii.md#sync) |
 | 3DS | a zip of the title's save folder, its metadata and its extdata | [3ds](platforms/3ds.md#sync) |
 | GB, GBC | the cart RAM; on a cart with a clock, a zip of `save.sram` and `clock.rtc` | [gb](platforms/gb.md#sync) |
 | N64 | a zip of the save types the game uses (`eeprom`, `pak1` to `pak4`, `sram`, `flash`), whichever emulator wrote them | [n64](platforms/n64.md#sync) |
@@ -43,6 +44,7 @@ next collect then gives the save in sigil's form; upload that.
 | GameCube | a raw `.gci`, or a flat zip of `.gci` files; of two files with one identity, the first by name, as Dolphin loads a folder |
 | Saturn, Sega CD, Dreamcast | a raw volume file as the emulator stored it (gzip and byte expansion included), or a flat zip of them under their on-disk names, each matched to its volume by the layout's file names |
 | Wii U | a zip naming the account folder by its id (`<save_id>/user/80000001/`) |
+| Wii | the title folder zipped from its code (`<code>/data/...`, `<code>/content/...`); `content/` is left out |
 | 3DS | a zip rooted at `data/` and `extdata/` |
 | GB, GBC | a raw `.srm`, a `.sav` with its clock appended, or a zip of an emulator's `.srm` and `.rtc` |
 | N64 | a libretro `.srm`, a lone `.eep`, or a zip of an emulator's files (`.srm`, `.eep`, `.sra`, `.fla`, `.mpk`, `_Cont_<n>.mpk`) |

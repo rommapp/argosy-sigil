@@ -11,6 +11,19 @@ import pytest
 import sigil
 
 
+def test_dolphin_lists_gamecube_and_wii_saves_from_one_root(tmp_path):
+    """`dolphin` serves GameCube and Wii from the libretro save folder's User/: listing
+    the root takes both, so neither platform's row hides the other's files."""
+    gci = tmp_path / "User/GC/USA/Card A/01-GALE-gzle.gci"
+    wii = tmp_path / "User/Wii/title/00010000/52534245/data/rs_save.dat"
+    for path in (gci, wii):
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"x")
+    listed = sigil.list_save_root(tmp_path, "dolphin")
+    assert "User/GC/USA/Card A/01-GALE-gzle.gci" in listed
+    assert "User/Wii/title/00010000/52534245/data/rs_save.dat" in listed
+
+
 def test_version_is_string():
     v = sigil.version()
     assert isinstance(v, str)

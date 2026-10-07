@@ -106,6 +106,12 @@ typedef struct {
                                                folders are named by the id it gives each save, and it says
                                                whose each one is; NULL when folders are named by the title */
     size_t                   save_id_segments;   /* the path segments {save_id} spans (3DS: 2); 0 means 1 */
+    const char              *category;      /* Wii: the title category {category} stands for when the save
+                                               id is the code alone ("00010000", a disc); a save id of
+                                               <category>/<code> (a WAD) gives its own. NULL elsewhere */
+    const char *const       *dropped;       /* folders, as a unit names them, that an older unit carries and
+                                               restore leaves out: Wii's installed content/ */
+    size_t                   dropped_count;
 } sigil_layout_profiles;
 
 typedef struct {
