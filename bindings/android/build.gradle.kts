@@ -48,10 +48,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     testOptions {
         unitTests.all { test ->
             // The JVM tests load a host build of the JNI library: the sigil_jni_host target,
@@ -65,6 +61,12 @@ android {
             )
             test.inputs.files(fileTree(hostLib) { include("*sigil-jni*") }).withPropertyName("sigilHostJni")
         }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 
