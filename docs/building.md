@@ -79,6 +79,27 @@ cmake --build build-win
 MinGW ships some POSIX names MSVC lacks (`strcasecmp`, `dirent.h`), so a
 clean cross-build doesn't prove the MSVC build; CI does.
 
+## Release packages
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`. It builds Linux
+x86_64, Linux arm64, macOS arm64 and Windows x86_64 (MSVC) and drafts a
+GitHub release with one archive per platform. Each archive holds the
+`sigil` CLI, `include/sigil.h`, `shared/` and `static/`. The version
+comes from `project()` in `CMakeLists.txt`; `bindings/python/pyproject.toml`
+carries the same number, and the contract tests fail when they differ.
+
+The shared library has its dependencies built in. The static library
+doesn't: link every archive in `static/`, sigil first.
+
+```sh
+cc app.c -Iinclude -Lstatic -lsigil -lsigil_chdr -lsigil_lzma -lsigil_zlib -lsigil_zstd -lsigil_aes
+```
+
+On MSVC, pass `sigil.lib` and the `sigil_*.lib` files beside it. To link
+the shared build, define `SIGIL_SHARED`. The Go binding links with gcc,
+so on Windows it needs sigil built with MinGW-w64 from source; the MSVC
+archives don't work there.
+
 ## Bindings
 
 All the bindings expose the same operations, options and fields.

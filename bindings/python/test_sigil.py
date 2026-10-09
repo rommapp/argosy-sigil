@@ -27,7 +27,8 @@ def test_dolphin_lists_gamecube_and_wii_saves_from_one_root(tmp_path):
 def test_version_is_string():
     v = sigil.version()
     assert isinstance(v, str)
-    assert v
+    pyproject = (Path(__file__).parent / "pyproject.toml").read_text()
+    assert f'\nversion = "{v}"\n' in pyproject
 
 
 def test_platform_slug_roundtrip():

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 cmake_minimum_required(VERSION 3.16)
-project(sigil C)
+project(sigil VERSION 1.0.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -176,10 +176,11 @@ if(SIGIL_BUILD_SHARED)
     target_compile_definitions(sigil
         PRIVATE SIGIL_EXPORTS
         INTERFACE SIGIL_SHARED)
-    set_target_properties(sigil PROPERTIES VERSION 0.1.0 SOVERSION 0)
+    set_target_properties(sigil PROPERTIES VERSION ${sigil_VERSION} SOVERSION ${sigil_VERSION_MAJOR})
 else()
     add_library(sigil STATIC ${SIGIL_SOURCES})
 endif()
+target_compile_definitions(sigil PRIVATE SIGIL_VERSION_STRING="${sigil_VERSION}")
 target_include_directories(sigil PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # Every source sees the MSVC shims for the POSIX names it uses, without each
 # file having to remember the include.

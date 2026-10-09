@@ -9,7 +9,6 @@
 #include <sys/stat.h>
 #endif
 
-#define SIGIL_VERSION_STRING "0.1.0-dev"
 #define SIGIL_DIR_SCAN_MAX_DEPTH 4
 /* Matched as a path suffix so the variable app/<TITLEID>/ prefix in a dump
  * does not have to be known ahead of time. */
