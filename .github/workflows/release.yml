@@ -8,6 +8,9 @@ jobs:
   build:
     name: ${{ matrix.slug }}
     runs-on: ${{ matrix.os }}
+    env:
+      # The runner's SDK otherwise stamps its own macOS version as the minimum.
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
     strategy:
       fail-fast: false
       matrix:

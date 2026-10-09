@@ -82,7 +82,7 @@ clean cross-build doesn't prove the MSVC build; CI does.
 ## Release packages
 
 Pushing a `v*` tag runs `.github/workflows/release.yml`. It builds Linux
-x86_64, Linux arm64, macOS arm64 and Windows x86_64 (MSVC) and drafts a
+x86_64, Linux arm64, macOS arm64 (11.0 and later) and Windows x86_64 (MSVC) and drafts a
 GitHub release with one archive per platform. Each archive holds the
 `sigil` CLI, `include/sigil.h`, `shared/` and `static/`. The version
 comes from `project()` in `CMakeLists.txt`; `bindings/python/pyproject.toml`
