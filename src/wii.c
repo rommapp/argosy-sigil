@@ -72,8 +72,18 @@ static int wbfs_disc_header_off(const sigil_io *io, uint64_t *out) {
     return SIGIL_OK;
 }
 
-static void wii_save_id(const char title_id[32], char out_save_id[32]) {
-    sigil_lower_copy(title_id, out_save_id, 32);
+/* `<category>/<code>` as Dolphin names the save folder, from the game
+ * partition's ticket; empty when the ticket can't be read, since the
+ * category isn't the same on every disc. */
+static void wii_save_id(const sigil_io *io, char out_save_id[32]) {
+    uint8_t id[8];
+    if (sigil_wii_disc_title_id(io, id) != SIGIL_OK) return;
+    char hi[9], lo[9];
+    sigil_hex_encode_4(id, hi);
+    sigil_hex_encode_4(id + 4, lo);
+    char joined[18];
+    snprintf(joined, sizeof(joined), "%s/%s", hi, lo);
+    sigil_lower_copy(joined, out_save_id, 32);
 }
 
 /* A `.gci` file name carries the ASCII gameId, not the hex the Wii NAND
@@ -158,7 +168,7 @@ int sigil_extract_nintendo_disc(const sigil_io *io, sigil_platform platform,
     if (from_wbfs) {
         rc = wbfs_disc_header_off(io, &id_off);
         if (rc != SIGIL_OK) return rc;
-    } else if (memcmp(magic, "RVZ", 3) == 0) {
+    } else if (memcmp(magic, "RVZ", 3) == 0 || memcmp(magic, "WIA", 3) == 0) {
         id_off = 0x58;
     } else {
         id_off = 0x00;
@@ -176,8 +186,8 @@ int sigil_extract_nintendo_disc(const sigil_io *io, sigil_platform platform,
 
     out->platform = platform;
     if (platform == SIGIL_PLATFORM_WII) {
-        out->usage = SIGIL_USAGE_FOLDER_EXACT;
-        wii_save_id(out->title_id, out->save_id);
+        out->usage = SIGIL_USAGE_FOLDER_SPLIT;
+        wii_save_id(io, out->save_id);
     } else {
         out->usage = SIGIL_USAGE_FILE_PREFIX;
         gamecube_save_id(out->raw_serial, out->save_id);

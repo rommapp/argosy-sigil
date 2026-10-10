@@ -56,7 +56,7 @@ static int expect_id(const uint8_t *buf, size_t len, const char *filename,
         fprintf(stderr, "FAIL %s: got save_id='%s' (want '%s')\n", label, r.save_id, want_save);
         return 1;
     }
-    if (r.usage != SIGIL_USAGE_FOLDER_EXACT) {
+    if (r.usage != SIGIL_USAGE_FOLDER_SPLIT) {
         fprintf(stderr, "FAIL %s: usage=%d\n", label, (int)r.usage);
         return 1;
     }
@@ -67,9 +67,11 @@ int main(void) {
     uint8_t buf[2048];
 
     /* Tales of Symphonia: Dawn of the New World, the WBFS conversion we
-     * validated on-device. RT4E -> 52543445, matching its RVZ dump. */
+     * validated on-device. RT4E -> 52543445, matching its RVZ dump. These
+     * fixtures hold a disc header and no partition, so no ticket names the
+     * save folder: save_id stays empty. unit_wii_disc reads tickets. */
     build_wbfs(buf, sizeof(buf), "RT4E", true);
-    if (expect_id(buf, sizeof(buf), "game.wbfs", "52543445", "RT4E", "52543445", "wbfs")) return 1;
+    if (expect_id(buf, sizeof(buf), "game.wbfs", "52543445", "RT4E", "", "wbfs")) return 1;
 
     /* Without the Wii magic there is no disc header to trust. Reading offset 0
      * anyway would yield the container's own "WBFS" as a game id. */
@@ -89,28 +91,27 @@ int main(void) {
     memset(buf, 0, sizeof(buf));
     memcpy(buf, "RT4E", 4);
     write_be32(buf + 0x18, 0x5D1C9EA3u);
-    if (expect_id(buf, sizeof(buf), "game.iso", "52543445", "RT4E", "52543445", "iso")) return 1;
+    if (expect_id(buf, sizeof(buf), "game.iso", "52543445", "RT4E", "", "iso")) return 1;
 
     memset(buf, 0, sizeof(buf));
     memcpy(buf, "RVZ\x01", 4);
     memcpy(buf + 0x58, "RT4E", 4);
-    if (expect_id(buf, sizeof(buf), "game.rvz", "52543445", "RT4E", "52543445", "rvz")) return 1;
+    if (expect_id(buf, sizeof(buf), "game.rvz", "52543445", "RT4E", "", "rvz")) return 1;
+
+    memset(buf, 0, sizeof(buf));
+    memcpy(buf, "WIA\x01", 4);
+    memcpy(buf + 0x58, "RT4E", 4);
+    if (expect_id(buf, sizeof(buf), "game.wia", "52543445", "RT4E", "", "wia")) return 1;
 
     /* RT4E hexes to digits only, so it cannot catch a case bug. Twilight
-     * Princess (RZDE) hexes to 525A4445: Dolphin creates Wii/title/00010000/
-     * 525a4445, and title_id must stay uppercase while save_id follows it. */
+     * Princess (RZDE) hexes to 525A4445: title_id stays uppercase. */
     memset(buf, 0, sizeof(buf));
     memcpy(buf, "RZDE", 4);
     write_be32(buf + 0x18, 0x5D1C9EA3u);
-    if (expect_id(buf, sizeof(buf), "game.iso", "525A4445", "RZDE", "525a4445", "hex letters")) {
-        return 1;
-    }
+    if (expect_id(buf, sizeof(buf), "game.iso", "525A4445", "RZDE", "", "hex letters")) return 1;
 
     build_wbfs(buf, sizeof(buf), "RZDE", true);
-    if (expect_id(buf, sizeof(buf), "game.wbfs", "525A4445", "RZDE", "525a4445",
-                  "hex letters (wbfs)")) {
-        return 1;
-    }
+    if (expect_id(buf, sizeof(buf), "game.wbfs", "525A4445", "RZDE", "", "hex letters (wbfs)")) return 1;
 
     /* GameCube shares the extractor but not the NAND layout, so it keeps the
      * hex title id and takes its own save id. unit_gamecube covers that field. */

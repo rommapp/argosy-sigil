@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 /* Wii saves on Dolphin: the title's data/ folder travels as <code>/data/...,
- * for a disc (category 00010000) and a WAD (its own category), from the
+ * for a disc and a WAD (each under the category its save_id carries), from the
  * libretro core's User/ and the standalone User folder, and Argosy's uploads
  * of the whole title folder restore without its installed content/. */
 #include "legacy_units.h"
@@ -78,7 +78,7 @@ static void check_disc(void) {
     put_text(&root, "User/Wii/title/00010000/53545645/data/other.dat", "another title");
     put_text(&root, "User/GC/USA/Card A/01-GALE-gzle.gci", "a gamecube save");
     game g;
-    make_game(&g, &root, "dolphin", "52534245", "52534245");
+    make_game(&g, &root, "dolphin", "52534245", "00010000/52534245");
     sigil_sync_result *r = NULL;
     char names[256];
     if (sigil_collect(&g.req, &r) != SIGIL_OK) fail("wii disc", "collect failed");
@@ -87,7 +87,7 @@ static void check_disc(void) {
 
     mem_root fresh = {0};
     game t;
-    make_game(&t, &fresh, "dolphin", "52534245", "52534245");
+    make_game(&t, &fresh, "dolphin", "52534245", "00010000/52534245");
     sigil_sync_result *w = NULL;
     if (!r || sigil_restore(&t.req, r->data, r->len, &w) != SIGIL_OK || !holds(&fresh, DISC "data/rs_save.dat", "progress") ||
         !holds(&fresh, DISC "data/banner.bin", "banner") || fresh.count != 2) {
@@ -96,17 +96,61 @@ static void check_disc(void) {
 
     /* The same unit into standalone Dolphin's User folder. */
     mem_root standalone = {0};
-    make_game(&t, &standalone, "dolphin_standalone", "52534245", "52534245");
+    make_game(&t, &standalone, "dolphin_standalone", "52534245", "00010000/52534245");
     sigil_sync_result *ws = NULL;
     if (!r || sigil_restore(&t.req, r->data, r->len, &ws) != SIGIL_OK ||
         !holds(&standalone, "Wii/title/00010000/52534245/data/rs_save.dat", "progress")) {
         fail("wii disc", "standalone restore didn't write Wii/title/00010000/<code>/data/");
     }
 
+    /* A result persisted before discs carried their category: the code alone
+     * places the save under 00010000. */
+    mem_root legacy = {0};
+    make_game(&t, &legacy, "dolphin", "52534245", "52534245");
+    sigil_sync_result *wl = NULL;
+    if (!r || sigil_restore(&t.req, r->data, r->len, &wl) != SIGIL_OK || !holds(&legacy, DISC "data/rs_save.dat", "progress")) {
+        fail("wii disc", "a save_id of the code alone didn't restore under 00010000");
+    }
+
+    sigil_sync_result_free(wl);
     sigil_sync_result_free(ws);
     sigil_sync_result_free(w);
     sigil_sync_result_free(r);
+    root_free(&legacy);
     root_free(&standalone);
+    root_free(&fresh);
+    root_free(&root);
+}
+
+/* Mario Kart Wii installs a channel, so its ticket and its save folder carry
+ * 00010004; a folder under 00010000 with the same code isn't its save. */
+static void check_channel_disc(void) {
+    mem_root root = {0};
+    put_text(&root, "Wii/title/00010004/524d4345/data/rksys.dat", "time trials");
+    put_text(&root, "Wii/title/00010000/524d4345/data/rksys.dat", "a folder Dolphin never wrote");
+    game g;
+    make_game(&g, &root, "dolphin_standalone", "524D4345", "00010004/524d4345");
+    sigil_sync_result *r = NULL;
+    char names[256];
+    if (sigil_collect(&g.req, &r) != SIGIL_OK) fail("wii channel disc", "collect failed");
+    names_of(r, names, sizeof(names));
+    sigil_zip_member *m = NULL;
+    size_t n = 0;
+    bool right = r && r->data && sigil_zip_read_mem(r->data, r->len, 1u << 20, &m, &n) == SIGIL_OK && n == 1 &&
+                 m[0].len == 11 && memcmp(m[0].data, "time trials", 11) == 0;
+    if (m) sigil_zip_members_free(m, n);
+    if (strcmp(names, "524d4345/data/rksys.dat") != 0 || !right) fail("wii channel disc", "not the save under 00010004");
+
+    mem_root fresh = {0};
+    game t;
+    make_game(&t, &fresh, "dolphin", "524D4345", "00010004/524d4345");
+    sigil_sync_result *w = NULL;
+    if (!r || sigil_restore(&t.req, r->data, r->len, &w) != SIGIL_OK ||
+        !holds(&fresh, "User/Wii/title/00010004/524d4345/data/rksys.dat", "time trials") || fresh.count != 1) {
+        fail("wii channel disc", "restore didn't write under 00010004");
+    }
+    sigil_sync_result_free(w);
+    sigil_sync_result_free(r);
     root_free(&fresh);
     root_free(&root);
 }
@@ -151,7 +195,7 @@ static void check_argosy_upload(void) {
     uint8_t *zip = legacy_zip(names, data, lens, 3, &zip_len);
     mem_root root = {0};
     game g;
-    make_game(&g, &root, "dolphin", "52534245", "52534245");
+    make_game(&g, &root, "dolphin", "52534245", "00010000/52534245");
     sigil_sync_result *w = NULL;
     if (!zip || sigil_restore(&g.req, zip, zip_len, &w) != SIGIL_OK || !holds(&root, DISC "data/rs_save.dat", "progress") ||
         root_find(&root, DISC "content/title.tmd") || root.count != 2) {
@@ -164,6 +208,7 @@ static void check_argosy_upload(void) {
 
 int main(void) {
     check_disc();
+    check_channel_disc();
     check_wad();
     check_argosy_upload();
     printf("wii sync: %d failures\n", g_fails);

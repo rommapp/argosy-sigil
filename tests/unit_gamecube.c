@@ -133,10 +133,11 @@ int main(void) {
 
     /* Both consoles ship as `.rvz` and `.wbfs`, so the extension sends either
      * one here as a Wii disc. Only the header magic separates them, and a
-     * GameCube disc read as a Wii one would report the hex save_id Dolphin's
-     * NAND uses instead of the ASCII id its `.gci` names carry. A platform the
-     * caller names is a different matter: it stands, magic or no magic, so a
-     * consumer that has already classified the file keeps its answer. */
+     * GameCube disc read as a Wii one would lose the ASCII save_id its `.gci`
+     * names carry. A platform the caller names is a different matter: it
+     * stands, magic or no magic, so a consumer that has already classified the
+     * file keeps its answer. Read as Wii, the disc has no ticket to name a
+     * save folder, so save_id is empty. */
     memset(buf, 0, sizeof(buf));
     memcpy(buf, "RVZ\x01", 4);
     memcpy(buf + RVZ_HEADER_OFF, "GAFE", 4);
@@ -147,7 +148,7 @@ int main(void) {
         return 1;
     }
     if (expect_detect(buf, sizeof(buf), "game.rvz", SIGIL_PLATFORM_WII,
-                      SIGIL_PLATFORM_WII, "47414645", SIGIL_USAGE_FOLDER_EXACT,
+                      SIGIL_PLATFORM_WII, "", SIGIL_USAGE_FOLDER_SPLIT,
                       "a named wii platform outranks the gamecube magic")) {
         return 1;
     }
@@ -157,7 +158,7 @@ int main(void) {
     memcpy(buf + RVZ_HEADER_OFF, "RZDE", 4);
     write_be32(buf + RVZ_HEADER_OFF + WII_MAGIC_OFF, WII_MAGIC);
     if (expect_detect(buf, sizeof(buf), "game.rvz", SIGIL_PLATFORM_AUTO,
-                      SIGIL_PLATFORM_WII, "525a4445", SIGIL_USAGE_FOLDER_EXACT,
+                      SIGIL_PLATFORM_WII, "", SIGIL_USAGE_FOLDER_SPLIT,
                       "unhinted rvz carrying the wii magic")) {
         return 1;
     }
@@ -170,7 +171,7 @@ int main(void) {
     memset(buf, 0, sizeof(buf));
     memcpy(buf, "GZLE", 4);
     if (expect_detect(buf, sizeof(buf), "game.iso", SIGIL_PLATFORM_WII,
-                      SIGIL_PLATFORM_WII, "475a4c45", SIGIL_USAGE_FOLDER_EXACT,
+                      SIGIL_PLATFORM_WII, "", SIGIL_USAGE_FOLDER_SPLIT,
                       "unbacked id keeps the named platform")) {
         return 1;
     }

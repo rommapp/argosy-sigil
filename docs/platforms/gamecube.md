@@ -7,7 +7,7 @@ sigil identifies GameCube discs and collects and restores Dolphin saves, from a 
 
 | Slug | Platform | Inputs | `title_id` example | `usage` | Status |
 |---|---|---|---|---|---|
-| `gamecube` | GameCube | `.iso`, `.rvz`, `.wbfs` | `475A4C45` (hex of ASCII gameId) | file-prefix | |
+| `gamecube` | GameCube | `.iso`, `.rvz`, `.wia`, `.wbfs` | `475A4C45` (hex of ASCII gameId) | file-prefix | |
 
 `ngc` and `gc` resolve to `gamecube`. See [Identification](../identification.md) for the result fields.
 
@@ -36,8 +36,8 @@ and `raw_serial` preserves the ASCII form. Where they land on disk
 differs: Dolphin's Wii NAND directory is the hex, lowercased, while a
 GameCube `.gci` file name carries the ASCII characters, so `save_id`
 follows the platform and only Wii's tracks `title_id`. The header
-starts at 0 in an `.iso` and at 0x58 in an `.rvz`,
-behind the RVZ container header; a console magic backs it (Wii
+starts at 0 in an `.iso` and at 0x58 in an `.rvz` or `.wia`,
+behind the container header; a console magic backs it (Wii
 `5D1C9EA3` at +0x18, GameCube `C2339F3D` at +0x1C). That magic also
 names the console when nobody else does, since `.iso`, `.rvz` and
 `.wbfs` carry either one and the extension cannot tell them apart. A

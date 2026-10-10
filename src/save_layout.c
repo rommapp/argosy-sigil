@@ -428,8 +428,10 @@ static const char *const CTR_SUBDIRS[] = {
 
 /* Dolphin's Wii NAND (Core/CommonTitles.h, Core/IOS/FS): a title's save is
  * Wii/title/<category>/<code>/data/, both 8 lowercase hex, beside the
- * installed content/ that isn't a save. Discs are category 00010000;
- * WiiWare and Virtual Console 00010001, whose save id carries it. A unit
+ * installed content/ that isn't a save. The save id carries the category:
+ * a disc's ticket gives 00010000, or 00010004 for one that installs a
+ * channel; WiiWare and Virtual Console are 00010001. A save id of the code
+ * alone (the filename fallback) takes 00010000. A unit
  * holds <code>/data/..., the shape Argosy uploaded before sigil. The NAND
  * sits in the User folder: the libretro core's is the save folder's User/,
  * and the standalone root is the User folder itself, as for its GameCube

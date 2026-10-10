@@ -28,8 +28,8 @@ Pass `--platform=auto` (the default) to sniff from the file extension.
 Extensions that name a container rather than a console (`.zip`, a bare
 `.iso`) still need a hint unless the contents identify the platform on
 their own, which is why the Vita example above does not take one. An
-extension two consoles share is settled the same way. `.rvz` and
-`.wbfs` hold either a Wii or a GameCube disc, and the header magic
+extension two consoles share is settled the same way. `.rvz`, `.wia`
+and `.wbfs` hold either a Wii or a GameCube disc, and the header magic
 decides which. A `--platform` you pass is never second-guessed: it
 names the console outright, and the magic is consulted only when you
 name nothing. Check `source` on the result: `binary` means the id came

@@ -72,9 +72,9 @@ without you re-deriving it.
 | `psvita` | PS Vita | `.zip` dump, extracted folder, or `param.sfo` | `PCSE12345` (TITLE_ID from `sce_sys/param.sfo`) | folder-exact | filename fallback when no `param.sfo` is reachable |
 | `switch` | Nintendo Switch | `.nsp`, `.xci` | `0100ABCD12345000` | folder-exact | |
 | `3ds` | Nintendo 3DS | `.3ds`, `.cci`, `.cxi`, `.app`, `.z3ds`, `.zcci`, `.zcxi` | `0004000000123456` | folder-split | `.3dsx` / `.z3dsx` / `.elf` / `.axf` are homebrew and carry no title id |
-| `wii` | Wii | `.iso`, `.rvz`, `.wbfs`, `.wad` | `525A5445` (hex of ASCII gameId); `.wad`: `00010001574B5445` (full 16-hex title id) | folder-exact; `.wad`: folder-split | |
+| `wii` | Wii | `.iso`, `.rvz`, `.wia`, `.wbfs`, `.wad` | `525A5445` (hex of ASCII gameId); `.wad`: `00010001574B5445` (full 16-hex title id) | folder-split (`save_id` is `<category>/<code>` from the ticket) | |
 | `wiiu` | Wii U | `.wua` | `10143500` (last 8 of folder name) | folder-exact | |
-| `gamecube` | GameCube | `.iso`, `.rvz`, `.wbfs` | `475A4C45` (hex of ASCII gameId) | file-prefix | |
+| `gamecube` | GameCube | `.iso`, `.rvz`, `.wia`, `.wbfs` | `475A4C45` (hex of ASCII gameId) | file-prefix | |
 | `xbox` | Xbox | `.xiso`, `.xiso.iso`, `.iso` (needs hint), extracted game folder or `.xbe` | `TT-027` (XBE certificate title id) | folder-exact | experimental |
 | `xbox360` | Xbox 360 | `.zar`, `.iso` (needs hint), extracted game folder or `.xex` | `4D5307DC` (4-byte XEX title_id, hex) | folder-exact | experimental |
 | `dreamcast` | Dreamcast | `.chd`, `.iso`, data track `.bin` (`.gdi` track 3) | `T-8111N` (IP.BIN product number) | file-prefix | experimental |
@@ -115,7 +115,7 @@ Pass `SIGIL_PLATFORM_AUTO` to sniff from the file extension. Extensions
 that name a container rather than a console (`.zip`, a bare `.iso`) still
 need a hint unless the contents identify the platform on their own, as a
 Vita dump's `param.sfo` does. An extension two consoles share is settled
-the same way. `.rvz` and `.wbfs` hold either a Wii or a GameCube disc, and
+the same way. `.rvz`, `.wia` and `.wbfs` hold either a Wii or a GameCube disc, and
 the header magic decides which. A platform you pass is never
 second-guessed: it names the console outright, and the magic is consulted
 only when you name nothing. Check `source` on the result: `binary` means

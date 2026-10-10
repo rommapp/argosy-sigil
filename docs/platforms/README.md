@@ -193,7 +193,7 @@ value, and the default is the first listed.
 | `kronos` | `kronos/saturn/{stem}.ram`, `kronos/saturn/{stem}-ext512K.ram` | `kronos_addon_cartridge` sizes the cart file (`-ext1M`, `-ext2M`, `-ext4M`); `kronos_use_beetle_saves=enabled`: `{stem}.bkr`, `{stem}.bcr` | yes |
 | `yabause` | `{stem}.srm` | | yes |
 | `yabasanshiro` | `yabasanshiro/backup.bin` (shared) | | send the container |
-| `dolphin`, `dolphin_standalone` (Wii) | `User/Wii/title/{category}/{save_id}/data/` (`dolphin_standalone`: `Wii/title/...`); `{category}` is `00010000` for a disc, a WAD's own otherwise | | yes |
+| `dolphin`, `dolphin_standalone` (Wii) | `User/Wii/title/{category}/{save_id}/data/` (`dolphin_standalone`: `Wii/title/...`); `{category}` comes from `save_id` (`00010000/<code>` for most discs, `00010004/<code>` for one that installs a channel, a WAD's own) | | yes |
 | `dolphin`, `dolphin_standalone` (GameCube) | the game's `.gci` files in `User/GC/{gc_region}/Card A/` (`dolphin_standalone`: `GC/{gc_region}/Card A/`) | `SlotA=1`: `User/GC/MemoryCardA.{gc_region}.raw` (shared), `MemoryCardSize` naming smaller cards (`.59.raw` to `.1019.raw`) | yes; send the container for a raw card |
 | `flycast` | `vmu_save_A1.bin` and the other ports, shared, in the system folder's `dc/` | `reicast_per_content_vmus=VMU A1`: `{dc_vmu_id}.A1.bin`; `=All VMUs`: every port as `{dc_vmu_id}.{port}.bin` | send the container; yes per game |
 | `flycast_standalone` | `{dc_vmu_id}_vmu_save_A1.bin`; other ports `vmu_save_{port}.bin` (shared) | `PerGameVmu=no`: `vmu_save_A1.bin` (shared) | yes for A1; send the container when shared |

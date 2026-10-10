@@ -110,6 +110,7 @@ set(SIGIL_SOURCES
     src/ps3.c
     src/psvita.c
     src/wii.c
+    src/wii_disc.c
     src/xbox360.c
     src/dreamcast.c
     src/xbox.c
@@ -187,7 +188,7 @@ target_include_directories(sigil PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_options(sigil PRIVATE
     $<$<C_COMPILER_ID:MSVC>:/FI${CMAKE_CURRENT_SOURCE_DIR}/src/sigil_compat.h>)
 
-target_link_libraries(sigil PRIVATE sigil_chdr sigil_zlib sigil_zstd sigil_aes)
+target_link_libraries(sigil PRIVATE sigil_chdr sigil_zlib sigil_zstd sigil_lzma sigil_aes)
 
 # ---- CLI ---------------------------------------------------------------------
 if(SIGIL_BUILD_CLI)

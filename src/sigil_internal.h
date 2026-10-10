@@ -249,6 +249,11 @@ int sigil_extract_xbox360(const sigil_io *io, const char *filename_hint,
  * nobody named one and the disc header magic has to answer. */
 int sigil_extract_nintendo_disc(const sigil_io *io, sigil_platform platform,
                                 const sigil_options *opts, sigil_result *out);
+/* The title id in the ticket of a Wii disc's game partition, read through a
+ * plain image, WBFS, WIA or RVZ: 00010000 or 00010004, then the game code.
+ * SIGIL_ERR_UNSUPPORTED_FORMAT for a WIA or RVZ compressed with bzip2 or
+ * LZMA2, SIGIL_ERR_NOT_FOUND when the disc holds no such ticket. */
+int sigil_wii_disc_title_id(const sigil_io *io, uint8_t title_id[8]);
 int sigil_extract_3ds(const sigil_io *io, const char *filename_hint,
                       const sigil_options *opts, sigil_result *out);
 int sigil_extract_switch(const sigil_io *io, const char *filename_hint,
