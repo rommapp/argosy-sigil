@@ -7,7 +7,10 @@ sigil reads the disc's serial, finds the memory cards for the layouts below, and
 
 | Slug | Inputs | `title_id` example | `usage` |
 |---|---|---|---|
-| `psx` | `.iso`, `.bin`, `.chd` | `SLUS-12345` | file-prefix |
+| `psx` | `.iso`, `.bin`, `.chd`, `.cue` | `SLUS-12345` | file-prefix |
+
+A `.cue` is read through the first `MODE` track it lists, resolved beside
+the sheet, and needs the `psx` hint because the extension names no console.
 
 `ps1` and `playstation` resolve as aliases of `psx`, both as a platform
 slug and as a layout row platform.

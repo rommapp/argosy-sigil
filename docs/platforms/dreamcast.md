@@ -7,7 +7,7 @@ sigil reads the product number from a Dreamcast disc and collects and restores f
 
 | Slug | Platform | Inputs | `title_id` example | `usage` | Status |
 |---|---|---|---|---|---|
-| `dreamcast` | Dreamcast | `.chd`, `.iso`, data track `.bin` (`.gdi` track 3) | `T-8111N` (IP.BIN product number) | file-prefix | experimental |
+| `dreamcast` | Dreamcast | `.chd`, `.iso`, `.gdi`, `.cue`, data track `.bin` | `T-8111N` (IP.BIN product number) | file-prefix | experimental |
 
 Argosy's shorter identifier `dc` resolves as an alias of `dreamcast`, for
 extraction and for layout rows. The extractor is flagged `experimental`
@@ -31,14 +31,22 @@ GD-area LBA 45000. Sigil checks offset 0 first, which covers a raw data
 track or a plain ISO, then scans sector boundaries for the magic across
 the first 20000 frames. Tracks 1 and 2 live in the single-density area,
 which spans the first four minutes of the disc (18000 frames), so the
-bound holds for any conformant dump while keeping a miss cheap. A `.gdi`
-is a text index naming its track files rather than a disc image, so pass
-`track03.bin` (or a CHD) for binary extraction. `.bin` is ambiguous
-across platforms and needs an explicit `dreamcast` hint; raw 2352-byte
-MODE1 tracks are cooked to 2048 on the way in. `.gdi` and `.cdi` sniff
-as Dreamcast so the platform resolves without a hint, but neither
-container's own layout is parsed: a `.cdi` only extracts when its
-sectors happen to land on 2048-byte boundaries.
+bound holds for any conformant dump while keeping a miss cheap.
+
+A `.gdi` or `.cue` is a text sheet naming its track files. Sigil reads
+the sheet and opens the first data track in the high-density area: in a
+`.gdi` the first type-4 track at LBA 45000 or later, in a `.cue` the
+first `MODE` track after a `REM HIGH-DENSITY AREA` line. A sheet without
+that area falls back to its first data track, which on a GD-ROM is the
+single-density track and carries the same IP.BIN. Track names resolve
+beside the sheet. A sheet with no data track returns
+`SIGIL_ERR_NOT_FOUND`; one naming a missing track returns `SIGIL_ERR_IO`.
+
+`.bin` is ambiguous across platforms and needs an explicit `dreamcast`
+hint; raw 2352-byte MODE1 tracks are cooked to 2048 on the way in.
+`.gdi` and `.cdi` sniff as Dreamcast so the platform resolves without a
+hint; `.cue` needs one. A `.cdi`'s own layout is not parsed: it only
+extracts when its sectors happen to land on 2048-byte boundaries.
 
 ## Save layouts
 
@@ -114,5 +122,5 @@ hold the blocks a Dreamcast game file must start at.
 ## Open items
 
 - The extractor is `experimental`: it hasn't been validated against real-world samples.
-- A `.gdi` or `.cdi` container's own layout is not parsed.
+- A `.cdi` container's own layout is not parsed.
 - redream has no layout row.

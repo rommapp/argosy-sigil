@@ -131,6 +131,7 @@ set(SIGIL_SOURCES
     src/io_zip.c
     src/io_zar.c
     src/io_raw_cd.c
+    src/disc_sheet.c
     src/gb.c
     src/snes.c
     src/n64.c

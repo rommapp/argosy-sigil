@@ -507,7 +507,20 @@ int sigil_extract_from_path(const char *path, sigil_platform hint,
         effective_path = resolved_path;
     }
 
-    sigil_io *io = open_io_for_platform(effective_path, resolved);
+    sigil_io *io = NULL;
+    char sheet_ext[16];
+    sigil_lower_ext(path_basename(effective_path), sheet_ext);
+    bool reads_sheet = (resolved == SIGIL_PLATFORM_PSX || resolved == SIGIL_PLATFORM_DREAMCAST)
+                       && (strcmp(sheet_ext, "cue") == 0 || strcmp(sheet_ext, "gdi") == 0);
+    if (reads_sheet) {
+        char track_path[1024];
+        int src = sigil_sheet_data_track(effective_path, resolved == SIGIL_PLATFORM_DREAMCAST,
+                                         track_path, sizeof(track_path));
+        if (src != SIGIL_OK) return src;
+        io = sigil_io_open_raw_cd(track_path);
+    } else {
+        io = open_io_for_platform(effective_path, resolved);
+    }
     if (!io) return SIGIL_ERR_IO;
 
     /* `resolved` picked the reader and the io layer; the platform handed on is

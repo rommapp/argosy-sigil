@@ -91,6 +91,9 @@ wchar_t *sigil_wide_path(const char *path);
 
 int sigil_io_read_exact(const sigil_io *io, uint64_t off, void *buf, size_t len);
 
+int sigil_sheet_data_track(const char *sheet_path, bool prefer_high_density,
+                           char *out, size_t cap);
+
 /**
  * Reads up to `len` bytes at `off`, stopping early at the end of the stream,
  * and sets `*got` to the count read. SIGIL_ERR_IO only when a read fails.

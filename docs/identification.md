@@ -66,7 +66,7 @@ without you re-deriving it.
 | Slug | Platform | Inputs | `title_id` example | `usage` | Status |
 |---|---|---|---|---|---|
 | `psp` | PSP | `.iso`, `.chd`, `.cso` / `.ciso` | `ULUS10064` | folder-prefix | |
-| `psx` | PlayStation | `.iso`, `.bin`, `.chd` | `SLUS-12345` | file-prefix | |
+| `psx` | PlayStation | `.iso`, `.bin`, `.chd`, `.cue` | `SLUS-12345` | file-prefix | |
 | `ps2` | PlayStation 2 | `.iso`, `.chd`, `.cso` / `.ciso`, `.zso` | `SLUS-20675` | folder-prefix | |
 | `ps3` | PlayStation 3 | `.iso` (needs hint), game folder (recursive) or `.sfo` | `BLUS31426` (TITLE_ID from PARAM.SFO) | folder-prefix | experimental |
 | `psvita` | PS Vita | `.zip` dump, extracted folder, or `param.sfo` | `PCSE12345` (TITLE_ID from `sce_sys/param.sfo`) | folder-exact | filename fallback when no `param.sfo` is reachable |
@@ -77,7 +77,7 @@ without you re-deriving it.
 | `gamecube` | GameCube | `.iso`, `.rvz`, `.wia`, `.wbfs` | `475A4C45` (hex of ASCII gameId) | file-prefix | |
 | `xbox` | Xbox | `.xiso`, `.xiso.iso`, `.iso` (needs hint), extracted game folder or `.xbe` | `TT-027` (XBE certificate title id) | folder-exact | experimental |
 | `xbox360` | Xbox 360 | `.zar`, `.iso` (needs hint), extracted game folder or `.xex` | `4D5307DC` (4-byte XEX title_id, hex) | folder-exact | experimental |
-| `dreamcast` | Dreamcast | `.chd`, `.iso`, data track `.bin` (`.gdi` track 3) | `T-8111N` (IP.BIN product number) | file-prefix | experimental |
+| `dreamcast` | Dreamcast | `.chd`, `.iso`, `.gdi`, `.cue`, data track `.bin` | `T-8111N` (IP.BIN product number) | file-prefix | experimental |
 | `gb` | Game Boy | `.gb`, `.sgb` | none; sets `features` | file-prefix | |
 | `gbc` | Game Boy Color | `.gbc` | none; sets `features` | file-prefix | |
 | `snes` | Super Nintendo | `.sfc`, `.smc` | none; sets `features` | file-prefix | |

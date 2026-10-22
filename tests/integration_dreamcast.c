@@ -30,9 +30,7 @@ int main(void) {
     if (!rom_dir) { fprintf(stderr, "SIGIL_ROM_DIR not set; skipping\n"); return TEST_SKIP; }
     char path[512];
     if (build_subdir(rom_dir, "dc", path) != 0) return 1;
-    /* A .gdi is a text index naming its track files, not a disc image, so the
-     * binary extractor cannot read one; point the test at whole-disc forms. */
-    const char *exts[] = { "chd", "iso", NULL };
+    const char *exts[] = { "chd", "iso", "gdi", "cue", NULL };
     walk_stats st = walk_dir(path, check, exts);
     fprintf(stdout, "Dreamcast: processed=%d passed=%d failed=%d\n",
             st.processed, st.passed, st.failed);

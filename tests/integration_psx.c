@@ -27,7 +27,7 @@ int main(void) {
     if (!rom_dir) { fprintf(stderr, "SIGIL_ROM_DIR not set; skipping\n"); return TEST_SKIP; }
     char path[512];
     if (build_subdir(rom_dir, "psx", path) != 0) return 1;
-    const char *exts[] = { "chd", "bin", "iso", NULL };
+    const char *exts[] = { "chd", "bin", "iso", "cue", NULL };
     walk_stats st = walk_dir(path, check, exts);
     fprintf(stdout, "PSX: processed=%d passed=%d failed=%d\n",
             st.processed, st.passed, st.failed);
