@@ -70,7 +70,7 @@ without you re-deriving it.
 | `ps2` | PlayStation 2 | `.iso`, `.chd`, `.cso` / `.ciso`, `.zso` | `SLUS-20675` | folder-prefix | |
 | `ps3` | PlayStation 3 | `.iso` (needs hint), game folder (recursive) or `.sfo` | `BLUS31426` (TITLE_ID from PARAM.SFO) | folder-prefix | experimental |
 | `psvita` | PS Vita | `.zip` dump, extracted folder, or `param.sfo` | `PCSE12345` (TITLE_ID from `sce_sys/param.sfo`) | folder-exact | filename fallback when no `param.sfo` is reachable |
-| `switch` | Nintendo Switch | `.nsp`, `.xci` | `0100ABCD12345000` | folder-exact | |
+| `switch` | Nintendo Switch | `.nsp`, `.xci`, `.nsz`, `.xcz` | `0100ABCD12345000` | folder-exact | |
 | `3ds` | Nintendo 3DS | `.3ds`, `.cci`, `.cxi`, `.app`, `.z3ds`, `.zcci`, `.zcxi`, `.cia`, `.zcia` | `0004000000123456` | folder-split | `.3dsx` / `.z3dsx` / `.elf` / `.axf` are homebrew and carry no title id |
 | `wii` | Wii | `.iso`, `.rvz`, `.wia`, `.wbfs`, `.wad` | `525A5445` (hex of ASCII gameId); `.wad`: `00010001574B5445` (full 16-hex title id) | folder-split (`save_id` is `<category>/<code>` from the ticket) | |
 | `wiiu` | Wii U | `.wua` | `10143500` (last 8 of folder name) | folder-split (`save_id` is `<high>/<low>`) | |

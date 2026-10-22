@@ -61,13 +61,12 @@ static void build_image(uint8_t *buf, const char *magic) {
     memcpy(nca + 0x210, program_id, 8);
 }
 
-static int run_case(const char *label, const uint8_t *buf,
-                    const sigil_options *opts, int want_rc) {
+static int run_named_case(const char *label, const uint8_t *buf, const char *name,
+                          sigil_platform platform, const sigil_options *opts, int want_rc) {
     mem_ctx ctx = { buf, IMAGE_SIZE };
     sigil_io io = { mem_read, mem_size, NULL, &ctx };
     sigil_result r;
-    int rc = sigil_extract_from_io(&io, "game.nsp", SIGIL_PLATFORM_SWITCH,
-                                   opts, &r);
+    int rc = sigil_extract_from_io(&io, name, platform, opts, &r);
     if (rc != want_rc) {
         fprintf(stderr, "FAIL %s: rc=%d want %d\n", label, rc, want_rc);
         return 1;
@@ -82,6 +81,11 @@ static int run_case(const char *label, const uint8_t *buf,
         return 1;
     }
     return 0;
+}
+
+static int run_case(const char *label, const uint8_t *buf,
+                    const sigil_options *opts, int want_rc) {
+    return run_named_case(label, buf, "game.nsp", SIGIL_PLATFORM_SWITCH, opts, want_rc);
 }
 
 int main(void) {
@@ -115,6 +119,9 @@ int main(void) {
 
     if (run_case("encrypted with key", enc, &with_key, SIGIL_OK)) return 1;
     if (run_case("encrypted no key", enc, &no_key, SIGIL_ERR_NEEDS_KEY)) return 1;
+
+    if (run_named_case("nsz sniffed", enc, "game.nsz", SIGIL_PLATFORM_AUTO, &with_key, SIGIL_OK)) return 1;
+    if (run_named_case("xcz sniffed", enc, "game.xcz", SIGIL_PLATFORM_AUTO, &with_key, SIGIL_OK)) return 1;
 
     uint8_t nca2[IMAGE_SIZE];
     build_image(nca2, "NCA2");

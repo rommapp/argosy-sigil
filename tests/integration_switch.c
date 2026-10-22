@@ -60,7 +60,7 @@ int main(void) {
 
     char path[512];
     if (build_subdir(rom_dir, "switch", path) != 0) return 1;
-    const char *exts[] = { "xci", "nsp", NULL };
+    const char *exts[] = { "xci", "nsp", "xcz", "nsz", NULL };
     walk_stats st = walk_dir(path, check, exts);
     int read = st.passed - g_keys_too_old;
     fprintf(stdout, "Switch: processed=%d passed=%d failed=%d keys too old=%d\n",

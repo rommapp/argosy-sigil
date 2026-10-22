@@ -7,7 +7,7 @@ sigil identifies Switch XCI and NSP dumps with the user's keys, and collects and
 
 | Slug | Platform | Inputs | `title_id` example | `usage` | Status |
 |---|---|---|---|---|---|
-| `switch` | Nintendo Switch | `.nsp`, `.xci` | `0100ABCD12345000` | folder-exact | |
+| `switch` | Nintendo Switch | `.nsp`, `.xci`, `.nsz`, `.xcz` | `0100ABCD12345000` | folder-exact | |
 
 | Value | Meaning | Example |
 |---|---|---|
@@ -24,6 +24,10 @@ dump that holds the game beside its update or DLC reads as the game, its
 version included. Read from a file name, an id ending in `800` is an update
 of the game ending in `000`, and any other id not ending in `000` is a DLC of
 the game `0x1000` below its block.
+
+`.nsz` and `.xcz` are the NSP and XCI containers with their large NCAs
+compressed and renamed `.ncz`. The Meta NCA stays an uncompressed `.nca`, so
+the id is read from its CNMT exactly as in the uncompressed dump.
 
 ### Switch keys
 
