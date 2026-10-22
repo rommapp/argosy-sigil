@@ -8,7 +8,7 @@ PS1 classics running on a PSP use the `vita_pops` layout, which is on the [PlayS
 
 | Slug | Inputs | `title_id` example | `usage` | Status |
 |---|---|---|---|---|
-| `psp` | `.iso`, `.chd`, `.cso` / `.ciso` | `ULUS10064` | folder-prefix | `.cso` experimental |
+| `psp` | `.iso`, `.chd`, `.cso` / `.ciso` | `ULUS10064` | folder-prefix | |
 
 **PSP saves share a folder prefix.** A single game produces multiple sibling
 folders under `PSP/SAVEDATA/`, e.g. `ULUS10064DATA00`,
@@ -21,10 +21,9 @@ that starts with that prefix.
 `raw_serial` keeps the ID exactly as it appears in the binary, before any
 normalization (`ULUS-10064`).
 
-**PSP `.cso` / `.ciso` support is experimental.** v1 CSO with raw-deflate
-blocks is decompressed transparently and fed to the standard PSP
-extractor. v2 (LZ4) is not supported. Flagged `experimental=1` on the
-result until validated against a real CSO sample.
+**PSP `.cso` / `.ciso`.** sigil decompresses v1 CSO's raw-deflate blocks as it
+reads and feeds them to the standard PSP extractor. CSO v2 is not supported,
+and neither PPSSPP nor PCSX2 loads it.
 
 ## Save formats
 
@@ -76,4 +75,3 @@ keeps every folder that starts with the game's id.
 - A game picks its folder names at run time; one that saves under another title's id is not found. A client that knows the id can set `save_id` to it on the result it passes to collect and restore.
 - A sequel reading its prequel's folders is not synced as a companion.
 - PPSSPP's default memory stick root per OS is unconfirmed.
-- `.cso` v2 (LZ4) is not supported, and v1 has not been validated against a real CSO sample.

@@ -162,7 +162,8 @@ static sigil_platform sniff_from_extension(const char *filename) {
     if (strcmp(ext, "wad") == 0)   return SIGIL_PLATFORM_WII;
     if (strcmp(ext, "cso") == 0)   return SIGIL_PLATFORM_PSP;
     if (strcmp(ext, "ciso") == 0)  return SIGIL_PLATFORM_PSP;
-    if (strcmp(ext, "sfo") == 0)   return SIGIL_PLATFORM_PS3;
+    if (strcmp(ext, "zso") == 0)   return SIGIL_PLATFORM_PS2;
+    if (strcmp(ext, "sfo") == 0)  return SIGIL_PLATFORM_PS3;
     if (strcmp(ext, "xex") == 0)   return SIGIL_PLATFORM_XBOX360;
     if (strcmp(ext, "xbe") == 0)   return SIGIL_PLATFORM_XBOX;
     if (strcmp(ext, "xiso") == 0)  return SIGIL_PLATFORM_XBOX;
@@ -202,7 +203,9 @@ static sigil_io *open_io_for_platform(const char *path, sigil_platform p) {
         sigil_io *io = sigil_io_open_chd(path);
         if (io) return io;
     }
-    if (p == SIGIL_PLATFORM_PSP && (strcmp(ext, "cso") == 0 || strcmp(ext, "ciso") == 0)) {
+    bool can_cso = (p == SIGIL_PLATFORM_PSP || p == SIGIL_PLATFORM_PS2);
+    if (can_cso && (strcmp(ext, "cso") == 0 || strcmp(ext, "ciso") == 0
+                    || strcmp(ext, "zso") == 0)) {
         sigil_io *io = sigil_io_open_cso(path);
         if (io) return io;
     }
@@ -404,14 +407,6 @@ int sigil_extract_from_io(const sigil_io *io,
         }
     }
 
-    /* Flag CSO-sourced PSP extractions as experimental until verified against real ROMs. */
-    if (rc == SIGIL_OK && filename_hint) {
-        char ext[16];
-        sigil_lower_ext(filename_hint, ext);
-        if (strcmp(ext, "cso") == 0 || strcmp(ext, "ciso") == 0) {
-            out->experimental = 1;
-        }
-    }
     return rc;
 }
 

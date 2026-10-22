@@ -240,7 +240,7 @@ SIGIL_API const char *sigil_platform_to_slug(sigil_platform p);
 
 SIGIL_API sigil_io *sigil_io_open_file(const char *path);
 SIGIL_API sigil_io *sigil_io_open_chd(const char *path);
-SIGIL_API sigil_io *sigil_io_open_cso(const char *path);     /* .cso/.ciso v1 only */
+SIGIL_API sigil_io *sigil_io_open_cso(const char *path);     /* v1 .cso/.ciso and .zso */
 SIGIL_API sigil_io *sigil_io_open_raw_cd(const char *path);
 /* Presents the archive's largest member as a stream. `out_name` receives that
  * member's name so the caller can resolve the platform from it; pass NULL to

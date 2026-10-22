@@ -39,7 +39,7 @@ int main(void) {
     if (!rom_dir) { fprintf(stderr, "SIGIL_ROM_DIR not set; skipping\n"); return TEST_SKIP; }
     char path[512];
     if (build_subdir(rom_dir, "ps2", path) != 0) return 1;
-    const char *exts[] = { "iso", "chd", NULL };
+    const char *exts[] = { "iso", "chd", "cso", "zso", NULL };
     walk_stats st = walk_dir(path, check, exts);
     fprintf(stdout, "PS2: processed=%d passed=%d failed=%d\n",
             st.processed, st.passed, st.failed);

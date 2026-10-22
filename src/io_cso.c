@@ -7,12 +7,16 @@
 #include <zlib.h>
 
 #define CSO_MAGIC               "CISO"
+#define ZSO_MAGIC               "ZISO"
 #define CSO_HEADER_SIZE         24
 #define CSO_INDEX_UNCOMPRESSED  0x80000000u
 #define CSO_MAX_BLOCK_BYTES     (1u << 17)
 
+typedef enum { CSO_CODEC_DEFLATE, CSO_CODEC_LZ4 } cso_codec;
+
 typedef struct {
     FILE     *fp;
+    cso_codec codec;
     uint32_t *index;
     uint64_t  uncompressed_size;
     uint32_t  block_size;
@@ -33,6 +37,66 @@ static int cso_read_raw(FILE *fp, uint64_t off, void *buf, size_t len) {
     size_t got = fread(buf, 1, len, fp);
     if (got != len) return -1;
     return 0;
+}
+
+static int lz4_read_length(const uint8_t *src, size_t src_len, size_t *ip, size_t *len) {
+    uint8_t b;
+    do {
+        if (*ip >= src_len) return -1;
+        b = src[(*ip)++];
+        *len += b;
+    } while (b == 255);
+    return 0;
+}
+
+/**
+ * Decodes one LZ4 raw block until `dst_len` bytes are out, the way PCSX2's
+ * LZ4_decompress_safe_partial call fills a ZSO frame. 0 when the frame is
+ * full, -1 on malformed or short input.
+ */
+static int lz4_decode_block(const uint8_t *src, size_t src_len, uint8_t *dst, size_t dst_len) {
+    size_t ip = 0, op = 0;
+    while (ip < src_len) {
+        uint8_t token = src[ip++];
+        size_t lit = token >> 4;
+        if (lit == 15 && lz4_read_length(src, src_len, &ip, &lit) != 0) return -1;
+        if (lit > src_len - ip) return -1;
+        if (lit >= dst_len - op) {
+            memcpy(dst + op, src + ip, dst_len - op);
+            return 0;
+        }
+        memcpy(dst + op, src + ip, lit);
+        op += lit;
+        ip += lit;
+        if (ip == src_len) break;
+
+        if (src_len - ip < 2) return -1;
+        size_t offset = (size_t)src[ip] | ((size_t)src[ip + 1] << 8);
+        ip += 2;
+        if (offset == 0 || offset > op) return -1;
+        size_t match = token & 15;
+        if (match == 15 && lz4_read_length(src, src_len, &ip, &match) != 0) return -1;
+        match += 4;
+        if (match > dst_len - op) match = dst_len - op;
+        for (size_t i = 0; i < match; i++) dst[op + i] = dst[op - offset + i];
+        op += match;
+        if (op == dst_len) return 0;
+    }
+    return op == dst_len ? 0 : -1;
+}
+
+static int cso_inflate_block(cso_ctx *ctx, size_t stored_size) {
+    z_stream strm = {0};
+    strm.next_in   = ctx->compressed_buf;
+    strm.avail_in  = (uInt)stored_size;
+    strm.next_out  = ctx->block_cache;
+    strm.avail_out = ctx->block_size;
+    if (inflateInit2(&strm, -15) != Z_OK) return SIGIL_ERR_IO;
+    int zrc = inflate(&strm, Z_FINISH);
+    inflateEnd(&strm);
+    if (zrc != Z_STREAM_END && zrc != Z_OK) return SIGIL_ERR_IO;
+    if (strm.total_out != ctx->block_size) return SIGIL_ERR_IO;
+    return SIGIL_OK;
 }
 
 static int cso_load_block(cso_ctx *ctx, uint32_t block_idx) {
@@ -67,16 +131,15 @@ static int cso_load_block(cso_ctx *ctx, uint32_t block_idx) {
         return SIGIL_ERR_IO;
     }
 
-    z_stream strm = {0};
-    strm.next_in   = ctx->compressed_buf;
-    strm.avail_in  = (uInt)stored_size;
-    strm.next_out  = ctx->block_cache;
-    strm.avail_out = ctx->block_size;
-    if (inflateInit2(&strm, -15) != Z_OK) return SIGIL_ERR_IO;
-    int zrc = inflate(&strm, Z_FINISH);
-    inflateEnd(&strm);
-    if (zrc != Z_STREAM_END && zrc != Z_OK) return SIGIL_ERR_IO;
-    if (strm.total_out != ctx->block_size) return SIGIL_ERR_IO;
+    if (ctx->codec == CSO_CODEC_LZ4) {
+        if (lz4_decode_block(ctx->compressed_buf, stored_size,
+                             ctx->block_cache, ctx->block_size) != 0) {
+            return SIGIL_ERR_IO;
+        }
+    } else {
+        int rc = cso_inflate_block(ctx, stored_size);
+        if (rc != SIGIL_OK) return rc;
+    }
 
     ctx->cached_block = block_idx;
     return SIGIL_OK;
@@ -133,7 +196,15 @@ sigil_io *sigil_io_open_cso(const char *path) {
 
     uint8_t hdr[CSO_HEADER_SIZE];
     if (fread(hdr, 1, sizeof(hdr), fp) != sizeof(hdr)) { fclose(fp); return NULL; }
-    if (memcmp(hdr, CSO_MAGIC, 4) != 0) { fclose(fp); return NULL; }
+    cso_codec codec;
+    if (memcmp(hdr, CSO_MAGIC, 4) == 0) {
+        codec = CSO_CODEC_DEFLATE;
+    } else if (memcmp(hdr, ZSO_MAGIC, 4) == 0) {
+        codec = CSO_CODEC_LZ4;
+    } else {
+        fclose(fp);
+        return NULL;
+    }
 
     uint32_t header_size       = sigil_read_le32(hdr + 4);
     uint64_t uncompressed_size = sigil_read_le64(hdr + 8);
@@ -154,7 +225,8 @@ sigil_io *sigil_io_open_cso(const char *path) {
     cso_ctx *ctx = (cso_ctx *)calloc(1, sizeof(*ctx));
     if (!ctx) { fclose(fp); return NULL; }
     ctx->fp                 = fp;
-    ctx->uncompressed_size  = uncompressed_size;
+    ctx->codec              = codec;
+    ctx->uncompressed_size = uncompressed_size;
     ctx->block_size         = block_size;
     ctx->total_blocks       = total_blocks;
     ctx->alignment          = alignment;
