@@ -511,7 +511,8 @@ int sigil_extract_from_path(const char *path, sigil_platform hint,
     sigil_io *io = NULL;
     char sheet_ext[16];
     sigil_lower_ext(path_basename(effective_path), sheet_ext);
-    bool reads_sheet = (resolved == SIGIL_PLATFORM_PSX || resolved == SIGIL_PLATFORM_DREAMCAST)
+    bool reads_sheet = (resolved == SIGIL_PLATFORM_PSX || resolved == SIGIL_PLATFORM_PS2
+                        || resolved == SIGIL_PLATFORM_DREAMCAST)
                        && (strcmp(sheet_ext, "cue") == 0 || strcmp(sheet_ext, "gdi") == 0);
     if (reads_sheet) {
         char track_path[1024];

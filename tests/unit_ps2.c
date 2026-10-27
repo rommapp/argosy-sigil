@@ -91,6 +91,15 @@ static int write_ps2_image(const char *path, size_t sector_size, uint8_t mode,
     return written == image_len && close_rc == 0 ? 0 : -1;
 }
 
+static int write_cue(const char *path, const char *bin_name) {
+    FILE *fp = test_fopen(path, "wb");
+    if (!fp) return -1;
+    int put = fprintf(fp, "FILE \"%s\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n",
+                      bin_name);
+    int close_rc = fclose(fp);
+    return put > 0 && close_rc == 0 ? 0 : -1;
+}
+
 int main(void) {
     char temp_dir[1024];
     if (test_temp_dir(temp_dir, sizeof(temp_dir)) != 0) {
@@ -140,20 +149,58 @@ int main(void) {
                cases[i].name, result.title_id, result.save_id);
     }
 
-    char truncated_path[1200];
-    snprintf(truncated_path, sizeof(truncated_path), "%s/ps2-truncated.bin", temp_dir);
-    if (write_ps2_image(truncated_path, RAW_SECTOR_SIZE, 1,
-                        21 * RAW_SECTOR_SIZE + 100) != 0) {
-        fprintf(stderr, "FAIL truncated image: could not write synthetic image\n");
+    char cue_bin[1200];
+    char cue_path[1200];
+    snprintf(cue_bin, sizeof(cue_bin), "%s/ps2-cue.bin", temp_dir);
+    snprintf(cue_path, sizeof(cue_path), "%s/ps2-cue.cue", temp_dir);
+    if (write_ps2_image(cue_bin, RAW_SECTOR_SIZE, 2, 0) != 0
+        || write_cue(cue_path, "ps2-cue.bin") != 0) {
+        fprintf(stderr, "FAIL CUE sheet: could not write synthetic image\n");
         failures++;
     } else {
         sigil_result result;
-        int rc = sigil_extract_from_path(truncated_path, SIGIL_PLATFORM_PS2, NULL, &result);
-        if (rc == SIGIL_OK) {
-            fprintf(stderr, "FAIL truncated image was accepted as %s\n", result.title_id);
+        int rc = sigil_extract_from_path(cue_path, SIGIL_PLATFORM_PS2, NULL, &result);
+        if (rc != SIGIL_OK || strcmp(result.title_id, "SLUS-21234") != 0) {
+            fprintf(stderr, "FAIL CUE sheet extraction: %s (%d)\n", sigil_strerror(rc), rc);
             failures++;
         } else {
-            printf("ok truncated raw BIN rejected (%s)\n", sigil_strerror(rc));
+            printf("ok CUE sheet -> %s\n", result.title_id);
+        }
+    }
+
+    /* A short final sector once made the raw reader retry the same read forever,
+     * so each case here must return rather than hang. */
+    char truncated_bin[1200];
+    char truncated_cue[1200];
+    snprintf(truncated_bin, sizeof(truncated_bin), "%s/truncated.bin", temp_dir);
+    snprintf(truncated_cue, sizeof(truncated_cue), "%s/truncated.cue", temp_dir);
+    if (write_ps2_image(truncated_bin, RAW_SECTOR_SIZE, 2,
+                        21 * RAW_SECTOR_SIZE + 100) != 0
+        || write_cue(truncated_cue, "truncated.bin") != 0) {
+        fprintf(stderr, "FAIL truncated image: could not write synthetic image\n");
+        failures++;
+    } else {
+        const struct {
+            const char *name;
+            const char *path;
+            sigil_platform platform;
+        } truncated[] = {
+            { "truncated PS2 BIN", truncated_bin, SIGIL_PLATFORM_PS2 },
+            { "truncated PS2 CUE", truncated_cue, SIGIL_PLATFORM_PS2 },
+            { "truncated PSX BIN", truncated_bin, SIGIL_PLATFORM_PSX },
+            { "truncated PSX CUE", truncated_cue, SIGIL_PLATFORM_PSX },
+        };
+        for (size_t i = 0; i < sizeof(truncated) / sizeof(truncated[0]); i++) {
+            sigil_result result;
+            int rc = sigil_extract_from_path(truncated[i].path, truncated[i].platform,
+                                             NULL, &result);
+            if (rc == SIGIL_OK) {
+                fprintf(stderr, "FAIL %s was accepted as %s\n",
+                        truncated[i].name, result.title_id);
+                failures++;
+            } else {
+                printf("ok %s rejected (%s)\n", truncated[i].name, sigil_strerror(rc));
+            }
         }
     }
 

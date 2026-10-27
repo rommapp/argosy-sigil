@@ -7,7 +7,7 @@ sigil reads the disc's serial, finds the memory cards for the layouts below, and
 
 | Slug | Inputs | `title_id` example | `usage` |
 |---|---|---|---|
-| `ps2` | `.iso`, `.chd`, `.bin`, `.cso` / `.ciso`, `.zso` | `SLUS-20675` | folder-prefix |
+| `ps2` | `.iso`, `.chd`, `.bin`, `.cue`, `.cso` / `.ciso`, `.zso` | `SLUS-20675` | folder-prefix |
 
 `.cso` and `.zso` share PCSX2's v1 header and block index. CSO blocks are raw
 deflate and ZSO blocks are LZ4, and a block with the index's high bit set is
@@ -15,7 +15,8 @@ stored as is. `.cso` sniffs as PSP, so a PS2 `.cso` needs `--platform=ps2`;
 `.zso` sniffs as PS2, since PPSSPP does not load it.
 
 BIN inputs may contain cooked 2048-byte sectors or raw 2352-byte MODE1/MODE2
-sectors. Pass the BIN track itself; CUE entry-point parsing is not supported.
+sectors. A `.cue` is read through the first `MODE` track it lists, resolved
+beside the sheet, and needs the `ps2` hint because the extension names no console.
 
 **PS2 adds a region prefix and enumerates folders by prefix.** `title_id` is the
 ROM serial (`SLUS-20152`). `save_id` is the region-prefixed stem
