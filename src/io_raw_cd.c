@@ -38,7 +38,7 @@ static int raw_io_read(void *ctx_, uint64_t off, void *buf, size_t len) {
             return SIGIL_ERR_IO;
         }
         size_t got = fread(sector, 1, COOKED_SECTOR, ctx->fp);
-        if (got == 0) {
+        if (got <= intra) {
             if (total > 0) return (int)total;
             return SIGIL_ERR_IO;
         }
