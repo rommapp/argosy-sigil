@@ -21,6 +21,29 @@ that starts with that prefix.
 `raw_serial` keeps the ID exactly as it appears in the binary, before any
 normalization (`ULUS-10064`).
 
+**`save_id` can differ from `title_id`.** A game passes its save prefix to
+the savedata utility as a string in its executable. A PlayStation Store
+re-release often keeps the disc release's prefix, so its saves land under
+`ULJS00445…` while `UMD_DATA.BIN` reads `NPJH-50804`. sigil reads the
+executable when it is readable, meaning `PSP_GAME/SYSDIR/BOOT.BIN` holding an
+ELF, or else a decrypted `EBOOT.BIN`, and collects every disc-style or
+Store-style serial in it (`UL`, `UC` or `NP`, two letters, five digits,
+dashed or not). Only a Store release (`NP…` disc id) is ever given another
+`save_id`:
+
+| Disc id | Serials in the executable | `save_id` |
+|---|---|---|
+| `NP…` | exactly one, a `UL`/`UC` serial whose digits are not all zero | that serial |
+| `NP…` | anything else | the disc id |
+| `UL…` / `UC…` | anything | the disc id |
+| any | executable unreadable (zeroed `BOOT.BIN`, encrypted `EBOOT.BIN`) | the disc id |
+
+Disc releases are never re-keyed because many build their prefix at run
+time and carry unrelated serials: `OutRun 2006 - Coast 2 Coast (USA)` saves
+as `ULUS10064`, and its executable names only `ULUS00000`. Across 620 USA
+disc dumps no `save_id` differs from the disc id. sigil holds no decryption
+keys, so an image whose only executable is encrypted keeps the disc id.
+
 **PSP `.cso` / `.ciso`.** sigil decompresses v1 CSO's raw-deflate blocks as it
 reads and feeds them to the standard PSP extractor. CSO v2 is not supported,
 and neither PPSSPP nor PCSX2 loads it.
@@ -72,6 +95,6 @@ keeps every folder that starts with the game's id.
 ## Open items
 
 - `psp_console` is not yet confirmed on a live PSP or Adrenaline: copy a game's folders off, check their names start with the disc id sigil reads, then restore to a stick without them and load the save in the game.
-- A game picks its folder names at run time; one that saves under another title's id is not found. A client that knows the id can set `save_id` to it on the result it passes to collect and restore.
+- A game whose only executable is encrypted, and that saves under another title's id, is not found. A client that knows the id can set `save_id` to it on the result it passes to collect and restore.
 - A sequel reading its prequel's folders is not synced as a companion.
 - PPSSPP's default memory stick root per OS is unconfirmed.
