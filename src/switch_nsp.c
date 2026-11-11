@@ -177,6 +177,14 @@ int sigil_extract_switch(const sigil_io *io, const char *filename_hint,
     int rc = sigil_io_read_exact(io, 0, magic, 4);
     if (rc != SIGIL_OK) return rc;
 
+    if (sigil_nup_is_container(magic)) {
+        sigil_switch_title t;
+        rc = sigil_nup_extract_title(io, &t);
+        if (rc != SIGIL_OK) return rc;
+        sigil_apply_switch_title(out, &t);
+        return SIGIL_OK;
+    }
+
     /* prod.keys is required: without it no title id is read, not even from
      * NCA names, which a retail dump fills with content ids. */
     uint8_t hkey[32];

@@ -143,6 +143,7 @@ static sigil_platform sniff_from_extension(const char *filename) {
     if (strcmp(ext, "xci") == 0)   return SIGIL_PLATFORM_SWITCH;
     if (strcmp(ext, "nsz") == 0)   return SIGIL_PLATFORM_SWITCH;
     if (strcmp(ext, "xcz") == 0)   return SIGIL_PLATFORM_SWITCH;
+    if (strcmp(ext, "nup") == 0)   return SIGIL_PLATFORM_SWITCH;
     if (strcmp(ext, "wua") == 0)   return SIGIL_PLATFORM_WIIU;
     if (strcmp(ext, "3ds") == 0)   return SIGIL_PLATFORM_3DS;
     if (strcmp(ext, "cci") == 0)   return SIGIL_PLATFORM_3DS;

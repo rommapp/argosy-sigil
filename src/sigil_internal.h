@@ -206,6 +206,13 @@ int sigil_pfs0_extract_title(const sigil_io *io, uint64_t partition_off,
 
 void sigil_apply_switch_title(sigil_result *out, const sigil_switch_title *t);
 
+/* True when `magic` opens a NUP v1 container. */
+bool sigil_nup_is_container(const uint8_t magic[4]);
+
+/* Read the title facts of a NUP container from its TOC package records,
+ * preferring the base game over updates and add-ons. Needs no key material. */
+int sigil_nup_extract_title(const sigil_io *io, sigil_switch_title *out);
+
 int sigil_cnf_parse_boot(const uint8_t *cnf, size_t len,
                          const char *boot_key,
                          char raw[32], char canonical[32]);
@@ -306,6 +313,18 @@ void sigil_sha1_final(sigil_sha1 *s, uint8_t digest[20]);
 
 /** HMAC-SHA1 of `len` bytes of `data` under `key`. */
 void sigil_hmac_sha1(const uint8_t *key, size_t key_len, const void *data, size_t len, uint8_t mac[20]);
+
+/* SHA-256 (FIPS 180-4), for the NUP table-of-contents digest. */
+typedef struct {
+    uint32_t state[8];
+    uint64_t length;
+    uint8_t  buffer[64];
+    size_t   buffered;
+} sigil_sha256;
+
+void sigil_sha256_init(sigil_sha256 *s);
+void sigil_sha256_update(sigil_sha256 *s, const void *data, size_t len);
+void sigil_sha256_final(sigil_sha256 *s, uint8_t digest[32]);
 
 /** One named part of a unit and the MD5 of its bytes. */
 typedef struct {

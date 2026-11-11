@@ -1,13 +1,13 @@
 # Nintendo Switch
 
 Status: synced
-sigil identifies Switch XCI and NSP dumps with the user's keys, and collects and restores the save folders the yuzu forks (Eden, Citron, Sudachi, yuzu) keep per profile and per device.
+sigil identifies Switch XCI and NSP dumps with the user's keys and NUP dumps without them, and collects and restores the save folders the yuzu forks (Eden, Citron, Sudachi, yuzu) keep per profile and per device.
 
 ## Identification
 
 | Slug | Platform | Inputs | `title_id` example | `usage` | Status |
 |---|---|---|---|---|---|
-| `switch` | Nintendo Switch | `.nsp`, `.xci`, `.nsz`, `.xcz` | `0100ABCD12345000` | folder-exact | |
+| `switch` | Nintendo Switch | `.nsp`, `.xci`, `.nsz`, `.xcz`, `.nup` | `0100ABCD12345000` | folder-exact | |
 
 | Value | Meaning | Example |
 |---|---|---|
@@ -28,6 +28,15 @@ the game `0x1000` below its block.
 `.nsz` and `.xcz` are the NSP and XCI containers with their large NCAs
 compressed and renamed `.ncz`. The Meta NCA stays an uncompressed `.nca`, so
 the id is read from its CNMT exactly as in the uncompressed dump.
+
+`.nup` is the [NUP](https://github.com/a55uka/nup/blob/meow/SPEC.md) v1
+container (spec 1.0-draft) for unencrypted Switch 1 and Switch 2 dumps. Its
+package records carry each content's title id verbatim, so it needs no
+keys. sigil checks the TOC's SHA-256 before trusting it, skips a record with
+a zero id, and reads the base package ahead of an update or add-on. Switch 2
+ids start `04` (`0400E88025B1A000`); the result's platform is still
+`switch`. NUP stores a Switch 2 update under its game's own id, ending in
+`000`, so it reads as that game.
 
 ### Switch keys
 

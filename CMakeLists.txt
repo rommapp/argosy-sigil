@@ -122,6 +122,7 @@ set(SIGIL_SOURCES
     src/aes_xts.c
     src/switch_keys.c
     src/switch_nsp.c
+    src/switch_nup.c
     src/switch_xci.c
     src/switch_nca.c
     src/switch_cnmt.c
@@ -137,6 +138,7 @@ set(SIGIL_SOURCES
     src/n64.c
     src/md5.c
     src/sha1.c
+    src/sha256.c
     src/psp_sfo.c
     src/zip_entries.c
     src/save_layout.c
