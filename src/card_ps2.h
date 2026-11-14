@@ -133,6 +133,7 @@ void sigil_ps2_folder_superblock(uint8_t out[PS2_FOLDER_SUPERBLOCK_SIZE]);
 bool sigil_ps2_folder_superblock_usable(const uint8_t *data, size_t len);
 
 #define PS2_FOLDER_PATH_MAX 96
+#define PS2_FOLDER_META_PREFIX "_pcsx2_meta/"
 
 /** One file of a PCSX2 folder-card save folder, by its path inside the folder. */
 typedef struct {

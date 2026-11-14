@@ -1595,6 +1595,171 @@ static void check_folder_beside_file_card(const sigil_sync_result *first) {
     free(newer);
 }
 
+/* ---- cross-client: Tender's folder-card zip and Argosy's card unit -------------- */
+
+#define GTA_LCS        "BASLUS-21423GTA30001"
+#define GTA_LCS_CONTENT "Grand Theft Auto - Liberty City Stories (USA).iso"
+#define GTA_LCS_ID     "SLUS-21423"
+#define GTA_SAVE_CARD  "1: Home Sweet Home"
+#define GTA_SAVE_HOST  "1_ Home Sweet Home"
+
+static const struct { const char *name, *md5; } GTA_SHARED[] = {
+    { "icon.sys", "8d646e6da0b4ab02f65046b22e6a7802" },
+    { "lcsIcon.ico", "7ccf2f6dd47b9850720af737d31b40f0" },
+    { GTA_LCS, "cf5520406ea335e538a422c24bf25fd4" },
+};
+
+static bool md5_is(const uint8_t *data, size_t len, const char *want) {
+    char got[33];
+    sigil_md5_of(data, len, got);
+    return strcmp(got, want) == 0;
+}
+
+static bool file_md5_is(const sigil_ps2_file *f, const char *want) {
+    uint32_t len = (uint32_t)f->entry[4] | (uint32_t)f->entry[5] << 8 | (uint32_t)f->entry[6] << 16 | (uint32_t)f->entry[7] << 24;
+    return md5_is(f->data, len, want);
+}
+
+static const sigil_ps2_file *save_file(const sigil_ps2_save *save, const char *name) {
+    for (size_t i = 0; i < save->file_count; i++) {
+        char at[33];
+        snprintf(at, sizeof(at), "%.32s", (const char *)save->files[i].entry + 0x40);
+        if (strcmp(at, name) == 0) return &save->files[i];
+    }
+    return NULL;
+}
+
+/* The Tender zip without its .romm-backup/ folder. */
+static uint8_t *tender_zip_without_backups(const uint8_t *zip, size_t len, size_t *out_len) {
+    sigil_zip_member *members = NULL;
+    size_t count = 0, kept = 0;
+    uint8_t *out = NULL;
+    if (sigil_zip_read_mem(zip, len, SYNC_MAX_UNIT_MEMBER, &members, &count) != SIGIL_OK) return NULL;
+    sigil_zip_member *save = (sigil_zip_member *)calloc(count ? count : 1, sizeof(*save));
+    for (size_t i = 0; save && i < count; i++) {
+        if (!strstr(members[i].name, "/.romm-backup/")) save[kept++] = members[i];
+    }
+    if (!save || kept == count || sigil_zip_store(save, kept, &out, out_len) != SIGIL_OK) out = NULL;
+    free(save);
+    sigil_zip_members_free(members, count);
+    return out;
+}
+
+/* A Steam Deck save uploaded by Tender, a zip of the PCSX2 folder-card save
+ * folder, restores onto the shared card ARMSX2 reads: the card name comes
+ * back from _pcsx2_meta, the backups Tender keeps inside the folder stay
+ * off the card, and the other games stay. */
+static void check_tender_onto_file_card(const uint8_t *zip, size_t zip_len) {
+    const char *where = "tender onto file card";
+    size_t card_len = 0, clean_len = 0;
+    uint8_t *card = shared_card(ORDER_A, 3, &card_len);
+    uint8_t *clean = tender_zip_without_backups(zip, zip_len, &clean_len);
+    if (!card || !clean) { fail(where, "setup failed"); free(card); free(clean); return; }
+
+    mem_root with = {0}, without = {0};
+    root_put(&with, "Mcd001.ps2", card, card_len);
+    root_put(&without, "Mcd001.ps2", card, card_len);
+    game a, b;
+    make_game(&a, &with, GTA_LCS_CONTENT, GTA_LCS_ID, false);
+    make_game(&b, &without, GTA_LCS_CONTENT, GTA_LCS_ID, false);
+    sigil_sync_result *ra = NULL, *rb = NULL;
+    if (sigil_restore(&a.req, zip, zip_len, &ra) != SIGIL_OK) {
+        fail(where, "the zip with Tender's backups didn't restore");
+    } else if (sigil_restore(&b.req, clean, clean_len, &rb) != SIGIL_OK) {
+        fail(where, "the zip without Tender's backups didn't restore");
+    } else {
+        if (!roots_same(&with, &without)) fail(where, "Tender's backups changed what the restore wrote");
+        mem_file *f = root_find(&with, "Mcd001.ps2");
+        sigil_ps2_card restored;
+        if (!f || !load_card(f->data, f->len, &restored)) {
+            fail(where, "the shared card didn't load after the restore");
+        } else {
+            sigil_ps2_save gta, ace, ace_expected;
+            if (!extract_named(&restored, GTA_LCS, &gta)) {
+                fail(where, "the save isn't on the card");
+            } else {
+                const sigil_ps2_file *home = save_file(&gta, GTA_SAVE_CARD);
+                if (gta.file_count != 4) fail(where, "the save holds other than its four files");
+                if (!home || !file_md5_is(home, "d63d300f0271c44877c32995e4339eaf")) {
+                    fail(where, "the save file isn't the Deck's, under its card name");
+                }
+                for (size_t i = 0; i < sizeof(GTA_SHARED) / sizeof(GTA_SHARED[0]); i++) {
+                    const sigil_ps2_file *s = save_file(&gta, GTA_SHARED[i].name);
+                    if (!s || !file_md5_is(s, GTA_SHARED[i].md5)) fail(where, GTA_SHARED[i].name);
+                }
+                sigil_ps2_save_free(&gta);
+            }
+            if (!folder_save("ace-combat-04-aethersx2", &ace_expected)) {
+                fail(where, "setup failed");
+            } else {
+                if (!extract_named(&restored, ACE_COMBAT, &ace) || sigil_ps2_verify(&restored, &ace_expected) != SIGIL_OK) {
+                    fail(where, "another game's save changed");
+                } else {
+                    sigil_ps2_save_free(&ace);
+                }
+                sigil_ps2_save_free(&ace_expected);
+            }
+            sigil_ps2_card_free(&restored);
+        }
+    }
+    sigil_sync_result_free(ra);
+    sigil_sync_result_free(rb);
+    root_free(&with);
+    root_free(&without);
+    free(card);
+    free(clean);
+}
+
+/* Argosy's card unit from an AYN Thor restores onto the folder card PCSX2
+ * reads on the Deck, spelled as PCSX2 spells it: the file Tender uploaded
+ * as "1_ Home Sweet Home", with the card's name kept in _pcsx2_meta/. */
+static void check_argosy_onto_folder_card(void) {
+    const char *where = "argosy onto folder card";
+    size_t unit_len = 0;
+    uint8_t *unit = sample("gta-lcs-armsx2", &unit_len);
+    if (!unit) { fail(where, "setup failed"); return; }
+    mem_root root = {0};
+    put_superblock(&root, CARD1);
+    game g;
+    make_standalone(&g, &root, GTA_LCS_CONTENT, GTA_LCS_ID);
+    sigil_sync_result *r = NULL;
+    if (sigil_restore(&g.req, unit, unit_len, &r) != SIGIL_OK) {
+        fail(where, "restore failed");
+    } else {
+        mem_file *home = root_find(&root, CARD1 "/" GTA_LCS "/" GTA_SAVE_HOST);
+        mem_file *meta = root_find(&root, CARD1 "/" GTA_LCS "/" PS2_FOLDER_META_PREFIX GTA_SAVE_HOST);
+        if (!home || !md5_is(home->data, home->len, "b4ba4fb2467213433d522562ab6c7a4e")) {
+            fail(where, "the save file isn't the Thor's, under PCSX2's spelling");
+        }
+        if (!meta || meta->len != PS2_DIR_ENTRY_SIZE || strncmp((const char *)meta->data + 0x40, GTA_SAVE_CARD, 32) != 0) {
+            fail(where, "_pcsx2_meta doesn't keep the card's name");
+        }
+        if (root_find(&root, CARD1 "/" GTA_LCS "/" GTA_SAVE_CARD)) fail(where, "the card's name was written to the host");
+        for (size_t i = 0; i < sizeof(GTA_SHARED) / sizeof(GTA_SHARED[0]); i++) {
+            char at[SIGIL_SAVE_PATH_MAX];
+            snprintf(at, sizeof(at), CARD1 "/" GTA_LCS "/%s", GTA_SHARED[i].name);
+            mem_file *f = root_find(&root, at);
+            if (!f || !md5_is(f->data, f->len, GTA_SHARED[i].md5)) fail(where, GTA_SHARED[i].name);
+        }
+    }
+    sigil_sync_result_free(r);
+    root_free(&root);
+    free(unit);
+}
+
+static void check_cross_client(void) {
+    if (!corpus_present(&g_manifest, "ps2", "gta-lcs-tender") || !corpus_present(&g_manifest, "ps2", "gta-lcs-armsx2")) {
+        fprintf(stderr, "SKIP: cross-client samples missing\n");
+        return;
+    }
+    size_t zip_len = 0;
+    uint8_t *zip = sample("gta-lcs-tender", &zip_len);
+    if (!zip) { fail("cross client", "setup failed"); return; }
+    check_tender_onto_file_card(zip, zip_len);
+    check_argosy_onto_folder_card();
+    free(zip);
+}
+
 int main(void) {
     char path[1024];
     if (corpus_platform_path("ps2", "manifest.tsv", path, sizeof(path)) != 0 || corpus_load(path, &g_manifest) != 0) {
@@ -1637,6 +1802,7 @@ int main(void) {
     check_writes_stay_inside();
     check_folder_beside_file_card(first);
     check_folder_other_games_dont_fill_the_card(first);
+    check_cross_client();
     sigil_sync_result_free(first);
 
     corpus_free(&g_manifest);

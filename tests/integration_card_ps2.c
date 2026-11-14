@@ -684,6 +684,67 @@ static void check_meta_for_file_mode(const corpus_table *manifest) {
     free_folder(files, n);
 }
 
+/* A card name the host can't hold unpacks as PCSX2 spells it, with the card's
+ * name kept in _pcsx2_meta/, and packs back to the card's name. */
+static void check_meta_for_cleaned_name(const corpus_table *manifest) {
+    static const struct { const char *card, *host; } NAMES[] = {
+        { "a\\b%c:d|e\"f<g>h", "a_b_c_d_e_f_g_h" },
+        { "save. .", "save___" },
+        { "dots.in.middle", "dots.in.middle" },
+    };
+    sigil_ps2_folder_file files[16];
+    char folder[64];
+    size_t n = load_folder(manifest, "ace-combat-04-aethersx2", files, 16, folder);
+    for (size_t k = 0; n && k < sizeof(NAMES) / sizeof(NAMES[0]); k++) {
+        sigil_ps2_save save, back;
+        sigil_ps2_folder_file *unpacked = NULL;
+        size_t unpacked_n = 0;
+        char meta[PS2_FOLDER_PATH_MAX];
+        snprintf(meta, sizeof(meta), PS2_FOLDER_META_PREFIX "%s", NAMES[k].host);
+        bool cleaned = strcmp(NAMES[k].card, NAMES[k].host) != 0;
+        if (sigil_ps2_pack(folder, files, n, &save) != SIGIL_OK || save.file_count == 0) {
+            fail(NAMES[k].card, "setup failed");
+            continue;
+        }
+        memset(save.files[0].entry + 0x40, 0, 32);
+        memcpy(save.files[0].entry + 0x40, NAMES[k].card, strlen(NAMES[k].card));
+        if (sigil_ps2_unpack(&save, &unpacked, &unpacked_n) != SIGIL_OK || !find_path(unpacked, unpacked_n, NAMES[k].host)) {
+            fail(NAMES[k].card, "the file isn't under PCSX2's spelling");
+        } else if (find_path(unpacked, unpacked_n, NAMES[k].card) && cleaned) {
+            fail(NAMES[k].card, "the card's name reached the host");
+        } else if ((find_path(unpacked, unpacked_n, meta) != NULL) != cleaned) {
+            fail(NAMES[k].card, "_pcsx2_meta is written for a name PCSX2 left alone, or missing for one it changed");
+        } else if (sigil_ps2_pack(folder, unpacked, unpacked_n, &back) != SIGIL_OK) {
+            fail(NAMES[k].card, "the unpacked folder didn't pack");
+        } else {
+            char want[33], got[33];
+            sigil_ps2_save_md5(&save, want);
+            sigil_ps2_save_md5(&back, got);
+            if (strcmp(want, got) != 0) fail(NAMES[k].card, "the save changed on the folder round trip");
+            sigil_ps2_save_free(&back);
+        }
+        sigil_ps2_folder_files_free(unpacked, unpacked_n);
+        sigil_ps2_save_free(&save);
+    }
+    sigil_ps2_save twins;
+    if (n && sigil_ps2_pack(folder, files, n, &twins) == SIGIL_OK && twins.file_count >= 2) {
+        sigil_ps2_folder_file *unpacked = NULL;
+        size_t unpacked_n = 0;
+        memset(twins.files[0].entry + 0x40, 0, 32);
+        memset(twins.files[1].entry + 0x40, 0, 32);
+        memcpy(twins.files[0].entry + 0x40, "a:b", 3);
+        memcpy(twins.files[1].entry + 0x40, "a|b", 3);
+        if (sigil_ps2_unpack(&twins, &unpacked, &unpacked_n) != SIGIL_ERR_UNSUPPORTED_FORMAT) {
+            fail("a:b and a|b", "two card names PCSX2 spells alike unpacked onto one host file");
+        }
+        sigil_ps2_folder_files_free(unpacked, unpacked_n);
+        sigil_ps2_save_free(&twins);
+    } else {
+        fail("a:b and a|b", "setup failed");
+    }
+    free_folder(files, n);
+}
+
 /* The folder's own times come from the index's $ROOT row, which older
  * PCSX2 builds wrote as %ROOT. */
 static void check_root_times(const corpus_table *manifest) {
@@ -752,6 +813,7 @@ int main(void) {
     check_meta_for_hidden_folder(&manifest);
     check_ecc_on_changed_pages(&manifest);
     check_meta_for_file_mode(&manifest);
+    check_meta_for_cleaned_name(&manifest);
     check_root_times(&manifest);
     int missing = g_cards ? corpus_count_missing(&manifest, "ps2") : 0;
     corpus_free(&manifest);

@@ -866,7 +866,6 @@ void sigil_ps2_save_md5(const sigil_ps2_save *save, char out[33]) {
 
 #define PCSX2_INDEX          "_pcsx2_index"
 #define PCSX2_META_DIR       "_pcsx2_meta_directory"
-#define PCSX2_META_PREFIX    "_pcsx2_meta/"
 #define PCSX2_PREFIX         "_pcsx2_"
 #define PCSX2_DIR_MODE       0x8427u
 #define PCSX2_FILE_MODE      0x8497u
@@ -1091,6 +1090,24 @@ static void entry_name(const uint8_t *e, char out[PS2_NAME_LEN + 1]) {
     out[PS2_NAME_LEN] = '\0';
 }
 
+/* The name PCSX2 gives card entry `name` on the host, and whether it differs
+ * (FileAccessHelper::CleanMemcardFilename): \ % : | " < > become '_', and so
+ * do the dots and spaces that end the name. */
+static bool host_name(const char *name, char out[PS2_NAME_LEN + 1]) {
+    bool cleaned = false;
+    size_t n = 0;
+    for (; name[n] && n < PS2_NAME_LEN; n++) {
+        out[n] = strchr("\\%:|\"<>", name[n]) ? '_' : name[n];
+        cleaned |= out[n] != name[n];
+    }
+    out[n] = '\0';
+    for (; n > 0 && (out[n - 1] == ' ' || out[n - 1] == '.'); n--) {
+        out[n - 1] = '_';
+        cleaned = true;
+    }
+    return cleaned;
+}
+
 void sigil_ps2_folder_files_free(sigil_ps2_folder_file *files, size_t count) {
     if (!files) return;
     for (size_t i = 0; i < count; i++) free(files[i].data);
@@ -1161,16 +1178,17 @@ int sigil_ps2_unpack(const sigil_ps2_save *save, sigil_ps2_folder_file **files, 
 
     for (size_t i = 0; i < save->file_count && rc == SIGIL_OK; i++) {
         const sigil_ps2_file *f = &save->files[i];
-        char name[PS2_NAME_LEN + 1], key[2 * PS2_NAME_LEN + 3];
-        entry_name(f->entry, name);
-        if (!plain_name(name) || strncmp(name, PCSX2_PREFIX, strlen(PCSX2_PREFIX)) == 0) {
+        char card_name[PS2_NAME_LEN + 1], name[PS2_NAME_LEN + 1], key[2 * PS2_NAME_LEN + 3];
+        entry_name(f->entry, card_name);
+        bool cleaned = host_name(card_name, name);
+        if (!plain_name(name) || strncmp(name, PCSX2_PREFIX, strlen(PCSX2_PREFIX)) == 0 || find_folder_file(out, n, name)) {
             rc = SIGIL_ERR_UNSUPPORTED_FORMAT;
             break;
         }
         if (!add_folder_file(out, &n, name, f->data, sigil_read_le32(f->entry + PS2_ENTRY_LENGTH))) { rc = SIGIL_ERR_OOM; break; }
-        if (!rebuilds_without_meta(f->entry, PCSX2_FILE_MODE)) {
+        if (cleaned || !rebuilds_without_meta(f->entry, PCSX2_FILE_MODE)) {
             char meta[PS2_FOLDER_PATH_MAX];
-            snprintf(meta, sizeof(meta), "%s%s", PCSX2_META_PREFIX, name);
+            snprintf(meta, sizeof(meta), "%s%s", PS2_FOLDER_META_PREFIX, name);
             if (!add_folder_file(out, &n, meta, f->entry, PS2_ENTRY_SIZE)) { rc = SIGIL_ERR_OOM; break; }
         }
         quoted_key(name, key, sizeof(key));
@@ -1205,13 +1223,18 @@ static int compare_items(const void *a, const void *b) {
 
 /* The entry PCSX2 builds for `name`: its default, with whatever bytes the
  * _pcsx2_meta file `meta` (or NULL) holds read over it, as PCSX2 reads a meta
- * file of any length (MemoryCardFolder.cpp). The file or folder on the host
- * names the entry. PCSX2 keeps a full meta's own name instead; sigil keeps
- * the host's, so a folder packs back to the files it unpacked to. */
+ * file of any length (MemoryCardFolder.cpp). A full meta names the entry when
+ * its name is the one PCSX2 wrote `name` for, such as "1: Home" for the host
+ * file "1_ Home"; otherwise the file or folder on the host names it, so a
+ * meta can't move one file's entry onto another's name. */
 static void entry_from_meta(uint8_t e[PS2_ENTRY_SIZE], const sigil_ps2_folder_file *meta, const char *name,
                             uint16_t mode, int64_t created, int64_t modified) {
     default_entry(e, mode, name, created, modified);
     if (meta) memcpy(e, meta->data, meta->len < PS2_ENTRY_SIZE ? meta->len : PS2_ENTRY_SIZE);
+    char card_name[PS2_NAME_LEN + 1], written[PS2_NAME_LEN + 1];
+    entry_name(e, card_name);
+    host_name(card_name, written);
+    if (meta && meta->len >= PS2_ENTRY_NAME + PS2_NAME_LEN && card_name[0] && strcmp(written, name) == 0) return;
     memset(e + PS2_ENTRY_NAME, 0, PS2_NAME_LEN);
     memcpy(e + PS2_ENTRY_NAME, name, strlen(name));
 }
@@ -1255,7 +1278,7 @@ int sigil_ps2_pack(const char *folder, const sigil_ps2_folder_file *files, size_
         const sigil_ps2_folder_file *f = items[i].file;
         sigil_ps2_file *pf = &out->files[out->file_count];
         char meta_path[PS2_FOLDER_PATH_MAX];
-        snprintf(meta_path, sizeof(meta_path), "%s%s", PCSX2_META_PREFIX, f->path);
+        snprintf(meta_path, sizeof(meta_path), "%s%s", PS2_FOLDER_META_PREFIX, f->path);
         const sigil_ps2_folder_file *meta = find_folder_file(files, count, meta_path);
         const index_row *row = index_find(&index, f->path);
         entry_from_meta(pf->entry, meta, f->path, PCSX2_FILE_MODE, row && row->has_created ? row->created : 0,

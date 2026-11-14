@@ -149,8 +149,9 @@ int sigil_sync_load_folder_card(const sigil_sync_ctx *x, const char *dir, sigil_
 
 /* The save folder a zip member sits in and its path inside the folder, for a
  * zip of PCSX2 save folders: <folder>/<path>, or <card>.ps2/<folder>/<path>
- * when the zip was taken at the card. False for the card's own files and a
- * member outside any folder. */
+ * when the zip was taken at the card. False for the card's own files, a
+ * member outside any folder, and a member in a subfolder of a save folder
+ * other than _pcsx2_meta/, since a PS2 save folder holds no folders. */
 static bool folder_member(const char *name, char folder[SIGIL_CARD_NAME_MAX], const char **path) {
     const char *slash = strchr(name, '/');
     if (slash && slash - name > 4 && strncmp(slash - 4, ".ps2", 4) == 0) {
@@ -158,6 +159,8 @@ static bool folder_member(const char *name, char folder[SIGIL_CARD_NAME_MAX], co
         slash = strchr(name, '/');
     }
     if (!slash || slash == name || (size_t)(slash - name) >= SIGIL_CARD_NAME_MAX || !slash[1]) return false;
+    const char *in = slash + 1;
+    if (strchr(in, '/') && strncmp(in, PS2_FOLDER_META_PREFIX, strlen(PS2_FOLDER_META_PREFIX)) != 0) return false;
     snprintf(folder, SIGIL_CARD_NAME_MAX, "%.*s", (int)(slash - name), name);
     *path = slash + 1;
     return true;
