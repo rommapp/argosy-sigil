@@ -66,6 +66,10 @@ data class SigilResult(
     companion object {
         const val FEATURE_RTC = 1
         const val FEATURE_MBC2 = 2
+        const val FEATURE_GBA_SRAM = 4
+        const val FEATURE_GBA_FLASH = 8
+        const val FEATURE_GBA_FLASH1M = 16
+        const val FEATURE_GBA_EEPROM = 32
 
         /**
          * A result rebuilt from stored columns, or built for a platform that has no title id.

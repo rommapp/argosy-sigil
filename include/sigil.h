@@ -107,19 +107,34 @@ typedef enum {
     /* title_id and raw_serial are the cart header's game code (NSME), empty
      * on a cart without one. N64 emulators name saves after the content
      * file, not the code. */
-    SIGIL_PLATFORM_N64
+    SIGIL_PLATFORM_N64,
+    /* Like GB: saves key on the content file's stem, and extraction reads
+     * the ROM only for SIGIL_FEATURE_* facts. */
+    SIGIL_PLATFORM_GBA
 } sigil_platform;
 
 /* Cart facts read from the ROM header that change what a save unit holds.
- * RTC: the cart carries a real-time clock, so a libretro core exposes
- * RETRO_MEMORY_RTC and the frontend persists it beside the SRAM (RetroArch
- * writes `<stem>.rtc`). GB: header byte 0x147 in {0x0F, 0x10, 0xFD, 0xFE}.
- * SNES: (ROMType << 8 | ROMSpeed) is 0x5535 (S-RTC) or 0xF93A (SPC7110 RTC). */
+ * RTC: the cart carries a real-time clock. On GB and SNES a libretro core
+ * exposes it as RETRO_MEMORY_RTC and the frontend persists it beside the
+ * SRAM (RetroArch writes `<stem>.rtc`). GB: header byte 0x147 in {0x0F,
+ * 0x10, 0xFD, 0xFE}. SNES: (ROMType << 8 | ROMSpeed) is 0x5535 (S-RTC) or
+ * 0xF93A (SPC7110 RTC). GBA: the ROM carries Nintendo's clock library id
+ * (SIIRTC_Vnnn); no libretro GBA core persists the clock, and standalone
+ * mGBA appends it to the `.sav`. */
 #define SIGIL_FEATURE_RTC  (1u << 0)
 /* MBC2: a GB cart whose RAM is 512 four-bit cells inside the mapper, which
  * emulators store as 256, 512 or 8192 bytes. GB: header byte 0x147 in
  * {0x05, 0x06}. */
 #define SIGIL_FEATURE_MBC2 (1u << 1)
+/* The GBA save chip the ROM's Nintendo save library id names: SRAM_Vnnn or
+ * SRAM_F_Vnnn (32 KiB SRAM), FLASH_Vnnn or FLASH512_Vnnn (64 KiB flash),
+ * FLASH1M_Vnnn (128 KiB flash), EEPROM_Vnnn (512 bytes or 8 KiB: the size is
+ * chosen in the game's code, not named in the ROM). At most one is set; a
+ * ROM naming two kinds of chip, or none, sets none. */
+#define SIGIL_FEATURE_GBA_SRAM    (1u << 2)
+#define SIGIL_FEATURE_GBA_FLASH   (1u << 3)
+#define SIGIL_FEATURE_GBA_FLASH1M (1u << 4)
+#define SIGIL_FEATURE_GBA_EEPROM  (1u << 5)
 
 typedef enum {
     SIGIL_SOURCE_BINARY = 0,

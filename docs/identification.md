@@ -39,9 +39,9 @@ says how it finds the id and where its `save_id` diverges.
   against real-world samples (PS3, Xbox, Xbox 360, Dreamcast).
   Consumers should surface this to users so a low-confidence
   result can be flagged in UI / logs.
-- `features` holds `SIGIL_FEATURE_*` facts read from a cart header, such as a
-  real-time clock on Game Boy and SNES carts; see
-  [save-units.md](save-units.md#features).
+- `features` holds `SIGIL_FEATURE_*` facts read from a cart, such as a
+  real-time clock on Game Boy, SNES and GBA carts or a GBA cart's save
+  chip; see [save-units.md](save-units.md#features).
 
 Persist `save_id`, `raw_serial` and `usage` alongside `title_id` on your
 game record once you extract them. `title_id` doesn't change, and

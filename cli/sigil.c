@@ -50,6 +50,27 @@ static const char *content_type_to_str(int t) {
     }
 }
 
+/* The SIGIL_FEATURE_* names set in `f`, comma-separated, or "-" for none. */
+static void features_to_str(uint32_t f, char *out, size_t cap) {
+    static const struct { uint32_t bit; const char *name; } NAMES[] = {
+        { SIGIL_FEATURE_RTC, "rtc" },
+        { SIGIL_FEATURE_MBC2, "mbc2" },
+        { SIGIL_FEATURE_GBA_SRAM, "gba-sram" },
+        { SIGIL_FEATURE_GBA_FLASH, "gba-flash" },
+        { SIGIL_FEATURE_GBA_FLASH1M, "gba-flash1m" },
+        { SIGIL_FEATURE_GBA_EEPROM, "gba-eeprom" },
+    };
+    size_t n = 0;
+    out[0] = '\0';
+    for (size_t i = 0; i < sizeof(NAMES) / sizeof(NAMES[0]); i++) {
+        if (!(f & NAMES[i].bit)) continue;
+        int w = snprintf(out + n, cap - n, "%s%s", n ? "," : "", NAMES[i].name);
+        if (w < 0 || (size_t)w >= cap - n) break;
+        n += (size_t)w;
+    }
+    if (!n) snprintf(out, cap, "-");
+}
+
 static void print_usage(void) {
     fprintf(stderr,
         "sigil %s. Reads the platform-native title ID from a ROM file.\n"
@@ -59,7 +80,7 @@ static void print_usage(void) {
         "Options:\n"
         "  --platform=<slug>   Force a platform (psp, psx, ps2, ps3, switch, 3ds,\n"
         "                      wii, wiiu, gamecube, psvita, xbox, xbox360,\n"
-        "                      dreamcast, gb, gbc, snes, n64).\n"
+        "                      dreamcast, gb, gbc, gba, snes, n64).\n"
         "                      Default: auto-detect.\n"
         "  --prod-keys=<path>  Switch prod.keys file for NCA decryption.\n"
         "  --help              Show this message.\n",
@@ -120,12 +141,13 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    char features[96];
+    features_to_str(r.features, features, sizeof(features));
     printf("platform=%s title_id=%s raw_serial=%s save_id=%s usage=%s source=%s experimental=%d content_type=%s title_version=%u features=%s\n",
            sigil_platform_to_slug(r.platform),
            r.title_id, r.raw_serial, r.save_id,
            usage_to_str(r.usage), source_to_str(r.source), r.experimental,
-           content_type_to_str(r.switch_content_type), r.title_version,
-           (r.features & SIGIL_FEATURE_RTC) ? "rtc" : "-");
+           content_type_to_str(r.switch_content_type), r.title_version, features);
     if (r.platform == SIGIL_PLATFORM_N64) {
         printf("n64_header=%s n64_md5=%s n64_md5_n64=%s\n", r.n64_header, r.n64_md5, r.n64_md5_n64);
     }

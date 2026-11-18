@@ -22,6 +22,11 @@ platform=psvita title_id=PCSE00695 raw_serial=PCSE00695 save_id=PCSE00695 usage=
 $ sigil "/path/to/1080 Snowboarding (Japan, USA) (En,Ja).z64"
 platform=n64 title_id=NTEA raw_serial=NTEA save_id=NTEA usage=file-prefix source=binary experimental=0 content_type=unknown title_version=0 features=-
 n64_header=1080 SNOWBOARDING n64_md5=FA27089C425DBAB99F19245C5C997613 n64_md5_n64=10C93DD78B695CD32B6938534ED0EDD5
+
+# features names each SIGIL_FEATURE_* bit the cart sets: rtc, mbc2, gba-sram,
+# gba-flash, gba-flash1m, gba-eeprom, or - for none
+$ sigil "/path/to/Pokemon - Emerald Version (USA, Europe).gba"
+platform=gba title_id= raw_serial= save_id= usage=file-prefix source=binary experimental=0 content_type=unknown title_version=0 features=rtc,gba-flash1m
 ```
 
 Pass `--platform=auto` (the default) to sniff from the file extension.

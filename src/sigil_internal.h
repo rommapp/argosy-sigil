@@ -282,6 +282,8 @@ int sigil_extract_snes(const sigil_io *io, const char *filename_hint,
                        const sigil_options *opts, sigil_result *out);
 int sigil_extract_n64(const sigil_io *io, const char *filename_hint,
                       const sigil_options *opts, sigil_result *out);
+int sigil_extract_gba(const sigil_io *io, const char *filename_hint,
+                      const sigil_options *opts, sigil_result *out);
 
 typedef struct {
     uint32_t state[4];

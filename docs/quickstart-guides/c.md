@@ -44,9 +44,9 @@ older than the dump's key generation, or a wrong header key)
 ```c
 typedef struct {
     uint32_t struct_version;
-    char title_id[32];            /* "" on gb, gbc, snes. A Switch update or DLC gives its game's id. */
+    char title_id[32];            /* "" on gb, gbc, gba, snes. A Switch update or DLC gives its game's id. */
     char raw_serial[32];          /* As found in the binary; a Switch update's or DLC's own id. */
-    char save_id[32];             /* On-disk name the emulator keys the save by. "" on gb, gbc, snes. */
+    char save_id[32];             /* On-disk name the emulator keys the save by. "" on gb, gbc, gba, snes. */
     sigil_platform platform;      /* sigil_platform_to_slug() for the slug. */
     sigil_source source;          /* SIGIL_SOURCE_BINARY, SIGIL_SOURCE_FILENAME. */
     sigil_usage usage;            /* SIGIL_USAGE_FOLDER_EXACT, _FOLDER_PREFIX, _FILE_EXACT, _FILE_PREFIX,
@@ -54,7 +54,7 @@ typedef struct {
     int experimental;
     int switch_content_type;      /* SIGIL_SWITCH_CONTENT_UNKNOWN, _APPLICATION, _PATCH, _ADDON. */
     uint32_t title_version;       /* Switch only. */
-    uint32_t features;            /* Bit set. SIGIL_FEATURE_RTC: cart has a clock. SIGIL_FEATURE_MBC2: MBC2 RAM. */
+    uint32_t features;            /* Bit set. SIGIL_FEATURE_RTC: cart has a clock. SIGIL_FEATURE_MBC2: MBC2 RAM. SIGIL_FEATURE_GBA_*: a GBA cart's save chip. */
     char n64_header[24];          /* N64 only. The cart's name; "" when not plain ASCII. */
     char n64_md5[33];             /* N64 only. The ROM's MD5 in .z64 byte order, uppercase. */
     char n64_md5_n64[33];         /* N64 only. The same in .n64 byte order, as Project64 hashes it. */

@@ -38,6 +38,7 @@ static const platform_slug PLATFORM_SLUGS[] = {
     { SIGIL_PLATFORM_GBC,      "gbc"      },
     { SIGIL_PLATFORM_SNES,     "snes"     },
     { SIGIL_PLATFORM_N64,      "n64"      },
+    { SIGIL_PLATFORM_GBA,      "gba"      },
 };
 static const size_t PLATFORM_SLUG_COUNT = sizeof(PLATFORM_SLUGS) / sizeof(PLATFORM_SLUGS[0]);
 
@@ -183,6 +184,7 @@ static sigil_platform sniff_from_extension(const char *filename) {
     if (strcmp(ext, "z64") == 0)   return SIGIL_PLATFORM_N64;
     if (strcmp(ext, "v64") == 0)   return SIGIL_PLATFORM_N64;
     if (strcmp(ext, "n64") == 0)   return SIGIL_PLATFORM_N64;
+    if (strcmp(ext, "gba") == 0)   return SIGIL_PLATFORM_GBA;
 
     /* `Game.xiso.iso` is a real convention in Xbox sets, and the trailing
      * `.iso` alone would throw away what the name already states. */
@@ -369,6 +371,7 @@ static int dispatch(const sigil_io *io, const char *filename_hint,
     }
     case SIGIL_PLATFORM_SNES:     return sigil_extract_snes(io, filename_hint, opts, out);
     case SIGIL_PLATFORM_N64:      return sigil_extract_n64(io, filename_hint, opts, out);
+    case SIGIL_PLATFORM_GBA:      return sigil_extract_gba(io, filename_hint, opts, out);
     default:                       return SIGIL_ERR_UNKNOWN_PLATFORM;
     }
 }

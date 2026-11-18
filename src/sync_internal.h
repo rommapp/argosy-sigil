@@ -205,6 +205,17 @@ int sigil_sync_collect_gb(sigil_sync_ctx *x, sigil_sync_result *r);
 int sigil_sync_restore_gb(sigil_sync_ctx *x, const uint8_t *unit, size_t len, size_t received_len,
                           sigil_sync_result *r, char local_identity[33]);
 
+/* ---- Game Boy Advance cartridges (sync_gba.c) --------------------------------- */
+
+/** Collect on GBA: the save chip's bytes at the chip's size, from any emulator's file. */
+int sigil_sync_collect_gba(sigil_sync_ctx *x, sigil_sync_result *r);
+/**
+ * Restore on GBA: sigil's unit, or any emulator's file as clients uploaded
+ * it before sigil, written in the form the request's emulator keeps.
+ */
+int sigil_sync_restore_gba(sigil_sync_ctx *x, const uint8_t *unit, size_t len, size_t received_len,
+                           sigil_sync_result *r, char local_identity[33]);
+
 enum { SYNC_OWN_GAME, SYNC_OWN_OTHER, SYNC_OWN_NONE, SYNC_OWN_COMPANION };
 
 /* Whose saves a unit or card read takes: the game's, the game's and its

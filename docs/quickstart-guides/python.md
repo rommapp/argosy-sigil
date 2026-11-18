@@ -26,9 +26,9 @@ sigil.extract(
 
 ```python
 SigilResult(
-    title_id: str,              # "" on gb, gbc, snes. A Switch update or DLC gives its game's id.
+    title_id: str,              # "" on gb, gbc, gba, snes. A Switch update or DLC gives its game's id.
     raw_serial: str,            # As found in the binary; a Switch update's or DLC's own id.
-    save_id: str,               # On-disk name the emulator keys the save by. "" on gb, gbc, snes.
+    save_id: str,               # On-disk name the emulator keys the save by. "" on gb, gbc, gba, snes.
     platform: str,
     source: str,                # "binary", "filename".
     usage: str,                 # "folder-exact", "folder-prefix", "file-exact", "file-prefix",
@@ -36,7 +36,7 @@ SigilResult(
     experimental: bool,
     switch_content_type: str,   # "unknown", "application", "patch", "addon".
     title_version: int,         # Switch only.
-    features: int,              # Bit set. FEATURE_RTC: cart has a clock. has_rtc reads it.
+    features: int,              # Bit set. FEATURE_RTC: cart has a clock. has_rtc reads it. FEATURE_GBA_*: a GBA cart's save chip.
     n64_header: str,            # N64 only. The cart's name; "" when not plain ASCII.
     n64_md5: str,               # N64 only. The ROM's MD5 in .z64 byte order, uppercase.
     n64_md5_n64: str,           # N64 only. The same in .n64 byte order, as Project64 hashes it.
