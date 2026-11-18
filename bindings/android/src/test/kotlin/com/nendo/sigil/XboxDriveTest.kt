@@ -26,6 +26,9 @@ class XboxDriveTest {
         fun hostLibrary() = FileAccessTest.hostLibrary()
 
         private val SAMPLE = File("../../tests/fixtures/saves/xbox/files/xemu-blank/xbox_hdd.qcow2")
+
+        /** xemu has no drive until its hdd_path setting names one. */
+        private val DRIVE = mapOf("hdd_path" to "/home/me/.local/share/xemu/xemu/xbox_hdd.qcow2")
     }
 
     private val halo = SigilResult.persisted("xbox", "MS-004", "4D530004", 0)
@@ -70,8 +73,8 @@ class XboxDriveTest {
         val root = Files.createTempDirectory("sigil-xbox").toFile()
         val drive = File(root, "xbox_hdd.qcow2")
         SAMPLE.copyTo(drive)
-        val restored = Sigil.restore(unit(), halo, "xemu", "Halo (USA).iso", root.path, fileAccess = access)
-        val back = Sigil.collect(halo, "xemu", "Halo (USA).iso", root.path, fileAccess = access)
+        val restored = Sigil.restore(unit(), halo, "xemu", "Halo (USA).iso", root.path, options = DRIVE, fileAccess = access)
+        val back = Sigil.collect(halo, "xemu", "Halo (USA).iso", root.path, options = DRIVE, fileAccess = access)
         assertEquals(restored.identityHash, back.identityHash)
         return drive
     }
@@ -98,7 +101,7 @@ class XboxDriveTest {
         val root = Files.createTempDirectory("sigil-xbox").toFile()
         val drive = File(root, "xbox_hdd.qcow2")
         SAMPLE.copyTo(drive)
-        Sigil.restore(unit(), halo, "xemu", "Halo (USA).iso", root.path)
+        Sigil.restore(unit(), halo, "xemu", "Halo (USA).iso", root.path, options = DRIVE)
         assertArrayEquals(restoreWith(Counting(false)).readBytes(), drive.readBytes())
     }
 
@@ -106,11 +109,17 @@ class XboxDriveTest {
     fun aRestoreWithoutADriveImageNamesTheOneItNeeds() {
         val root = Files.createTempDirectory("sigil-xbox-empty").toFile()
         try {
-            Sigil.restore(unit(), halo, "xemu", "Halo (USA).iso", root.path)
+            Sigil.restore(unit(), halo, "xemu", "Halo (USA).iso", root.path, options = DRIVE)
             fail("a restore with no drive image was taken")
         } catch (e: SigilException) {
             assertEquals(SigilException.NO_TARGET, e.code)
             assertEquals("xbox_hdd.qcow2", e.problem)
+        }
+        try {
+            Sigil.restore(unit(), halo, "xemu", "Halo (USA).iso", root.path)
+            fail("a restore that names no drive was taken")
+        } catch (e: SigilException) {
+            assertEquals(SigilException.INVALID_ARG, e.code)
         }
     }
 }
