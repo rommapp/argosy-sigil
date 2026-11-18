@@ -17,10 +17,11 @@
  * holds it. Its identity leaves out trailing 0xFF, so a save has one identity
  * in either core. Restore writes Genesis Plus GX's file without the trailing
  * 0xFF, and PicoDrive's padded with 0xFF to PicoDrive's size, so the game
- * reads in PicoDrive the bytes it read in Genesis Plus GX: the size of the
- * PicoDrive file already there, else 32 KiB on Master System and Game Gear,
- * else the unit's own length. Neither file runs past the RAM its core keeps. Restore also takes a zip of the one save, under
- * RomM's neutral name save.sram or an emulator's. */
+ * reads in PicoDrive the bytes it read in Genesis Plus GX: 32 KiB on Master
+ * System and Game Gear; on Mega Drive and 32X the size of the file already
+ * there when it holds the whole save, else the unit's own length. Neither
+ * file runs past the RAM its core keeps. Restore also takes a zip of the one
+ * save, under RomM's neutral name save.sram or an emulator's. */
 #include "sync_internal.h"
 
 /* More than either core keeps for any cart: Genesis Plus GX caps the window
@@ -53,12 +54,17 @@ static void identity_of(const uint8_t *ram, size_t len, char out[33]) {
     sigil_md5_of(ram, trimmed_len(ram, len), out);
 }
 
-/* PicoDrive's size for the save: the file already there, else the one size it
- * keeps on Master System and Game Gear; 0 when only the ROM header knows. */
-static size_t picodrive_size(const sigil_sync_request *req, size_t local_len) {
-    if (local_len) return local_len;
+/* PicoDrive's size for the save `ram`, 0 when sigil can't tell it. On Master
+ * System and Game Gear it is 32 KiB for every cart (pico/cart.c
+ * PicoCartDetectMS). On Mega Drive and 32X it comes from the ROM header and
+ * carthw.cfg (PicoCartDetect), which sigil doesn't read, so it is the length
+ * of the file already there, and only when that file holds the whole save:
+ * the file is PicoDrive's size only if PicoDrive wrote it, and in a saves
+ * folder both cores share Genesis Plus GX may have written it, trimmed. */
+static size_t picodrive_size(const sigil_sync_request *req, const uint8_t *ram, size_t len, size_t local_len) {
     const char *slug = sigil_layout_platform(req->save.platform);
-    return strcmp(slug, "sms") == 0 || strcmp(slug, "gamegear") == 0 ? SEGA_8BIT_RAM : 0;
+    if (strcmp(slug, "sms") == 0 || strcmp(slug, "gamegear") == 0) return SEGA_8BIT_RAM;
+    return local_len >= trimmed_len(ram, len) ? local_len : 0;
 }
 
 /* The bytes restore writes: the RAM in the form of the request's core, never
@@ -75,7 +81,7 @@ static int file_bytes(const sigil_sync_request *req, const uint8_t *ram, size_t 
         break;
     }
     case FORM_PICODRIVE: {
-        size_t size = picodrive_size(req, local_len);
+        size_t size = picodrive_size(req, ram, len, local_len);
         *out_len = size ? size : len;
         break;
     }

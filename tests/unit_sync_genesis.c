@@ -200,6 +200,55 @@ static void check_8bit_size(void) {
     free(window);
 }
 
+/* The file already there may be one Genesis Plus GX wrote, trimmed, into a
+ * saves folder both cores share, so it can be shorter than the save. Restore
+ * for PicoDrive never writes fewer bytes than the save holds: on Mega Drive
+ * and 32X, past a file that can't hold it, the save goes as it came, and on
+ * Master System and Game Gear PicoDrive gets its 32 KiB whatever is there.
+ * A file that holds the whole save sets the size on Mega Drive and 32X. */
+static void check_stale_short_file(void) {
+    static const struct { const char *platform; size_t want; } CASES[] = {
+        { "genesis", 0 }, { "32x", 0 }, { "sms", 0x8000 }, { "gamegear", 0x8000 },
+    };
+    uint8_t *save = window_of(0x10000, 0x300, true, 0xFF);
+    size_t save_len = without_ff(save, 0x10000);
+    uint8_t *stale = window_of(0x10000, 0x40, true, 0xFF);
+    size_t stale_len = without_ff(stale, 0x10000);
+    for (size_t i = 0; i < sizeof(CASES) / sizeof(CASES[0]); i++) {
+        char where[64];
+        snprintf(where, sizeof(where), "%s next to a stale %zu-byte file", CASES[i].platform, stale_len);
+        mem_root root = {0};
+        root_put(&root, "Game.srm", stale, stale_len);
+        size_t want = CASES[i].want ? CASES[i].want : save_len;
+        if (restore(&root, CASES[i].platform, "picodrive", save, save_len, true) != SIGIL_OK ||
+            !holds(&root, "Game.srm", save, want)) {
+            fail(where, CASES[i].want ? "PicoDrive's file is 32 KiB, the whole save in it"
+                                      : "the whole save goes as it came, not cut to the stale file");
+        }
+        root_free(&root);
+    }
+
+    uint8_t *own = window_of(0x10000, 0, false, 0x00);
+    mem_root pico = {0};
+    root_put(&pico, "Game.srm", own, 0x400);
+    if (restore(&pico, "genesis", "picodrive", save, 0x10000, true) != SIGIL_OK ||
+        !holds(&pico, "Game.srm", save, 0x400)) {
+        fail("Mega Drive next to PicoDrive's 1 KiB file", "a file that holds the whole save sets the size");
+    }
+    root_free(&pico);
+
+    mem_root wide = {0};
+    root_put(&wide, "Game.srm", own, 0x10000);
+    if (restore(&wide, "gamegear", "picodrive", save, save_len, true) != SIGIL_OK ||
+        !holds(&wide, "Game.srm", save, 0x8000)) {
+        fail("Game Gear next to a 64 KiB file", "PicoDrive's file is its 32 KiB");
+    }
+    root_free(&wide);
+    free(save);
+    free(stale);
+    free(own);
+}
+
 /* Restore writes no more than the core keeps: a Game Gear save padded to 64 KiB
  * by another frontend, with a stray byte at its end, goes to PicoDrive at its
  * 32 KiB, and a RAM past 64 KiB goes to Genesis Plus GX at its 64 KiB. */
@@ -444,6 +493,7 @@ int main(void) {
     check_gpgx_to_picodrive();
     check_picodrive_to_gpgx();
     check_8bit_size();
+    check_stale_short_file();
     check_eeprom();
     check_past_the_core();
     check_identity();
