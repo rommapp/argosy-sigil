@@ -147,7 +147,9 @@ the emulator, and the title id or the file that fails. A save sample
 helps most; [tests/fixtures/saves/README.md](tests/fixtures/saves/README.md)
 explains how samples are added.
 
-PRs welcome. See [TRADEMARKS.md](TRADEMARKS.md) for the naming
+PRs welcome. [CONTRIBUTING.md](CONTRIBUTING.md) says what a review looks
+for, and [AGENTS.md](AGENTS.md) is the guide for coding agents. See
+[TRADEMARKS.md](TRADEMARKS.md) for the naming
 policy: forks-for-contribution (standard fork → PR-upstream flow)
 are encouraged; forks-and-republish-as-a-separate-project under the
 `argosy-sigil` name are not.
