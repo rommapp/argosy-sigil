@@ -645,10 +645,9 @@ const char *sigil_layout_platform(const char *slug) {
     if (strcmp(slug, "dc") == 0) return "dreamcast";
     if (strcmp(slug, "ngc") == 0 || strcmp(slug, "gc") == 0) return "gamecube";
     if (strcmp(slug, "vita") == 0) return "psvita";
-    if (strcmp(slug, "megadrive") == 0 || strcmp(slug, "mega_drive") == 0) return "genesis";
-    if (strcmp(slug, "sega32") == 0 || strcmp(slug, "sega32x") == 0) return "32x";
-    if (strcmp(slug, "mastersystem") == 0 || strcmp(slug, "master_system") == 0) return "sms";
-    if (strcmp(slug, "gg") == 0 || strcmp(slug, "game_gear") == 0) return "gamegear";
+    if (strcmp(slug, "sega32") == 0) return "32x";
+    if (strcmp(slug, "mastersystem") == 0) return "sms";
+    if (strcmp(slug, "gg") == 0) return "gamegear";
     return slug;
 }
 

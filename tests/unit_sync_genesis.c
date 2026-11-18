@@ -182,7 +182,7 @@ static void check_picodrive_to_gpgx(void) {
 static void check_8bit_size(void) {
     static const struct { const char *platform; size_t size; } CASES[] = {
         { "sms", 0x8000 }, { "mastersystem", 0x8000 }, { "gamegear", 0x8000 }, { "gg", 0x8000 },
-        { "genesis", 0 }, { "megadrive", 0 }, { "32x", 0 }, { "sega32", 0 },
+        { "genesis", 0 }, { "32x", 0 }, { "sega32", 0 },
     };
     uint8_t *window = window_of(0x10000, 0x2001, false, 0xFF);
     window[0x2000] = 0x00;

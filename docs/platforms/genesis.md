@@ -8,8 +8,8 @@ sigil names a cartridge's save through the libretro default row, `{stem}.srm`, w
 The platform table has no Genesis, 32X, Master System or Game Gear slug, and carts carry no title id
 sigil reads. The emulator names the save after the content file (see
 [Identification](../identification.md)). Sync takes the platform by its
-slug: `genesis` (or `megadrive`), `32x` (or `sega32`, `sega32x`), `sms` (or
-`mastersystem`) and `gamegear` (or `gg`).
+slug: `genesis`, `32x` (or `sega32`), `sms` (or `mastersystem`) and
+`gamegear` (or `gg`).
 
 ## Save layouts
 
