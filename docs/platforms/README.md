@@ -177,7 +177,7 @@ value, and the default is the first listed.
 
 | Layout | Writes by default | Options that change it | From nothing |
 |---|---|---|---|
-| `libretro`, and any core with no row | `{stem}.srm`; `{stem}.rtc` on a clock cart (GB, GBC, N64). Mega Drive, 32X, Master System and Game Gear: `genesis_plus_gx` without trailing 0xFF, `picodrive` padded with 0xFF to its size ([genesis](genesis.md#sync)) | | yes |
+| `libretro`, and any core with no row | `{stem}.srm`; `{stem}.rtc` on a clock cart (GB, GBC, N64). Mega Drive, 32X, Master System and Game Gear: `genesis_plus_gx` without trailing 0xFF, `picodrive` padded with 0xFF to its size where sigil knows it ([genesis](genesis.md#sync)) | | yes |
 | `vba_next`, `gpsp` | `{stem}.srm` (GBA) | | located only |
 | `mgba_standalone`, `vbam_standalone`, `sameboy_standalone`, `gearboy_standalone` | `{stem}.sav`: the RAM, the clock appended on a clock cart | | yes |
 | `bsnes` | `{stem}.srm`, `{stem}.rtc`, `{stem}.psr` | | located only |

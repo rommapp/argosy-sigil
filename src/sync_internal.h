@@ -242,7 +242,8 @@ int sigil_sync_collect_genesis(sigil_sync_ctx *x, sigil_sync_result *r);
 /**
  * Restore on the Sega carts: the save RAM from any core's file, or a zip of it
  * as save.sram, written in the form of the request's core (Genesis Plus GX's
- * without trailing 0xFF, PicoDrive's padded with 0xFF to its size).
+ * without trailing 0xFF, PicoDrive's padded with 0xFF to its size where
+ * sigil knows it).
  */
 int sigil_sync_restore_genesis(sigil_sync_ctx *x, const uint8_t *unit, size_t len, size_t received_len,
                                sigil_sync_result *r, char local_identity[33]);
