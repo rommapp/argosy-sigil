@@ -181,6 +181,26 @@ int sigil_sync_drop(const sigil_sync_request *req, const char *path);
  */
 size_t sigil_sync_unmarked_len(const uint8_t *unit, size_t len, bool *marked);
 
+/* ---- a cartridge's save file (sync_cart.c) ------------------------------------ */
+
+/* The game's save file the layout row names, there or expected. */
+typedef struct {
+    char path[SIGIL_SAVE_PATH_MAX];   /* "" when the row names none */
+    bool present;
+} sigil_sync_cart_file;
+
+/** The row's primary file for the game: the first one there, else the first expected. */
+int sigil_sync_cart_file_of(const sigil_sync_request *req, sigil_sync_cart_file *f);
+/**
+ * All of `f`'s bytes, up to `cap`. `*data` is NULL when `f` isn't there or is
+ * empty, since an empty file holds no save; SIGIL_ERR_IO when it is there
+ * and won't open.
+ */
+int sigil_sync_cart_read(const sigil_sync_request *req, const sigil_sync_cart_file *f, size_t cap, uint8_t **data,
+                         size_t *len);
+/** Names the unit `{stem}{ext}` in r->artifact, the stem the content path's. */
+void sigil_sync_cart_artifact(const sigil_sync_request *req, const char *ext, sigil_sync_result *r);
+
 /* ---- N64 cartridges (sync_n64.c) ---------------------------------------------- */
 
 /** Collect on N64: the neutral zip of the regions the game uses, from whichever emulator's files hold them. */

@@ -53,47 +53,6 @@ static void identity_of(const uint8_t *ram, size_t len, char out[33]) {
     sigil_md5_of(ram, trimmed_len(ram, len), out);
 }
 
-/* The game's save file the layout names, there or expected. */
-typedef struct {
-    char path[SIGIL_SAVE_PATH_MAX];
-    bool present;
-} sega_file;
-
-static int file_of(const sigil_sync_request *req, sega_file *f) {
-    memset(f, 0, sizeof(*f));
-    sigil_save_unit *unit = NULL;
-    int rc = sigil_save_resolve(&req->save, &unit);
-    if (rc != SIGIL_OK) return rc;
-    for (size_t i = 0; i < unit->member_count + unit->expected_count && !f->path[0]; i++) {
-        bool present = i < unit->member_count;
-        const sigil_save_member *m = present ? &unit->members[i] : &unit->expected[i - unit->member_count];
-        if (m->role == SIGIL_SAVE_ROLE_RTC) continue;
-        snprintf(f->path, sizeof(f->path), "%s", m->path);
-        f->present = present;
-    }
-    sigil_save_unit_free(unit);
-    return SIGIL_OK;
-}
-
-/* The save RAM in the game's file, NULL when there's none. An empty file holds no save. */
-static int read_local(const sigil_sync_request *req, const sega_file *f, uint8_t **ram, size_t *len) {
-    *ram = NULL;
-    *len = 0;
-    if (!f->present) return SIGIL_OK;
-    int rc = sigil_sync_read_file(req, f->path, SEGA_MAX_RAM, ram, len);
-    if (rc == SIGIL_OK && !*len) {
-        free(*ram);
-        *ram = NULL;
-    }
-    return rc == SIGIL_ERR_NOT_FOUND ? SIGIL_ERR_IO : rc;
-}
-
-static void artifact_of(const sigil_sync_request *req, sigil_sync_result *r) {
-    char stem[SIGIL_SAVE_ENTRY_MAX];
-    sigil_content_stem(req->save.content_path, stem, sizeof(stem));
-    snprintf(r->artifact, sizeof(r->artifact), "%s.srm", stem);
-}
-
 /* PicoDrive's size for the save: the file already there, else the one size it
  * keeps on Master System and Game Gear; 0 when only the ROM header knows. */
 static size_t picodrive_size(const sigil_sync_request *req, size_t local_len) {
@@ -131,11 +90,6 @@ static int file_bytes(const sigil_sync_request *req, const uint8_t *ram, size_t 
     return SIGIL_OK;
 }
 
-static bool ends_with(const char *s, const char *tail) {
-    size_t n = strlen(s), m = strlen(tail);
-    return n >= m && strcmp(s + n - m, tail) == 0;
-}
-
 /* The RAM a unit carries: the raw file, or a zip of the one save under RomM's
  * neutral name `save.sram` or as an emulator's `.srm` or `.sav`. `*ram` is
  * malloc'd. */
@@ -160,7 +114,8 @@ static int read_unit(const uint8_t *unit, size_t len, size_t received_len, uint8
     if (rc == SIGIL_OK && count != 1) rc = count ? SIGIL_ERR_UNSUPPORTED_FORMAT : SIGIL_ERR_NOT_FOUND;
     if (rc == SIGIL_OK) {
         const sigil_zip_member *m = &members[0];
-        if (strcmp(m->name, SEGA_SRAM_NAME) != 0 && !ends_with(m->name, ".srm") && !ends_with(m->name, ".sav")) {
+        if (strcmp(m->name, SEGA_SRAM_NAME) != 0 && !sigil_ends_with(m->name, ".srm") &&
+            !sigil_ends_with(m->name, ".sav")) {
             snprintf(r->problem, sizeof(r->problem), "%s", m->name);
             rc = SIGIL_ERR_UNSUPPORTED_FORMAT;
         } else if (!m->len) {
@@ -181,18 +136,18 @@ static int read_unit(const uint8_t *unit, size_t len, size_t received_len, uint8
 }
 
 int sigil_sync_collect_genesis(sigil_sync_ctx *x, sigil_sync_result *r) {
-    sega_file f;
+    sigil_sync_cart_file f;
     uint8_t *ram = NULL;
     size_t len = 0;
-    int rc = file_of(x->req, &f);
-    if (rc == SIGIL_OK) rc = read_local(x->req, &f, &ram, &len);
+    int rc = sigil_sync_cart_file_of(x->req, &f);
+    if (rc == SIGIL_OK) rc = sigil_sync_cart_read(x->req, &f, SEGA_MAX_RAM, &ram, &len);
     if (rc == SIGIL_OK && ram) {
         identity_of(ram, len, r->identity_hash);
         sigil_md5_of(ram, len, r->content_hash);
         r->data = ram;
         r->len = len;
         r->shape = SIGIL_SAVE_SHAPE_SINGLE;
-        artifact_of(x->req, r);
+        sigil_sync_cart_artifact(x->req, ".srm", r);
         ram = NULL;
     }
     free(ram);
@@ -206,13 +161,13 @@ int sigil_sync_restore_genesis(sigil_sync_ctx *x, const uint8_t *unit, size_t le
     int rc = read_unit(unit, len, received_len, &ram, &ram_len, r);
     if (rc != SIGIL_OK) return rc;
     identity_of(ram, ram_len, r->identity_hash);
-    artifact_of(x->req, r);
+    sigil_sync_cart_artifact(x->req, ".srm", r);
 
-    sega_file f;
+    sigil_sync_cart_file f;
     uint8_t *local = NULL;
     size_t local_len = 0;
-    rc = file_of(x->req, &f);
-    if (rc == SIGIL_OK) rc = read_local(x->req, &f, &local, &local_len);
+    rc = sigil_sync_cart_file_of(x->req, &f);
+    if (rc == SIGIL_OK) rc = sigil_sync_cart_read(x->req, &f, SEGA_MAX_RAM, &local, &local_len);
     if (rc == SIGIL_OK && local) identity_of(local, local_len, local_identity);
     free(local);
     bool already = false;

@@ -85,4 +85,23 @@ static inline void sigil_lower_ext(const char *name, char out[16]) {
     out[i] = '\0';
 }
 
+/* `s` ends with `tail`, byte for byte; false for a NULL `s`. */
+static inline bool sigil_ends_with(const char *s, const char *tail) {
+    if (!s) return false;
+    size_t n = strlen(s), m = strlen(tail);
+    return n >= m && strcmp(s + n - m, tail) == 0;
+}
+
+/* `s` ends with `tail`, ASCII letters compared without case; false for a
+ * NULL `s`. */
+static inline bool sigil_ends_with_nocase(const char *s, const char *tail) {
+    if (!s) return false;
+    size_t n = strlen(s), m = strlen(tail);
+    if (n < m) return false;
+    for (size_t i = 0; i < m; i++) {
+        if (sigil_to_lower(s[n - m + i]) != sigil_to_lower(tail[i])) return false;
+    }
+    return true;
+}
+
 #endif
