@@ -103,7 +103,7 @@ profile folders and gamer pictures such a zip holds (each
 ## Open items
 
 - GoD containers and STFS packages are not read for identification.
-- Some games bind a save to the profile it was made under. Forza Horizon 2 calls its save "tampered" under any other XUID and loads it again under its own. Such a save moves between emulators only under the same XUID: pass the XUID the save was made under as `profile`.
+- Some games bind a save to the profile it was made under, so a unit restored under another XUID has the right files in the right place and the game still won't use it. Forza Horizon 2 says "It appears your profile has been tampered with" under any other XUID and loads the save under its own. Charlie Murder writes the gamertag and XUID into its `game.sav` and, under another profile, starts as if there were no save. Such a save moves between emulators under the XUID it was made under: pass that XUID as `profile`.
 - Achievements, and the settings a game keeps in its GPD rather than in a save, don't travel. A game that keeps all its progress there (Left 4 Dead 2 writes no save folder) has nothing to sync.
 - XenDroid's row is read from its source (`rfandango/XenDroid`); it hasn't been run.
 - The extractor is experimental until it is validated against real-world samples.
