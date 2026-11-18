@@ -28,10 +28,14 @@ by looser rules, so sigil can name no chip where they pick one:
   prefixes `EEPROM_`, `SRAM_`, `FLASH1M_`, `FLASH512_` and `FLASH` with no
   digits, at 4-byte steps. `SRAM_` wins over `EEPROM_` and a bare `FLASH`,
   and `FLASH1M_` or `FLASH512_` counts only when it comes before the others.
-- gpSP (`gba_memory.c` `detect_backup_subcircuit`) takes `EEPROM_V`,
-  `SRAM_V`, `FLASH1M_V`, `FLASH512_V` and `FLASH_V` with no digits in the
-  first 1 MiB, and ranks EEPROM over SRAM over flash. Its game table
-  (`load_game_config_over`) is applied first.
+- gpSP (`gba_memory.c` `detect_backup_subcircuit`) applies its game table
+  first (`load_game_config_over`). It then takes `EEPROM_V`, `SRAM_V`,
+  `FLASH1M_V`, `FLASH512_V` and `FLASH_V` with no digits, at any byte of
+  the first 1 MiB. Finding none there, it gives a Pokemon ROM (`POKEMON`
+  at `0xA0`, or the game code `AXV`, `AXP`, `BPE`, `BPR` or `BPG`) 128 KiB
+  flash (`rom_is_pokemon_family`), and otherwise searches the whole ROM at
+  4-byte steps (`rom_scan_signatures_in_memory`). It ranks EEPROM over SRAM
+  over flash.
 
 | Feature | The ROM carries | Chip |
 |---|---|---|

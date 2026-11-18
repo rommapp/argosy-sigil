@@ -19,10 +19,13 @@
  * search for the same ids by looser rules: VBA-M takes the prefixes with
  * no digits at 4-byte steps and picks among them by kind and order
  * (visualboyadvance-m v2.2.3 src/core/gba/gbaFlash.cpp
- * flashDetectSaveType); gpSP takes them with no digits in the first 1 MiB,
- * ranks EEPROM over SRAM over flash, and applies its game table first
- * (libretro/gpsp at 5819380 gba_memory.c detect_backup_subcircuit,
- * load_game_config_over). */
+ * flashDetectSaveType); gpSP applies its game table first, then takes the
+ * ids with no digits at any byte of the first 1 MiB; finding none there, it
+ * gives a Pokemon ROM (POKEMON at 0xA0, or the game code AXV, AXP, BPE, BPR
+ * or BPG) 128 KiB flash, and otherwise searches the whole ROM at 4-byte
+ * steps; it ranks EEPROM over SRAM over flash (libretro/gpsp at 5819380
+ * gba_memory.c load_game_config_over, detect_backup_subcircuit,
+ * rom_is_pokemon_family, rom_scan_signatures_in_memory). */
 static const struct { const char *id; uint32_t feature; } GBA_IDS[] = {
     { "SRAM_V", SIGIL_FEATURE_GBA_SRAM },
     { "SRAM_F_V", SIGIL_FEATURE_GBA_SRAM },
