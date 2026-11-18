@@ -43,7 +43,7 @@ do it yet) or `n/a` (the system has nothing of that kind).
 | [Game Boy Advance](docs/platforms/gba.md) | no | yes | n/a | single or multi | yes |
 | [Super Nintendo](docs/platforms/snes.md) | n/a | yes | n/a | single or multi | no |
 | [Famicom Disk System](docs/platforms/fds.md) | no | yes | n/a | single | no |
-| [Nintendo DS](docs/platforms/nds.md) | no | yes | n/a | single | no |
+| [Nintendo DS](docs/platforms/nds.md) | no | yes | n/a | single | yes |
 | [Nintendo 3DS](docs/platforms/3ds.md) | yes | yes | n/a | folder | yes |
 | [Nintendo 64](docs/platforms/n64.md) | yes | yes | n/a | multi | yes |
 | [GameCube](docs/platforms/gamecube.md) | yes | yes | yes | single or multi | yes |
@@ -147,7 +147,9 @@ the emulator, and the title id or the file that fails. A save sample
 helps most; [tests/fixtures/saves/README.md](tests/fixtures/saves/README.md)
 explains how samples are added.
 
-PRs welcome. See [TRADEMARKS.md](TRADEMARKS.md) for the naming
+PRs welcome. [CONTRIBUTING.md](CONTRIBUTING.md) says what a review looks
+for, and [AGENTS.md](AGENTS.md) is the guide for coding agents. See
+[TRADEMARKS.md](TRADEMARKS.md) for the naming
 policy: forks-for-contribution (standard fork → PR-upstream flow)
 are encouraged; forks-and-republish-as-a-separate-project under the
 `argosy-sigil` name are not.

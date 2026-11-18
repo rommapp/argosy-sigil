@@ -161,9 +161,9 @@ static int finish(sigil_sync_ctx *x, sigil_sync_result *r, bool collecting) {
 }
 
 /* The cartridge platform sigil converts the request's saves for: "n64",
- * "gb", "gbc" or "gba"; NULL for any other platform. */
+ * "gb", "gbc", "nds" or "gba"; NULL for any other platform. */
 static const char *cart_platform(const sigil_sync_request *req) {
-    static const char *const CARTS[] = { "n64", "gb", "gbc", "gba" };
+    static const char *const CARTS[] = { "n64", "gb", "gbc", "nds", "gba" };
     const char *slug = req->save.platform ? sigil_layout_platform(req->save.platform) : NULL;
     for (size_t i = 0; slug && i < sizeof(CARTS) / sizeof(CARTS[0]); i++) {
         if (strcmp(slug, CARTS[i]) == 0) return CARTS[i];
@@ -174,6 +174,11 @@ static const char *cart_platform(const sigil_sync_request *req) {
 static bool n64_cart(const sigil_sync_request *req) {
     const char *cart = cart_platform(req);
     return cart && strcmp(cart, "n64") == 0;
+}
+
+static bool nds_cart(const sigil_sync_request *req) {
+    const char *cart = cart_platform(req);
+    return cart && strcmp(cart, "nds") == 0;
 }
 
 static bool gba_cart(const sigil_sync_request *req) {
@@ -213,6 +218,7 @@ int sigil_collect(const sigil_sync_request *req, sigil_sync_result **out) {
     if (rc == SIGIL_OK) {
         rc = layout->profiles ? sigil_sync_collect_profiles(&x, layout->profiles, r)
            : n64_cart(req)    ? sigil_sync_collect_n64(&x, r)
+           : nds_cart(req)    ? sigil_sync_collect_nds(&x, r)
            : gba_cart(req)    ? sigil_sync_collect_gba(&x, r)
            : cart_platform(req) ? sigil_sync_collect_gb(&x, r)
                               : collect_any(&x, r);
@@ -385,6 +391,7 @@ int sigil_restore(const sigil_sync_request *req, const uint8_t *unit, size_t uni
     if (rc == SIGIL_OK) {
         rc = layout->profiles ? sigil_sync_restore_profiles(&x, layout->profiles, unit, saves_len, r, local_identity)
            : n64_cart(req)    ? sigil_sync_restore_n64(&x, unit, saves_len, unit_len, r, local_identity)
+           : nds_cart(req)    ? sigil_sync_restore_nds(&x, unit, saves_len, unit_len, r, local_identity)
            : gba_cart(req)    ? sigil_sync_restore_gba(&x, unit, saves_len, unit_len, r, local_identity)
            : cart_platform(req) ? sigil_sync_restore_gb(&x, unit, saves_len, unit_len, r, local_identity)
                               : restore_units(&x, unit, saves_len, unit_len, r, local_identity);

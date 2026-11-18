@@ -34,7 +34,7 @@ Cases no sample covers yet. The saves already gathered came from a RomM store an
 - Mesen2 MMC5 or Namco163 `.sav` files.
 - A SNES `.rtc` from snes9x, bsnes or Mesen2.
 - mupen64plus standalone and Project64 per-type files.
-- A DeSmuME `.dsv`.
+- A `.dsv` from DeSmuME standalone.
 
 ## GameCube, Wii, Wii U, Switch, 3DS (`ngc`, `wii`, `wiiu`, `switch`, `3ds`)
 

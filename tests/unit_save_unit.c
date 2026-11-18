@@ -751,6 +751,7 @@ static void test_single_file_cores(void) {
         { "pokemini", "Zany Cards.min", "Zany Cards.eep" },
         { "handy", "Chip's Challenge.lnx", "Chip's Challenge.eeprom" },
         { "melonds", "Game.nds", "Game.sav" },
+        { "desmume", "Game.nds", "Game.dsv" },
         { "dosbox_pure", "Doom.zip", "Doom.pure.zip" },
         { "opera", "Gex.chd", "opera/per_game/Gex.0.srm" },
     };
