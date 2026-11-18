@@ -3,20 +3,34 @@
  * hard drive: where the console keeps every game's saves, in
  * E:\UDATA\<title id>\ and E:\TDATA\<title id>\.
  *
- * The partition sits at a fixed place on the drive. Its superblock is 4 KiB
- * ("FATX", a volume id, sectors per cluster, the root directory's cluster).
- * The FAT follows, one entry per cluster plus a reserved one, rounded up to
- * 4 KiB: 16-bit entries below 0xFFF0 clusters, 32-bit above, 0 for a free
- * cluster and 0xFFFFFFF0 or more for the end of a chain. Cluster 1 is the
- * first after the FAT. A directory is a chain of clusters holding 64-byte
- * entries: the name's length (0xE5 deleted, 0xFF or 0x00 the end), the
- * attributes, a 42-byte name padded with 0xFF, the first cluster, the size,
- * and three time stamps packed as FAT packs them, the year counted from 2000.
+ * The layout is the one in X1 BOX's xemu_fatx_import.c (izzy2lost/xemu at
+ * 57bc6d6, android/app/src/main/cpp) and in libfatx (mborgerson/fatx v0.0.8:
+ * fatx.c, fatx_disk.c, fatx_internal.h), which agree. E: is at byte
+ * 0xABE80000 of the drive and 0x1312D6000 bytes long. Its superblock is
+ * 4 KiB ("FATX", a volume id, sectors per cluster, the root directory's
+ * cluster). The FAT follows, one entry per cluster of the partition plus a
+ * reserved one, rounded up to 4 KiB: 16-bit entries below 0xFFF0 of them,
+ * 32-bit above. 0 is a free cluster and 0xFFFFFFFF the end of a chain;
+ * 0xFFFFFFF0, 0xFFFFFFF7 and 0xFFFFFFF8 mark reserved, bad and media
+ * entries, which no chain runs through. Cluster 1 is the first after the
+ * FAT. A directory is a chain of clusters holding 64-byte entries: the
+ * name's length (0xE5 deleted, 0xFF or 0x00 the end), the attributes (0x10
+ * a directory), a 42-byte name, the first cluster, the size, and three time
+ * stamps packed as FAT packs them, the year counted from 2000.
+ *
+ * Two things rest on drives the Xbox's own kernel wrote in xemu, where
+ * those sources differ from it (samples in
+ * tests/fixtures/saves/xbox/manifest.tsv, read with a script written from
+ * the layout above):
+ *  - The stamps are creation, last write and last access, in that order;
+ *    both sources name the first "modified". On orta-flatout-xemu a game
+ *    rewrote the files of two save folders: each folder's second stamp
+ *    moved to the time of the write, its first and third stayed.
+ *  - The kernel pads a name with 0xFF and gives a new entry three equal
+ *    stamps (orta-xemu, every entry); X1 BOX pads with zeros.
  *
  * Ported from CabinetOS's frontend/src/xboxhdd.cpp (MIT; the notice is in
- * licenses/cabinetos-MIT.txt). The layout was checked there against xemu's
- * published drive and against drives the Xbox's own kernel formatted and
- * wrote in xemu. */
+ * licenses/cabinetos-MIT.txt). */
 #ifndef SIGIL_FATX_H
 #define SIGIL_FATX_H
 

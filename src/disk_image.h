@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 /* A console's hard drive as an emulator keeps it in one file: a raw image, or
- * qcow2 as qemu writes it (docs/interop/qcow2.txt). Reads go through the
+ * qcow2 as qemu writes it. The qcow2 layout is xemu's own copy of the format
+ * (xemu-project/xemu at v0.8.136: docs/interop/qcow2.rst, with the masks,
+ * flags and bounds of block/qcow2.h). Reads go through the
  * file's sigil_io. Writes are staged in memory and change nothing until the
  * caller takes them with sigil_disk_file, so a restore that fails halfway
  * leaves the file as it was.

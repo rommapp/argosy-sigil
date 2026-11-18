@@ -4,16 +4,17 @@
 #include "fatx.h"
 #include <stdlib.h>
 
-/* A retail drive's E: (xemu's own image, and every drive the Xbox formats). */
+/* A retail drive's E: (xemu_fatx_import.c XEMU_XBOX_HDD_PARTITION_E_OFFSET and
+ * _SIZE; libfatx fatx_disk.c fatx_partition_map; fatx.h has the commits). */
 #define E_OFFSET        0xABE80000ull
-#define E_SIZE          0x131F00000ull
+#define E_SIZE          0x1312D6000ull
 #define SUPERBLOCK_SIZE 0x1000u
 #define ENTRY_SIZE      64u
 #define ENTRY_DELETED   0xE5u
 #define ENTRY_END       0xFFu
 #define ENTRY_UNUSED    0x00u
 #define CHAIN_END       0xFFFFFFFFu
-#define MAX_DIR_ENTRIES 4096u   /* the kernel's limit for one directory */
+#define MAX_DIR_ENTRIES 4096u   /* sigil's own bound on one directory, so a chain that loops ends */
 #define MAX_DEPTH       64u
 
 struct sigil_fatx {
@@ -30,8 +31,9 @@ struct sigil_fatx {
     uint8_t    *buf;          /* scratch, one cluster */
 };
 
+/* A 16-bit FAT's markers are widened when the FAT is read, so 0xFFFF is CHAIN_END here too. */
 static bool is_end(uint32_t v) {
-    return v >= 0xFFFFFFF0u;
+    return v == CHAIN_END;
 }
 
 static bool in_volume(const sigil_fatx *fs, uint32_t c) {
@@ -107,7 +109,8 @@ uint32_t sigil_fatx_free_clusters(const sigil_fatx *fs) {
 }
 
 /* The cluster after `c` in its chain, 0 at the chain's end. SIGIL_ERR_DAMAGED
- * for a chain that leaves the volume or runs into a free cluster. */
+ * for a chain that leaves the volume or runs into a free, reserved, bad or
+ * media entry. */
 static int next_of(const sigil_fatx *fs, uint32_t c, uint32_t *next) {
     if (!in_volume(fs, c)) return SIGIL_ERR_DAMAGED;
     uint32_t v = fs->fat[c];
@@ -126,7 +129,7 @@ static void parse_entry(const uint8_t *raw, uint64_t at, sigil_fatx_entry *e) {
     e->attr = raw[1];
     e->first = sigil_read_le32(raw + 44);
     e->size = sigil_read_le32(raw + 48);
-    e->time = sigil_read_le16(raw + 56);
+    e->time = sigil_read_le16(raw + 56);   /* the last write, the second of the three stamps (fatx.h) */
     e->date = sigil_read_le16(raw + 58);
     e->at = at;
 }
@@ -302,7 +305,9 @@ static int end_after(sigil_fatx *fs, uint32_t cluster, uint64_t slot) {
 }
 
 /* A slot for a new entry in directory `dir`: its first deleted or end slot,
- * else the start of a cluster added to it. The root can't grow. */
+ * else the start of a cluster added to it. sigil doesn't grow the root (one
+ * cluster on xemu-blank and every sample drive) or a directory past
+ * MAX_DIR_ENTRIES: both are refused as no space. */
 static int free_slot(sigil_fatx *fs, uint32_t dir, uint64_t *slot) {
     uint32_t c = dir, last = dir, seen = 0;
     while (c) {
@@ -341,7 +346,7 @@ static int add_entry(sigil_fatx *fs, uint32_t dir, const char *name, uint8_t att
     memcpy(raw + 2, name, n);
     sigil_write_le32(raw + 44, first);
     sigil_write_le32(raw + 48, size);
-    for (size_t i = 0; i < 3; i++) {   /* created, written, read */
+    for (size_t i = 0; i < 3; i++) {   /* creation, last write, last access: equal, as on a kernel-made entry */
         sigil_write_le16(raw + 52 + i * 4, time);
         sigil_write_le16(raw + 54 + i * 4, date);
     }

@@ -114,7 +114,7 @@ the `beetle_psx_` keys of the same names on `mednafen_psx`.
 `Mcd001.ps2`) and `Slot2_Filename` (default `Mcd002.ps2`), the card names
 in PCSX2's `[MemoryCards]` section.
 `{xemu_hdd}` and `{x1box_hdd}` are the file name of `hdd_path`, the
-hard-disk image in xemu's `[sys.files]` section (default `xbox_hdd.qcow2`),
+hard-disk image in xemu's `[sys.files]` section (no default: xemu has none),
 and the image X1 BOX keeps (default `hdd.img`); a value that is a whole
 path gives its last segment.
 `{dc_vmu_id}` is the Dreamcast product number (`title_id`) with each of

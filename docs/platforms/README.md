@@ -216,4 +216,4 @@ value, and the default is the first listed.
 | `vita3k` | `ux0/user/{profile}/savedata/{save_id}/` | | with `profile` |
 | `rpcs3`, `aps3e`, `armsx3` | `dev_hdd0/home/{profile}/savedata/{save_id}*/` | | with `profile` |
 | `ppsspp`, `ppsspp_standalone`, `psp_console` | `PSP/SAVEDATA/{save_id}*/` | | yes |
-| `xemu`, `x1box` | the game's `UDATA/{save_id}/` and `TDATA/{save_id}/` folders on E: inside the hard-disk image, `xbox_hdd.qcow2` (`x1box`: `hdd.img`), shared | `hdd_path` names the image | send the container: sigil makes no drive image, and refuses with `SIGIL_ERR_NO_TARGET` naming it |
+| `xemu`, `x1box` | the game's `UDATA/{save_id}/` and `TDATA/{save_id}/` folders on E: inside the hard-disk image `hdd_path` names (`x1box`: `hdd.img` without it), shared | `hdd_path` names the image; `xemu` needs it | send the container: sigil makes no drive image, and refuses with `SIGIL_ERR_NO_TARGET` naming it |

@@ -22,7 +22,7 @@ typedef struct {
 #define QCOW2_COPIED         (1ull << 63)
 #define QCOW2_COMPRESSED     (1ull << 62)
 #define QCOW2_ZERO           1ull
-#define QCOW2_MAX_L1_BYTES   (32u * 1024u * 1024u)   /* qemu's own bound */
+#define QCOW2_MAX_L1_BYTES   (32u * 1024u * 1024u)   /* block/qcow2.h QCOW_MAX_L1_SIZE */
 #define QCOW2_INCOMPAT_DIRTY       (1ull << 0)
 #define QCOW2_INCOMPAT_CORRUPT     (1ull << 1)
 #define QCOW2_INCOMPAT_COMPRESSION (1ull << 3)

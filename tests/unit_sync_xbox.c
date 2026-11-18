@@ -47,6 +47,12 @@ static void make_game(game *g, mem_root *root, const char *layout, const char *s
     g->req.write = root_write;
     g->req.remove = root_remove;
     g->req.write_ctx = root;
+    if (strcmp(layout, "xemu") == 0) {   /* xemu has no drive until its hdd_path setting names one */
+        g->option.key = "hdd_path";
+        g->option.value = DRIVE;
+        g->req.save.options = &g->option;
+        g->req.save.option_count = 1;
+    }
 }
 
 /* ---- drives ------------------------------------------------------------------- */
@@ -730,6 +736,26 @@ static void broken_chain(mem_root *root) {
     put_drive(root, DRIVE, &g, 16, 2, 3);
     xb_free(&g);
 }
+static void chain_into_bad(mem_root *root) {
+    /* A save folder that fills its one cluster, so nothing in the cluster ends it, and whose FAT
+     * entry holds the bad-cluster marker where the end of its chain belongs. */
+    xb_guest g;
+    xb_check check;
+    xb_tree tree;
+    mem_file *f = root_find(root, DRIVE);
+    xb_read_image(f->data, f->len, &g, &check);
+    for (unsigned i = 0; i < XB_CLUSTER / XB_SLOT; i++) {
+        char path[64];
+        snprintf(path, sizeof(path), "UDATA/4d530004/FULL/f%03u", i);
+        xb_put_text(&g, path, "x");
+    }
+    xb_walk(&g, &tree);
+    const xb_node *n = xb_node_at(&tree, "UDATA/4d530004/FULL");
+    xb_set_fat(&g, n->first, 0xFFFFFFF7u);
+    xb_tree_free(&tree);
+    put_drive(root, DRIVE, &g, 16, 2, 3);
+    xb_free(&g);
+}
 
 static void check_images(void) {
     check_image("a backing file", SIGIL_ERR_UNSUPPORTED_FORMAT, with_backing_file, false);
@@ -745,6 +771,7 @@ static void check_images(void) {
     check_image("a drive without E:", SIGIL_ERR_DAMAGED, no_e, true);
     check_image("an image cut short", SIGIL_ERR_DAMAGED, cut_short, true);
     check_image("a save with a broken chain", SIGIL_ERR_DAMAGED, broken_chain, true);
+    check_image("a folder whose chain ends in a bad cluster", SIGIL_ERR_DAMAGED, chain_into_bad, true);
 }
 
 /* A write the client reports failed, or one that didn't store what sigil gave it, fails the restore. */
@@ -776,6 +803,33 @@ static void check_write_failures(void) {
 }
 
 /* ---- the drive's name, and X1 BOX ------------------------------------------------ */
+
+/* xemu attaches no drive until its hdd_path setting names one, so a request
+ * without it names none: refused, with a drive of the usual name left alone. */
+static void check_needs_a_named_drive(void) {
+    const char *where = "xemu with no hdd_path";
+    xb_guest g;
+    blank_drive(&g);
+    put_halo(&g, 1);
+    mem_root root = {0};
+    put_drive(&root, DRIVE, &g, 16, 2, 3);
+    game game;
+    make_game(&game, &root, "xemu", HALO);
+    game.req.save.options = NULL;
+    game.req.save.option_count = 0;
+    game.req.overwrite_local = 1;
+    sigil_sync_result *r = NULL;
+    CHECK(sigil_collect(&game.req, &r) == SIGIL_ERR_INVALID_ARG && (!r || !r->data), where, "collect read a drive nothing named");
+    sigil_sync_result_free(r);
+    r = NULL;
+    sigil_sync_result *unit = collect_halo(2, 16, 2, where);
+    CHECK(unit && sigil_restore(&game.req, unit->data, unit->len, &r) == SIGIL_ERR_INVALID_ARG && root.writes == 0, where,
+          "restore wrote to a drive nothing named");
+    sigil_sync_result_free(r);
+    sigil_sync_result_free(unit);
+    root_free(&root);
+    xb_free(&g);
+}
 
 static void check_names(void) {
     const char *where = "the drive's name";
@@ -823,7 +877,7 @@ static void check_names(void) {
         if (!xemu && !x1box) continue;
         found++;
         CHECK(rows[i].option_count == 1 && strcmp(rows[i].options[0].key, "hdd_path") == 0 &&
-                  strcmp(rows[i].options[0].default_value, xemu ? "xbox_hdd.qcow2" : "hdd.img") == 0,
+                  strcmp(rows[i].options[0].default_value, xemu ? "" : "hdd.img") == 0,
               where, "a row doesn't name its drive setting");
     }
     CHECK(found == 2, where, "the xemu and x1box rows aren't listed for xbox");
@@ -832,17 +886,18 @@ static void check_names(void) {
     xb_free(&g);
 }
 
-/* A raw image is the console's drive byte for byte: 8 GiB, read here through a stream over the test's drive. */
+/* A raw image is the console's drive byte for byte, read here through a stream over the test's drive. */
+static uint64_t g_raw_size = XB_DISK_SIZE;
 static int raw_read(void *ctx, uint64_t off, void *buf, size_t len) {
-    if (off >= XB_DISK_SIZE) return 0;
-    if (len > XB_DISK_SIZE - off) len = (size_t)(XB_DISK_SIZE - off);
+    if (off >= g_raw_size) return 0;
+    if (len > g_raw_size - off) len = (size_t)(g_raw_size - off);
     if (len > (1u << 30)) len = 1u << 30;
     xb_get((const xb_guest *)ctx, off, buf, len);
     return (int)len;
 }
 static int64_t raw_size(void *ctx) {
     (void)ctx;
-    return (int64_t)XB_DISK_SIZE;
+    return (int64_t)g_raw_size;
 }
 static int g_raw_writes = 0;
 static sigil_io *raw_open(void *ctx, const char *path) {
@@ -862,8 +917,9 @@ static int raw_write(void *ctx, const char *path, const uint8_t *data, size_t le
     return -1;
 }
 
-static void check_raw(void) {
-    const char *where = "a raw image";
+static void check_raw(uint64_t size, const char *where) {
+    g_raw_size = size;
+    g_raw_writes = 0;
     xb_guest g;
     blank_drive(&g);
     put_others(&g);
@@ -885,10 +941,10 @@ static void check_raw(void) {
     sigil_sync_result_free(r);
     r = NULL;
 
-    /* Written back as one file, a raw drive is 8 GiB held in memory: refused, nothing written. */
+    /* Written back as one file, a raw drive is all of it held in memory: refused, nothing written. */
     sigil_sync_result *other = collect_halo(2, 16, 2, where);
     CHECK(other && sigil_restore(&game.req, other->data, other->len, &r) == SIGIL_ERR_OOM && g_raw_writes == 0, where,
-          "an 8 GiB rewrite wasn't refused");
+          "a rewrite of the whole drive wasn't refused");
     sigil_sync_result_free(r);
     sigil_sync_result_free(other);
     sigil_sync_result_free(qcow);
@@ -990,7 +1046,9 @@ int main(void) {
     check_images();
     check_write_failures();
     check_names();
-    check_raw();
+    check_needs_a_named_drive();
+    check_raw(XB_DISK_SIZE, "a raw image, 8 GiB");
+    check_raw(XB_RETAIL_SIZE, "a raw image that ends where E: does");
     check_large_tree();
     check_autoclear();
     if (g_fails) {

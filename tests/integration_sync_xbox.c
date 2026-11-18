@@ -24,6 +24,7 @@ static corpus_table g_manifest, g_entries;
 typedef struct {
     sigil_sync_request req;
     sigil_result       result;
+    sigil_save_option  option;
 } game;
 
 static void make_game(game *g, mem_root *root, const char *save_id) {
@@ -44,6 +45,10 @@ static void make_game(game *g, mem_root *root, const char *save_id) {
     g->req.write = root_write;
     g->req.write_ctx = root;
     g->req.overwrite_local = 1;
+    g->option.key = "hdd_path";
+    g->option.value = DRIVE;
+    g->req.save.options = &g->option;
+    g->req.save.option_count = 1;
 }
 
 /* Puts sample `id`'s drive in `root`; false when the sample isn't on disk. */
@@ -167,6 +172,9 @@ int main(void) {
     /* Each title of every drive the manifests list, exactly as listed. */
     sigil_sync_result *flatout = collect_from("flatout-cabinetos", "454D0009");
     sigil_sync_result *orta = collect_from("orta-xemu", "53450007");
+    /* A drive both games saved on in xemu: FlatOut's saves as the kernel rewrote them, Orta's beside them. */
+    sigil_sync_result_free(collect_from("orta-flatout-xemu", "454D0009"));
+    sigil_sync_result_free(collect_from("orta-flatout-xemu", "53450007"));
 
     /* The blank image holds no saves, and neither drive holds the other's game. */
     mem_root root = {0};

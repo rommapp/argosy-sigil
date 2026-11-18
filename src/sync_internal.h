@@ -215,6 +215,7 @@ int sigil_sync_collect_nds(sigil_sync_ctx *x, sigil_sync_result *r);
  */
 int sigil_sync_restore_nds(sigil_sync_ctx *x, const uint8_t *unit, size_t len, size_t received_len,
                            sigil_sync_result *r, char local_identity[33]);
+
 /* ---- the original Xbox's hard drive (sync_xbox.c) ------------------------------ */
 
 /** Collect on Xbox: a zip of the game's UDATA and TDATA folders off the drive image's E:. */

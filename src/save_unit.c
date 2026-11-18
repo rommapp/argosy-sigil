@@ -107,8 +107,10 @@ static const gpgx_cart GPGX_CARTS[] = {
 };
 
 /* The core options template variables read, with the value each takes when
- * the request gives none. Beetle PSX's card indexes take the build's prefix:
- * beetle_psx_ on the software core, beetle_psx_hw_ otherwise. */
+ * the request gives none: the emulator's own default. xemu has none for
+ * hdd_path, so {xemu_hdd} has no value until the request sends it. Beetle
+ * PSX's card indexes take the build's prefix: beetle_psx_ on the software
+ * core, beetle_psx_hw_ otherwise. */
 typedef struct {
     const char *var;
     const char *key;
@@ -124,7 +126,7 @@ static const variable_option VARIABLE_OPTIONS[] = {
     { "pcsx2_slot2", "Slot2_Filename", "Mcd002.ps2", false, false },
     { "left_index", "memcard_left_index", "0", true, false },
     { "right_index", "memcard_right_index", "1", true, false },
-    { "xemu_hdd", "hdd_path", "xbox_hdd.qcow2", false, true },
+    { "xemu_hdd", "hdd_path", NULL, false, true },
     { "x1box_hdd", "hdd_path", "hdd.img", false, true },
 };
 
@@ -142,7 +144,8 @@ const char *sigil_save_variable_option(const char *layout, const char *var, size
 }
 
 /* The request's value for the option variable `var` (`len` bytes) reads, or
- * its fallback; NULL for a variable no option sets. */
+ * its fallback; NULL for a variable no option sets, or one with no fallback
+ * whose option the request doesn't send. */
 static const char *variable_option_value(const sigil_save_request *req, const char *var, size_t len) {
     char key[64];
     const char *fallback = NULL;

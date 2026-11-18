@@ -60,8 +60,8 @@ A disc image in a `.zip` is read in place; see [Containers](../containers.md).
 
 | Layout | Files (role, option) | Shared | Verified |
 |---|---|---|---|
-| `xemu` | | `{xemu_hdd}`: the hard-disk image `hdd_path` names in `xemu.toml` (`[sys.files]`), `xbox_hdd.qcow2` when the option isn't sent. The save root is the folder holding it | emulator source; drive images xemu wrote, a save restored into another drive and loaded there |
-| `x1box` | | `{x1box_hdd}`: the image X1 BOX (`com.izzy2lost.x1box`) copies into its files folder as `hdd.img`, qcow2 or raw; `hdd_path` names another file | emulator source |
+| `xemu` | | `{xemu_hdd}`: the hard-disk image `hdd_path` names in `xemu.toml` (`[sys.files]`). The option is required: xemu has no default for it and attaches no drive when it is empty, so without it the row names no drive and collect and restore return `SIGIL_ERR_INVALID_ARG`. The save root is the folder holding the image | emulator source (xemu at `v0.8.136`: `config_spec.yml`, `system/vl.c`); drive images xemu wrote, a save restored into another drive and loaded there |
+| `x1box` | | `{x1box_hdd}`: the image X1 BOX (`com.izzy2lost.x1box`) copies into its files folder as `hdd.img`, qcow2 or raw; `hdd_path` names another file | emulator source (izzy2lost/xemu at `57bc6d6`: `SetupWizardActivity.kt`) |
 
 Both rows match `xbox` only. `hdd_path` may be the setting as the emulator
 writes it, a whole path: sigil takes the file's name. Which file is the
@@ -76,7 +76,9 @@ are where a console keeps them: `E:\UDATA\<save_id>\` holds a game's
 saves, one folder per save beside `TitleMeta.xbx` and `TitleImage.xbx`,
 and `E:\TDATA\<save_id>\` holds what the game keeps for itself. The
 kernel names both folders with the title id in lowercase hex
-(`4d530064`); sigil compares names without case, as FATX does.
+(`4d530064`; on the `flatout-cabinetos` sample the game itself made
+`TDATA/454d0009`), and X1 BOX's importer writes the lowercase name too.
+sigil compares names without case, as FATX does.
 
 X1 BOX's second core, hakuX, works on a folder of its own and X1 BOX
 copies `UDATA` and `TDATA` between that folder and the image around each
@@ -94,6 +96,13 @@ as the kernel spells them and everything below as the drive has it.
 Each file carries its last-write time from the drive as the zip entry's
 time, since a game lists its saves by those times; no hash reads them. A
 folder with no file in it isn't carried.
+
+This is the tree X1 BOX's own save manager exports for a game and takes
+back (`XboxSaveManager.kt` at `57bc6d6`: `exportZip` zips `UDATA/<id>/`
+and `TDATA/<id>/` with each file's time, `importZip` writes them under
+the lowercase id), so one of its exports restores as a unit does. The two
+differ in what they do with a game's files the zip doesn't hold: X1 BOX
+merges and keeps them, sigil's restore replaces the two folders.
 
 Restore replaces the game's two folders with the unit's: what the drive
 holds of them goes, the unit's files are written, each with its time, and
@@ -118,6 +127,7 @@ it as the game saves.
 
 | Code | When | `problem` |
 |---|---|---|
+| `SIGIL_ERR_INVALID_ARG` | either call on `xemu` with no `hdd_path`: xemu has no default drive, so sigil names none | |
 | `SIGIL_ERR_NO_TARGET` | restore: the save root holds no drive image. sigil doesn't make one, since the console's other partitions are the user's; a server restoring for a client takes the client's image | the image's file name |
 | `SIGIL_ERR_NO_TARGET` | restore: a file's name can't be a FATX name (over 42 characters, or a character FATX refuses) | the unit member |
 | `SIGIL_ERR_UNSUPPORTED_FORMAT` | restore: two members go to one file, or one folder is spelled two ways. Either call: a qcow2 image using a feature sigil doesn't write (below) | |
@@ -152,15 +162,33 @@ bitmap (xemu makes none) loses it that way, and `qemu-img check` then
 reports the bitmap's own clusters as leaked: space the image no longer
 uses, with no harm to what it holds.
 
-E: is at byte `0xABE80000` of a retail drive and `0x131F00000` bytes
-long, whatever the drive's size. Its superblock (`FATX`, a volume id,
-sectors per cluster, the root directory's cluster) fills 4 KiB; the FAT
-follows, one entry per cluster plus a reserved one, rounded up to 4 KiB,
-32 bits wide from `0xFFF0` clusters up. A directory is a chain of
-clusters of 64-byte entries: the name's length (`0xE5` deleted, `0xFF`
-or `0x00` the end), attributes, a 42-byte name padded with `0xFF`, the
-first cluster, the size, and three time stamps packed as FAT packs them
-with the year counted from 2000.
+E: is at byte `0xABE80000` of a retail drive and `0x1312D6000` bytes
+long, whatever the drive's size, so the smallest drive that holds it is
+`0x1DD156000` bytes. Its superblock (`FATX`, a volume id, sectors per
+cluster, the root directory's cluster) fills 4 KiB; the FAT follows, one
+entry per cluster plus a reserved one, rounded up to 4 KiB, 32 bits wide
+from `0xFFF0` clusters up. `0` is a free cluster and `0xFFFFFFFF` ends a
+chain; a chain that runs into a reserved, bad or media marker
+(`0xFFFFFFF0`, `0xFFFFFFF7`, `0xFFFFFFF8`) is damaged. A directory is a
+chain of clusters of 64-byte entries: the name's length (`0xE5` deleted,
+`0xFF` or `0x00` the end), attributes, a 42-byte name, the first cluster,
+the size, and three time stamps packed as FAT packs them with the year
+counted from 2000.
+
+That layout is read from X1 BOX's `xemu_fatx_import.c` (izzy2lost/xemu
+at `57bc6d6`) and libfatx (mborgerson/fatx `v0.0.8`), which agree, and
+the qcow2 layout from xemu's own copy of the format (xemu at `v0.8.136`:
+`docs/interop/qcow2.rst`, `block/qcow2.h`). Two things come from drives
+the Xbox kernel wrote in xemu instead, because those sources differ from
+it:
+
+- The three stamps are creation, last write and last access, in that
+  order; both sources call the first one "modified". On the
+  `orta-flatout-xemu` sample a game rewrote the files of two save
+  folders, and each folder's second stamp moved to the time of the write
+  while its first and third stayed.
+- The kernel pads a name with `0xFF` and gives a new entry three equal
+  stamps (`orta-xemu`); X1 BOX pads with zeros.
 
 The qcow2 and FATX code is a port of CabinetOS's MIT-licensed
 `xboxhdd.cpp`; the notice is in
@@ -168,8 +196,12 @@ The qcow2 and FATX code is a port of CabinetOS's MIT-licensed
 
 ## Open items
 
+- A file's creation and last-access times aren't carried: the unit holds the last-write time, and restore writes it into all three stamps, as the kernel does for a file it creates. A folder gets the time of its newest file in all three, where the kernel keeps a folder's creation time and moves only its last write.
+- A folder with no file in it isn't carried (X1 BOX's export keeps one as a folder entry). The kernel makes a game's `UDATA` and `TDATA` folders again when the game starts.
+- Restore replaces the game's two folders with the unit's. X1 BOX's own import merges instead and keeps files the zip doesn't hold.
+- An image carrying a qcow2 dirty bitmap loses it, and `qemu-img check` then reports the bitmap's clusters as leaked ([The drive image](#the-drive-image)). xemu makes no bitmaps.
 - A drive image over 2 GiB, and any raw image, collects but doesn't restore: `write` takes a whole file, and sigil won't hold that much in memory.
-- X1 BOX wasn't run: its row comes from its source (`SetupWizardActivity.kt`, `HakuxHddSync.kt` at `57bc6d6`), and its raw and qcow2 images are the forms tested with xemu.
+- X1 BOX wasn't run: its row and its FATX layout come from its source (`SetupWizardActivity.kt`, `HakuxHddSync.kt`, `XboxSaveManager.kt`, `xemu_fatx_import.c` at `57bc6d6`), and its raw and qcow2 images are the forms tested with xemu.
 - A game's saves under another title id (a title that reads an earlier one's saves) stay with that title: `game_ids` isn't read here.
 - A drive with partitions past E: (F:, G:) works; saves on those partitions aren't read.
 - The extractor is experimental until it is validated against real-world samples.

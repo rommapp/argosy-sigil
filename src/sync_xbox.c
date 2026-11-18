@@ -3,8 +3,10 @@
  * saves on its hard drive, in E:\UDATA\<title id>\ and E:\TDATA\<title id>\,
  * and an emulator keeps that drive as one image file. The unit is a zip of
  * the game's two folders as they sit on E:, `UDATA/<id>/...` and
- * `TDATA/<id>/...`, each file with the time the drive has for it. Restore
- * replaces those two folders on the drive and nothing else on it. */
+ * `TDATA/<id>/...`, each file with the time the drive has for it: the tree
+ * X1 BOX's own save manager exports for a game and takes back
+ * (izzy2lost/xemu at 57bc6d6, XboxSaveManager.kt exportZip and importZip).
+ * Restore replaces those two folders on the drive and nothing else on it. */
 #include "fatx.h"
 #include "sync_internal.h"
 
@@ -212,7 +214,9 @@ static int drive_open_path(const sigil_sync_request *req, const char *path, driv
     return rc;
 }
 
-/* The drive the layout row names; v->fs stays NULL when the save root holds none. */
+/* The drive the layout row names; v->fs stays NULL when the save root holds
+ * none. SIGIL_ERR_INVALID_ARG when the row can't name one: xemu's, with no
+ * hdd_path in the request. */
 static int drive_open(const sigil_sync_ctx *x, drive *v, sigil_sync_result *r) {
     memset(v, 0, sizeof(*v));
     char shared[SYNC_MAX_SHARED][SIGIL_SAVE_PATH_MAX];
@@ -225,7 +229,9 @@ static int drive_open(const sigil_sync_ctx *x, drive *v, sigil_sync_result *r) {
 }
 
 /* The folder the console names after the game: the title id as eight
- * lowercase hex digits, the way its kernel spells it. */
+ * lowercase hex digits. The kernel spells it so (TDATA/454d0009 on
+ * flatout-cabinetos, which the game made), and X1 BOX imports into the
+ * lowercase name (XboxSaveManager.kt importZip). */
 static int game_id(const sigil_sync_ctx *x, char id[XBOX_ID_MAX]) {
     const sigil_result *game = x->req->save.result;
     if (!game || !game->save_id[0]) return SIGIL_ERR_INVALID_ARG;

@@ -20,7 +20,8 @@
 #define XB_DISK_SIZE  0x200000000ull   /* 8 GiB, a retail drive as xemu's image has it */
 #define XB_CHUNKS     ((size_t)(XB_DISK_SIZE / XB_CHUNK))
 #define XB_E          0xABE80000ull
-#define XB_E_SIZE     0x131F00000ull
+#define XB_E_SIZE     0x1312D6000ull
+#define XB_RETAIL_SIZE (XB_E + XB_E_SIZE)   /* the smallest retail drive ends where E: does */
 #define XB_CLUSTER    16384u
 #define XB_FAT        (XB_E + 0x1000u)
 #define XB_FAT_BYTES  ((((XB_E_SIZE / XB_CLUSTER + 1) * 4) + 4095) & ~4095ull)
@@ -350,7 +351,7 @@ static void xb_walk_dir(xb_tree *t, const xb_guest *g, uint32_t dir, const char 
             snprintf(path, sizeof(path), "%s", n->path);
             uint32_t first = n->first;
             if (n->attr & XB_DIR) {
-                char below[448];
+                char below[sizeof(path) + 2];
                 snprintf(below, sizeof(below), "%s/", path);
                 xb_claim(t, g, first, UINT32_MAX, path);
                 xb_walk_dir(t, g, first, below, depth + 1);

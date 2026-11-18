@@ -457,6 +457,7 @@ static void test_option_values(void) {
         "pcsx-card1.mcd", "pcsx-card2.mcd",
     };
     static const char *const PS2[] = { "G.ps2", "Mcd001.ps2", "Mcd002.ps2" };
+    static const char *const XBOX[] = { "xbox_hdd.qcow2", "my drive.qcow2", "hdd.img" };
     static const char *const SATURN[] = {
         "G.srm", "G.bkr", "G.bcr", "G.smpc", "mednafen_saturn_libretro_shared.bkr",
         "mednafen_saturn_libretro_shared.smpc", "mednafen_saturn_libretro_shared.bcr",
@@ -561,6 +562,12 @@ static void test_option_values(void) {
         { "pcsx_rearmed serial from title id", "pcsx_rearmed", "psx", "G.cue", { { "pcsx_rearmed_memcard1", "serial" } },
           L(PCSX), { "SLUS-01206_1.mcd" }, { "pcsx-card2.mcd" }, "SLUS-01206", NULL },
         { "lrps2 default", "pcsx2", "ps2", "G.iso", { { 0 } }, L(PS2), { 0 }, { "Mcd001.ps2", "Mcd002.ps2" } },
+        { "xemu, the drive hdd_path names", "xemu", "xbox", "G.iso", { { "hdd_path", "/home/me/xemu/my drive.qcow2" } },
+          L(XBOX), { 0 }, { "my drive.qcow2" } },
+        { "xemu with no hdd_path names no drive", "xemu", "xbox", "G.iso", { { 0 } }, L(XBOX), { 0 }, { 0 } },
+        { "x1box", "x1box", "xbox", "G.iso", { { 0 } }, L(XBOX), { 0 }, { "hdd.img" } },
+        { "x1box, another drive", "x1box", "xbox", "G.iso", { { "hdd_path", "my drive.qcow2" } }, L(XBOX), { 0 },
+          { "my drive.qcow2" } },
         { "lrps2 per game", "pcsx2", "ps2", "G.iso", { { "pcsx2_shared_memory_cards", "disabled" } }, L(PS2), { "G.ps2" },
           { 0 } },
         { "beetle saturn default", "mednafen_saturn", "saturn", "G.cue", { { 0 } }, L(SATURN), { "G.srm", "G.bcr", "G.smpc" },

@@ -852,6 +852,7 @@ def test_two_profiles_and_none_picked_is_ambiguous_listing_them(tmp_path):
 
 _XEMU_BLANK = Path(__file__).resolve().parents[2] / "tests/fixtures/saves/xbox/files/xemu-blank/xbox_hdd.qcow2"
 _HALO = sigil.SigilResult.persisted(platform="xbox", title_id="MS-004", save_id="4D530004", features=0)
+_XEMU_DRIVE = {"hdd_path": "/home/me/.local/share/xemu/xemu/xbox_hdd.qcow2"}
 _HALO_SAVE = {
     "UDATA/4d530004/TitleMeta.xbx": b"TitleName=Halo\r\n",
     "UDATA/4d530004/0A1B2C3D4E5F/SaveMeta.xbx": b"Name=Checkpoint\r\n",
@@ -875,26 +876,53 @@ def test_an_xbox_restore_without_a_drive_image_names_the_one_it_needs(tmp_path):
     """Every game's saves share the emulator's drive image and sigil makes none, so a restore into
     an empty folder is refused naming the image: a server restoring for a client asks for it."""
     with pytest.raises(sigil.SigilNoTargetError) as refused:
-        sigil.restore(_stored_zip(_HALO_SAVE), _HALO, "xemu", "Halo (USA).iso", tmp_path)
+        sigil.restore(_stored_zip(_HALO_SAVE), _HALO, "xemu", "Halo (USA).iso", tmp_path, options=_XEMU_DRIVE)
     assert refused.value.problem == "xbox_hdd.qcow2"
     assert list(tmp_path.iterdir()) == []
+    # xemu has no drive until its hdd_path setting names one, so without it sigil names none.
+    with pytest.raises(sigil.SigilInvalidArgError):
+        sigil.restore(_stored_zip(_HALO_SAVE), _HALO, "xemu", "Halo (USA).iso", tmp_path)
     with pytest.raises(sigil.SigilNoTargetError) as refused:
         sigil.restore(_stored_zip(_HALO_SAVE), _HALO, "x1box", "Halo (USA).iso", tmp_path)
     assert refused.value.problem == "hdd.img"
 
 
 @pytest.mark.skipif(not _XEMU_BLANK.exists(), reason="Xbox drive samples missing")
+def test_an_x1_box_export_restores_as_a_unit(tmp_path):
+    """X1 BOX's save manager exports a game as a deflated zip of UDATA/ and TDATA/, each file with
+    its time and a folder entry for an empty folder (XboxSaveManager.kt exportZip)."""
+    import io
+    import zipfile
+
+    saves = {name: data for name, data in _HALO_SAVE.items() if name.startswith("UDATA/")}
+    when = (2026, 11, 5, 21, 30, 10)
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as archive:
+        for name, data in saves.items():
+            entry = zipfile.ZipInfo(name, date_time=when)
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(entry, data)
+        archive.writestr(zipfile.ZipInfo("TDATA/4d530004/"), b"")
+    (tmp_path / "hdd.img").write_bytes(_XEMU_BLANK.read_bytes())
+    sigil.restore(out.getvalue(), _HALO, "x1box", "Halo (USA).iso", tmp_path)
+    back = sigil.collect(_HALO, "x1box", "Halo (USA).iso", tmp_path)
+    with zipfile.ZipFile(io.BytesIO(back.data)) as archive:
+        assert {name: archive.read(name) for name in archive.namelist()} == saves
+        assert all(entry.date_time == when for entry in archive.infolist())
+
+
+@pytest.mark.skipif(not _XEMU_BLANK.exists(), reason="Xbox drive samples missing")
 def test_xbox_saves_go_into_the_drive_image_and_come_back(tmp_path):
     blank = _XEMU_BLANK.read_bytes()
     (tmp_path / "xbox_hdd.qcow2").write_bytes(blank)
-    assert sigil.collect(_HALO, "xemu", "Halo (USA).iso", tmp_path).data is None
-    located = sigil.locate_saves(_HALO, "xemu", "Halo (USA).iso", save_root=tmp_path)
+    assert sigil.collect(_HALO, "xemu", "Halo (USA).iso", tmp_path, options=_XEMU_DRIVE).data is None
+    located = sigil.locate_saves(_HALO, "xemu", "Halo (USA).iso", save_root=tmp_path, options=_XEMU_DRIVE)
     assert located.members == () and located.unkeyed == ("xbox_hdd.qcow2",)
 
-    restored = sigil.restore(_stored_zip(_HALO_SAVE), _HALO, "xemu", "Halo (USA).iso", tmp_path)
+    restored = sigil.restore(_stored_zip(_HALO_SAVE), _HALO, "xemu", "Halo (USA).iso", tmp_path, options=_XEMU_DRIVE)
     assert [p.name for p in tmp_path.iterdir()] == ["xbox_hdd.qcow2"]
     assert (tmp_path / "xbox_hdd.qcow2").read_bytes() != blank
-    back = sigil.collect(_HALO, "xemu", "Halo (USA).iso", tmp_path)
+    back = sigil.collect(_HALO, "xemu", "Halo (USA).iso", tmp_path, options=_XEMU_DRIVE)
     assert back.identity_hash == restored.identity_hash == _romm_zip_hash(_HALO_SAVE)
     assert (back.shape, back.artifact) == ("folder", "4D530004.zip")
 
@@ -905,4 +933,4 @@ def test_xbox_saves_go_into_the_drive_image_and_come_back(tmp_path):
         assert {name: archive.read(name) for name in archive.namelist()} == _HALO_SAVE
     # Another game's saves aren't this one's, and the drive is left as it is.
     other = sigil.SigilResult.persisted(platform="xbox", title_id="EM-009", save_id="454D0009", features=0)
-    assert sigil.collect(other, "xemu", "FlatOut (USA).iso", tmp_path).data is None
+    assert sigil.collect(other, "xemu", "FlatOut (USA).iso", tmp_path, options=_XEMU_DRIVE).data is None
