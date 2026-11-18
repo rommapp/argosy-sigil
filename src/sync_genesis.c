@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
-/* Collect and restore for Mega Drive, 32X, Master System and Game Gear carts.
- * Genesis Plus GX and PicoDrive keep a cart's save RAM at the same offsets,
- * the byte at each address the game wrote it to, and differ in what they
- * fill the rest with and how much of it they save:
+/* Collect and restore for Mega Drive, 32X, Master System and Game Gear carts,
+ * read from Genesis Plus GX at a7985a9 and PicoDrive at 733c711. Both cores
+ * keep each byte of a cart's save RAM at the address the game wrote it to.
+ * On Master System and Game Gear, and for an EEPROM, that is the same offset
+ * in both files. For Mega Drive RAM it is when the save's start address,
+ * made even, is a multiple of 64 KiB, as 0x200000 is: Genesis Plus GX indexes
+ * the address's low 16 bits (core/cart_hw/sram.c sram_read_byte), PicoDrive
+ * the address less its start made even (pico/memory.c PicoRead8_sram,
+ * pico/cart.c PicoCartDetect). They differ in what they fill the rest with
+ * and how much of it they save:
  *
  * - Genesis Plus GX keeps the cart's 64 KiB save window (core/cart_hw/sram.c,
  *   eeprom_i2c.c, sms_cart.c), 0xFF where the game never wrote, and saves up
@@ -10,23 +16,30 @@
  * - PicoDrive keeps the window from the save's start address at the size the
  *   ROM header gives, 8 KiB for an EEPROM and 32 KiB for every Master System
  *   and Game Gear cart (pico/cart.c PicoCartDetect, PicoCartDetectMS), 0x00
- *   where the game never wrote, and saves all of it.
+ *   where the game never wrote (0xFF on the carts carthw.cfg marks
+ *   filled_sram), and saves all of it.
  *
  * A frontend reads a shorter file into the start of the core's RAM and leaves
  * the rest as the core filled it. The unit is the RAM as the emulator's file
- * holds it. Its identity leaves out trailing 0xFF, so a save has one identity
- * in either core. Restore writes Genesis Plus GX's file without the trailing
- * 0xFF, and PicoDrive's padded with 0xFF to PicoDrive's size, so the game
- * reads in PicoDrive the bytes it read in Genesis Plus GX: 32 KiB on Master
- * System and Game Gear; on Mega Drive and 32X the size of the file already
- * there when it holds the whole save, else the unit's own length. Neither
- * file runs past the RAM its core keeps. Restore also takes a zip of the one
- * save, under RomM's neutral name save.sram or an emulator's. */
+ * holds it. Its identity leaves out trailing 0xFF, so Genesis Plus GX's file
+ * and the file restore pads with 0xFF for PicoDrive share one; a save
+ * PicoDrive starts from nothing has 0x00 where Genesis Plus GX has 0xFF, and
+ * an identity of its own. Restore writes Genesis Plus GX's file without the
+ * trailing 0xFF, and PicoDrive's padded with 0xFF to PicoDrive's size, so the
+ * game reads in PicoDrive the bytes it read in Genesis Plus GX: 32 KiB on
+ * Master System and Game Gear; on Mega Drive and 32X the size of the file
+ * already there when it holds the whole save, else the unit's own length.
+ * Neither file runs past the RAM its core keeps. Restore also takes a zip of
+ * the one save, under RomM's neutral name save.sram or an emulator's. */
 #include "sync_internal.h"
 
-/* More than either core keeps for any cart: Genesis Plus GX caps the window
- * at 64 KiB, and PicoDrive's widest range for a real cart (carthw.cfg) is
- * 1 MiB. */
+/* The longest save file sigil takes for these carts; a longer one is
+ * refused. Genesis Plus GX keeps at most 64 KiB (core/cart_hw/sram.c
+ * sram_init). PicoDrive keeps 8 KiB for an EEPROM whatever its range, and
+ * every carthw.cfg range wider than 64 KiB is an EEPROM's; 32 KiB on Master
+ * System and Game Gear; and otherwise the range carthw.cfg or the ROM header
+ * gives (pico/cart.c PicoCartDetect), at most 64 KiB in carthw.cfg, while a
+ * header may name more. */
 #define SEGA_MAX_RAM   (1024u * 1024u)
 #define SEGA_GPGX_RAM  0x10000u  /* Genesis Plus GX's save window */
 #define SEGA_8BIT_RAM  0x8000u   /* PicoDrive's Master System and Game Gear size */

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 /* Mega Drive, 32X, Master System and Game Gear saves through collect and
  * restore: Genesis Plus GX's file, which stops at the last byte that isn't
- * 0xFF, and PicoDrive's, which keeps its whole size with 0x00 where the game
- * never wrote, give one identity, and restore writes each core's own form. */
+ * 0xFF, and the file restore pads with 0xFF to PicoDrive's size give one
+ * identity, PicoDrive's own 0x00 fill crosses as it is, and restore writes
+ * each core's own form. */
 #include "legacy_units.h"
 #include <stdio.h>
 

@@ -23,11 +23,17 @@ default row, as does picodrive (see [Save units](../save-units.md)).
 
 ## Save formats
 
-Both cores keep a cart's save RAM at the same offsets: each byte at the
-address the game wrote it to, so 8-bit RAM on the odd addresses has filler
-on the even ones, an EEPROM's bytes start at 0, and a Master System or Game
-Gear cart's two 16 KiB banks follow each other. They differ in what they
-fill the rest with and how much of it they save:
+Read at genesis_plus_gx `a7985a9` and picodrive `733c711`. Both cores keep
+each byte of a cart's save RAM at the address the game wrote it to, so 8-bit
+RAM on the odd addresses has filler on the even ones, an EEPROM's bytes start
+at 0, and a Master System or Game Gear cart's two 16 KiB banks follow each
+other. On Master System and Game Gear, and for an EEPROM, that is the same
+offset in both files. For Mega Drive RAM it is when the save's start
+address, made even, is a multiple of 64 KiB, as `0x200000` is:
+genesis_plus_gx indexes the address's low 16 bits (`core/cart_hw/sram.c`
+`sram_read_byte`), picodrive the address less its start made even
+(`pico/memory.c` `PicoRead8_sram`, `pico/cart.c` `PicoCartDetect`). The two
+cores differ in what they fill the rest with and how much of it they save:
 
 - genesis_plus_gx keeps the cart's 64 KiB save window (`core/cart_hw/sram.c`,
   `eeprom_i2c.c`, `sms_cart.c`) with `0xFF` where the game never wrote, and
@@ -37,7 +43,8 @@ fill the rest with and how much of it they save:
   ROM header gives, 8 KiB for an EEPROM and 32 KiB for every Master System and
   Game Gear cart (`pico/cart.c` `PicoCartDetect`, `PicoCartDetectMS`; its
   `carthw.cfg` changes the range for a few carts), with `0x00` where the game
-  never wrote, and saves all of it once any byte isn't `0x00`.
+  never wrote (`0xFF` on the few carts `carthw.cfg` marks `filled_sram`), and
+  saves all of it once any byte isn't `0x00`.
 
 A frontend reads a shorter file into the start of the core's RAM and leaves
 the rest as the core filled it, so each core reads the other's file. Read
@@ -48,8 +55,16 @@ that isn't `0xFF`, where the game read `0xFF`.
 
 A cart travels as its save RAM, one file named `{stem}.srm`: the bytes as
 the emulator's file holds them, so a picodrive save keeps its `0x00` fill
-and its length. The identity leaves out trailing `0xFF`, so a save has one
-identity in either core, padded or not.
+and its length. The identity leaves out trailing `0xFF`, so
+genesis_plus_gx's trimmed file, a full 64 KiB copy of it, and the file
+restore pads with `0xFF` for picodrive share one identity, and so does the
+file picodrive saves after loading a padded one, since it writes the padding
+back. A save picodrive starts from nothing has `0x00` where genesis_plus_gx
+has `0xFF`, since picodrive allocates new RAM zeroed (`pico/cart.c`
+`PicoCartDetect` and `PicoCartDetectMS`; the `filled_sram` carts aside), so
+its identity is its own, not that of the same game state saved in
+genesis_plus_gx. Restored for genesis_plus_gx, it keeps its bytes and that
+identity.
 
 Restore writes the file in the form of the core the request names:
 
@@ -90,11 +105,11 @@ A save that goes to the other core and back comes back the same size and
 bytes whenever restore knows picodrive's size: the cart is a Master System or
 Game Gear one, or picodrive's own file is there. Restored on Mega Drive and
 32X into an empty folder, or next to a file shorter than the save, a
-genesis_plus_gx save goes to picodrive as it came; picodrive
-loads it, fills the rest of its RAM with `0x00` and saves all of it, and that
-save comes back to genesis_plus_gx at picodrive's size, with the `0x00` where
-the game had read `0xFF`. Both cores load it. Restore would need the ROM
-header to pad it.
+genesis_plus_gx save goes to picodrive as it came; picodrive loads it, fills
+the rest of its RAM with `0x00` and saves all of it, and that save comes back
+to genesis_plus_gx at picodrive's size, with the `0x00` where the game had
+read `0xFF`. Both cores load it. Restore would need the ROM header and
+`carthw.cfg` to pad it.
 
 Restore also reads a raw `.srm` from either core, as clients uploaded before
 sigil, and a zip holding the one save as `save.sram` or an emulator's `.srm`
@@ -105,5 +120,7 @@ or `.sav`; it refuses a zip of anything else.
 - No Genesis, 32X, Master System or Game Gear platform slug or extractor.
 - Restore for picodrive on Mega Drive and 32X, into an empty folder or next to a file shorter than the save, writes the RAM as it came, without picodrive's `0xFF` padding, since only the ROM header and `carthw.cfg` give the size. Next to a genesis_plus_gx file that holds the save, the padding stops at that file's length.
 - Master System and Game Gear carts with a serial EEPROM (93C46) save only in genesis_plus_gx; picodrive has no EEPROM for them.
+- Master System and Game Gear carts on the Codemasters mapper that switch on their 8 KiB of cart RAM, Ernie Els Golf among them, save it in genesis_plus_gx (`core/cart_hw/sms_cart.c` `mapper_16k_w`, lines 1474-1482 at `a7985a9`), while picodrive maps that RAM into its video RAM, outside its save (`pico/sms.c` `write_bank_codem`, lines 720-723 at `733c711`). Restore still writes picodrive's 32 KiB file, which the game doesn't read there, so the save doesn't reach the game in picodrive.
+- On Mega Drive, RAM sits at the same offsets in the two cores only when both place it alike, from a start address that, made even, is a multiple of 64 KiB. genesis_plus_gx moves a header start at or above `0x800000` to `0x200000` and keeps 64 KiB of a wider header range (`core/cart_hw/sram.c` `sram_init`, lines 124-136 at `a7985a9`); picodrive takes the header's range as it is, or `carthw.cfg`'s (`pico/cart.c` `PicoCartDetect`). sigil reads no ROM header and moves nothing, so such a save may not cross. No such cart has been checked.
 - The 32X runs in picodrive alone; no other core's 32X save has been read.
 - The ares save file name, its RAM interleaving, and the Kega Fusion and BlastEm layouts are unconfirmed.
