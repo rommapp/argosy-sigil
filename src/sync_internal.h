@@ -205,6 +205,17 @@ int sigil_sync_collect_gb(sigil_sync_ctx *x, sigil_sync_result *r);
 int sigil_sync_restore_gb(sigil_sync_ctx *x, const uint8_t *unit, size_t len, size_t received_len,
                           sigil_sync_result *r, char local_identity[33]);
 
+/* ---- Nintendo DS cartridges (sync_nds.c) -------------------------------------- */
+
+/** Collect on DS: the save chip's raw bytes, from a raw file or a DeSmuME .dsv. */
+int sigil_sync_collect_nds(sigil_sync_ctx *x, sigil_sync_result *r);
+/**
+ * Restore on DS: the raw save, or a .dsv with DeSmuME's footer as clients
+ * uploaded it before sigil, written as the request's emulator keeps it.
+ */
+int sigil_sync_restore_nds(sigil_sync_ctx *x, const uint8_t *unit, size_t len, size_t received_len,
+                           sigil_sync_result *r, char local_identity[33]);
+
 enum { SYNC_OWN_GAME, SYNC_OWN_OTHER, SYNC_OWN_NONE, SYNC_OWN_COMPANION };
 
 /* Whose saves a unit or card read takes: the game's, the game's and its

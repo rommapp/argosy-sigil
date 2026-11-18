@@ -26,7 +26,7 @@ save folder; sigil never searches the drive.
 | Game Boy Advance | [gba](gba.md) | | no | located |
 | Super Nintendo | [snes](snes.md) | `snes` | header facts | located |
 | NES, Famicom Disk System | [fds](fds.md) | `fds` (layout rows) | no | located |
-| Nintendo DS | [nds](nds.md) | | no | located |
+| Nintendo DS | [nds](nds.md) | `nds` (layout rows) | no | synced |
 | Nintendo 3DS | [3ds](3ds.md) | `3ds` | yes | synced |
 | Nintendo 64 | [n64](n64.md) | `n64` | yes | synced |
 | Pokémon Mini | [pokemini](pokemini.md) | | no | located |
@@ -117,6 +117,7 @@ section, fails `bindings/python/test_docs.py`.
 | `pokemini` | [pokemini](pokemini.md) | PokeMini | libretro core |
 | `handy` | [lynx](lynx.md) | Handy | libretro core |
 | `melonds` | [nds](nds.md) | melonDS (the legacy core) | libretro core |
+| `desmume` | [nds](nds.md) | DeSmuME | libretro core |
 | `fbneo` | [arcade](arcade.md) | FBNeo | libretro core |
 | `mame2003_plus` | [arcade](arcade.md) | MAME 2003-Plus | libretro core |
 | `dosbox_pure` | [dos](dos.md) | DOSBox Pure | libretro core |
@@ -197,7 +198,9 @@ value, and the default is the first listed.
 | `dolphin`, `dolphin_standalone` (GameCube) | the game's `.gci` files in `User/GC/{gc_region}/Card A/` (`dolphin_standalone`: `GC/{gc_region}/Card A/`) | `SlotA=1`: `User/GC/MemoryCardA.{gc_region}.raw` (shared), `MemoryCardSize` naming smaller cards (`.59.raw` to `.1019.raw`) | yes; send the container for a raw card |
 | `flycast` | `vmu_save_A1.bin` and the other ports, shared, in the system folder's `dc/` | `reicast_per_content_vmus=VMU A1`: `{dc_vmu_id}.A1.bin`; `=All VMUs`: every port as `{dc_vmu_id}.{port}.bin` | send the container; yes per game |
 | `flycast_standalone` | `{dc_vmu_id}_vmu_save_A1.bin`; other ports `vmu_save_{port}.bin` (shared) | `PerGameVmu=no`: `vmu_save_A1.bin` (shared) | yes for A1; send the container when shared |
-| `mednafen_ngp`, `opera`, `pokemini`, `handy`, `melonds`, `fbneo`, `mame2003_plus`, `dosbox_pure`, `same_cdi`, `nestopia` | see each platform's page | | located only |
+| `melonds` | `{stem}.sav` (DS) | | yes |
+| `desmume` | `{stem}.dsv`: the save padded to DeSmuME's size for it, then its footer (DS) | | yes |
+| `mednafen_ngp`, `opera`, `pokemini`, `handy`, `fbneo`, `mame2003_plus`, `dosbox_pure`, `same_cdi`, `nestopia` | see each platform's page | | located only |
 | `mupen64plus_next`, `parallel_n64` | `{stem}.srm` | | yes |
 | `mupen64plus_standalone` | `*-{n64_md5_8}.eep`, `.sra`, `.fla`, `.mpk` | | one of the game's files |
 | `m64plus_fz` | `GameData/*{n64_md5_lower}/SramData/*.eep`, `.sra`, `.fla`, `.mpk` | | one of the game's files |
