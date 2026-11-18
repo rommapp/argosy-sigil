@@ -848,3 +848,61 @@ def test_two_profiles_and_none_picked_is_ambiguous_listing_them(tmp_path):
     )
     with pytest.raises(sigil.SigilUnsupportedFormatError):
         sigil.list_profiles("pcsx_rearmed", tmp_path)
+
+
+_XEMU_BLANK = Path(__file__).resolve().parents[2] / "tests/fixtures/saves/xbox/files/xemu-blank/xbox_hdd.qcow2"
+_HALO = sigil.SigilResult.persisted(platform="xbox", title_id="MS-004", save_id="4D530004", features=0)
+_HALO_SAVE = {
+    "UDATA/4d530004/TitleMeta.xbx": b"TitleName=Halo\r\n",
+    "UDATA/4d530004/0A1B2C3D4E5F/SaveMeta.xbx": b"Name=Checkpoint\r\n",
+    "UDATA/4d530004/0A1B2C3D4E5F/blam.sav": bytes(range(256)) * 160,
+    "TDATA/4d530004/settings.bin": b"\x01\x02\x03",
+}
+
+
+def _stored_zip(files: dict[str, bytes]) -> bytes:
+    import io
+    import zipfile
+
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as archive:
+        for name, data in files.items():
+            archive.writestr(name, data)
+    return out.getvalue()
+
+
+def test_an_xbox_restore_without_a_drive_image_names_the_one_it_needs(tmp_path):
+    """Every game's saves share the emulator's drive image and sigil makes none, so a restore into
+    an empty folder is refused naming the image: a server restoring for a client asks for it."""
+    with pytest.raises(sigil.SigilNoTargetError) as refused:
+        sigil.restore(_stored_zip(_HALO_SAVE), _HALO, "xemu", "Halo (USA).iso", tmp_path)
+    assert refused.value.problem == "xbox_hdd.qcow2"
+    assert list(tmp_path.iterdir()) == []
+    with pytest.raises(sigil.SigilNoTargetError) as refused:
+        sigil.restore(_stored_zip(_HALO_SAVE), _HALO, "x1box", "Halo (USA).iso", tmp_path)
+    assert refused.value.problem == "hdd.img"
+
+
+@pytest.mark.skipif(not _XEMU_BLANK.exists(), reason="Xbox drive samples missing")
+def test_xbox_saves_go_into_the_drive_image_and_come_back(tmp_path):
+    blank = _XEMU_BLANK.read_bytes()
+    (tmp_path / "xbox_hdd.qcow2").write_bytes(blank)
+    assert sigil.collect(_HALO, "xemu", "Halo (USA).iso", tmp_path).data is None
+    located = sigil.locate_saves(_HALO, "xemu", "Halo (USA).iso", save_root=tmp_path)
+    assert located.members == () and located.unkeyed == ("xbox_hdd.qcow2",)
+
+    restored = sigil.restore(_stored_zip(_HALO_SAVE), _HALO, "xemu", "Halo (USA).iso", tmp_path)
+    assert [p.name for p in tmp_path.iterdir()] == ["xbox_hdd.qcow2"]
+    assert (tmp_path / "xbox_hdd.qcow2").read_bytes() != blank
+    back = sigil.collect(_HALO, "xemu", "Halo (USA).iso", tmp_path)
+    assert back.identity_hash == restored.identity_hash == _romm_zip_hash(_HALO_SAVE)
+    assert (back.shape, back.artifact) == ("folder", "4D530004.zip")
+
+    import io
+    import zipfile
+
+    with zipfile.ZipFile(io.BytesIO(back.data)) as archive:
+        assert {name: archive.read(name) for name in archive.namelist()} == _HALO_SAVE
+    # Another game's saves aren't this one's, and the drive is left as it is.
+    other = sigil.SigilResult.persisted(platform="xbox", title_id="EM-009", save_id="454D0009", features=0)
+    assert sigil.collect(other, "xemu", "FlatOut (USA).iso", tmp_path).data is None

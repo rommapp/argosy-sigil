@@ -276,7 +276,7 @@ static void xb_put_text(xb_guest *g, const char *path, const char *text) {
 /* ---- FATX read back ------------------------------------------------------------- */
 
 typedef struct {
-    char     path[300];
+    char     path[512];
     uint8_t  attr;
     uint32_t first;
     uint32_t size;
@@ -346,11 +346,11 @@ static void xb_walk_dir(xb_tree *t, const xb_guest *g, uint32_t dir, const char 
             n->time = (uint16_t)(raw[56] | (raw[57] << 8));
             n->date = (uint16_t)(raw[58] | (raw[59] << 8));
             n->slot = xb_cluster_off(c) + i;
-            char path[300];
+            char path[512];
             snprintf(path, sizeof(path), "%s", n->path);
             uint32_t first = n->first;
             if (n->attr & XB_DIR) {
-                char below[320];
+                char below[448];
                 snprintf(below, sizeof(below), "%s/", path);
                 xb_claim(t, g, first, UINT32_MAX, path);
                 xb_walk_dir(t, g, first, below, depth + 1);
