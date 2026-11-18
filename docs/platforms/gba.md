@@ -60,11 +60,13 @@ byte's top bit. The file around them is not.
 
 | Emulator | File |
 |---|---|
-| mGBA libretro (`mgba`, the default row) | The core reports 128 KiB of save RAM, 0xFF past what was read in, until the game addresses the chip, then the chip's size; an EEPROM is 512 bytes until the game addresses past them. RetroArch 1.22.2's SRAM autosave keeps the length the core reported when the game loaded (`save.c`, `autosave_new`), so the `.srm` came out 128 KiB there. A frontend that asks the core at each save writes the chip's size. |
-| VBA-M libretro (`vbam`, the default row) | The chip's size, from its override table or the ROM's ids. An EEPROM starts at 8 KiB and becomes 512 bytes once the game addresses it as one. |
-| gpSP (`gpsp`) | 128 KiB for every chip: the chip's bytes, then 0xFF. |
-| VBA Next (`vba_next`) | 136 KiB for every chip: SRAM or flash at 0, an EEPROM's bytes at 128 KiB. It never reads an EEPROM from 0, so another emulator's EEPROM file loads as no save. |
+| mGBA libretro (`mgba`, the default row) | The core reports 128 KiB of save RAM, 0xFF past what was read in, until the game addresses the chip, then the chip's size; an EEPROM is 512 bytes until the game addresses past them (`src/platform/libretro/libretro.c` `retro_get_memory_size`; `src/gba/savedata.c` `GBASavedataInitEEPROM`, `_ensureEeprom`). RetroArch 1.22.2's SRAM autosave keeps the length the core reported when the game loaded (`save.c`, `autosave_new`), so the `.srm` came out 128 KiB there. A frontend that asks the core at each save writes the chip's size. |
+| VBA-M libretro (`vbam`, the default row) | The chip's size, from its override table or the ROM's ids. An EEPROM is 512 bytes, or the override table's size, until the game addresses 8 KiB (`src/libretro/libretro.cpp` `load_image_preferences`; `src/core/gba/gbaEeprom.cpp` `eepromWrite`). Read, not run. |
+| gpSP (`gpsp`) | 128 KiB for every chip: the chip's bytes, then 0xFF (`libretro/libretro.c` `retro_get_memory_size`, `retro_load_game`). |
+| VBA Next (`vba_next`) | 136 KiB for every chip: SRAM or flash at 0, an EEPROM's bytes at 128 KiB (`libretro/libretro.c` `libretro_save_buf`; `src/memory.c` `eepromData`). It never reads an EEPROM from 0, so another emulator's EEPROM file loads as no save: `adjust_save_ram`, which could move it, runs only in `retro_init`, before the save is loaded. |
 | mGBA standalone (`mgba_standalone`) | `.sav`: the chip's size, then on a clock cart a 16-byte footer ([clock format](#clock-format)). |
+
+Sources read: mgba at `e31759b2` (the libretro core) and the 0.10.5 tag (standalone), visualboyadvance-m v2.2.3, libretro/gpsp at `5819380`, libretro/vba-next at `788192f`.
 
 ## Sync
 
@@ -120,7 +122,7 @@ computer's clock each session and keep nothing.
 ## Open items
 
 - Without the ROM's facts a padded save keeps 128 KiB, so gpSP's or VBA Next's save of a game whose ROM sigil hasn't read gets another identity than mGBA's file of the same save.
-- An EEPROM save keeps the size its emulator wrote, so the same save from a 512-byte file and from an exact 8 KiB file (VBA-M starts every EEPROM at 8 KiB) are two units with two identities.
+- An EEPROM save keeps the size its emulator wrote, so the same save from a 512-byte file and from an exact 8 KiB file (mGBA and VBA-M write 512 bytes until the game addresses past them, then 8 KiB) are two units with two identities.
 - A clock cart whose ROM carries no `SIIRTC_V` id is only known as one when its save has mGBA's footer.
 - mGBA's 64 KiB SRAM (`SRAM512`, homebrew) travels like 64 KiB flash; no Nintendo id names it.
 - Pizza Boy A/C: closed source, format and RTC handling unknown.

@@ -1,9 +1,26 @@
 // SPDX-License-Identifier: MPL-2.0
 /* Collect and restore for Game Boy Advance carts. The save chip's bytes are
- * the same in every emulator; the file around them is not. mGBA and VBA-M
- * write the chip's own size, gpSP pads every save to 128 KiB, VBA Next
- * writes 136 KiB with an EEPROM's bytes at 128 KiB, and standalone mGBA
- * appends the cart's clock. The unit is the chip's bytes at the chip's size:
+ * the same in every emulator; the file around them is not:
+ * - mGBA's libretro core reports 128 KiB until the game addresses the chip,
+ *   then the chip's size; an EEPROM is 512 bytes until the game addresses
+ *   past them (mgba at e31759b2: src/platform/libretro/libretro.c
+ *   retro_get_memory_size; src/gba/savedata.c GBASavedataInitEEPROM,
+ *   _ensureEeprom).
+ * - VBA-M's libretro core writes the chip's size; an EEPROM is 512 bytes
+ *   until the game addresses 8 KiB, or the override table's size
+ *   (visualboyadvance-m v2.2.3: src/libretro/libretro.cpp
+ *   load_image_preferences, retro_get_memory_size;
+ *   src/core/gba/gbaEeprom.cpp eepromWrite).
+ * - gpSP pads every save to 128 KiB with 0xFF (libretro/gpsp at 5819380:
+ *   libretro/libretro.c retro_get_memory_size, retro_load_game).
+ * - VBA Next writes 136 KiB with an EEPROM's bytes at 128 KiB (libretro/
+ *   vba-next at 788192f: libretro/libretro.c libretro_save_buf; src/memory.c
+ *   eepromData).
+ * - Standalone mGBA writes the chip's size, then on a clock cart the clock
+ *   (mGBA 0.10.5: src/gba/savedata.c GBASavedataRTCWrite), and grows a
+ *   shorter file to 8 KiB with zeros for the EEPROM games its override table
+ *   names (GBASavedataInitEEPROM, src/gba/overrides.c).
+ * The unit is the chip's bytes at the chip's size:
  * on a cart without a clock one file, on a cart with one a zip of save.sram
  * and, when the emulator kept the clock, clock.rtc in standalone mGBA's
  * 16-byte layout. Its identity covers the chip only, so a clock that ticked

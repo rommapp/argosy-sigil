@@ -15,7 +15,9 @@
 
 /* The ids Nintendo's libraries leave in the ROM, each followed by a
  * three-digit version (EEPROM_V124). Emulators that detect the save chip
- * from the ROM search for the same ones (VBA-M's libretro.cpp, gpSP). */
+ * from the ROM search for the same ones (visualboyadvance-m v2.2.3
+ * src/core/gba/gbaFlash.cpp flashDetectSaveType; libretro/gpsp at 5819380
+ * gba_memory.c detect_backup_subcircuit). */
 static const struct { const char *id; uint32_t feature; } GBA_IDS[] = {
     { "SRAM_V", SIGIL_FEATURE_GBA_SRAM },
     { "SRAM_F_V", SIGIL_FEATURE_GBA_SRAM },
