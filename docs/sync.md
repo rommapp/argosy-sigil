@@ -49,7 +49,7 @@ next collect then gives the save in sigil's form; upload that.
 | Wii | the title folder zipped from its code (`<code>/data/...`, `<code>/content/...`); `content/` is left out |
 | 3DS | a zip rooted at `data/` and `extdata/` |
 | GB, GBC | a raw `.srm`, a `.sav` with its clock appended, or a zip of an emulator's `.srm` and `.rtc` |
-| GBA | any emulator's file (gpSP's and mGBA's 128 KiB, VBA Next's 136 KiB, a standalone mGBA `.sav` with its clock), or a zip of one |
+| GBA | any emulator's file (gpSP's 128 KiB, mGBA's 128 KiB with its clock inside, VBA Next's 136 KiB, a standalone mGBA `.sav` with its clock), or a zip of one |
 | N64 | a libretro `.srm`, a lone `.eep`, or a zip of an emulator's files (`.srm`, `.eep`, `.sra`, `.fla`, `.mpk`, `_Cont_<n>.mpk`) |
 | DS | a raw save, or a DeSmuME `.dsv` with its footer |
 | Any | any of the above, or sigil's own unit, ending in the hardcore marker Argosy appended (`{"h":true,...}`, its length as a little-endian u32, then `ARGOSY` 01 00). Restore leaves the marker out of the saves, companion units included, and sets `hardcore_marker`; `content_hash` still covers it |

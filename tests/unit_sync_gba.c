@@ -322,8 +322,10 @@ static uint8_t *member_of(const sigil_sync_result *r, const char *name, size_t *
     return out;
 }
 
-/* A clock cart: standalone mGBA's footer travels as clock.rtc, the identity
- * covers the chip alone, and only standalone mGBA gets the clock back. */
+/* A 128 KiB flash clock cart: standalone mGBA's footer travels as
+ * clock.rtc, the identity covers the chip alone, and only standalone mGBA
+ * gets the clock back: mGBA's libretro core has no room for it past the
+ * flash in its 128 KiB save RAM. */
 static void check_clock(void) {
     const chip *x = &g_chips[4];
     const uint32_t emerald = SIGIL_FEATURE_GBA_FLASH1M | SIGIL_FEATURE_RTC;
@@ -395,6 +397,161 @@ static void check_clock(void) {
     }
     sigil_sync_result_free(plain);
     sigil_sync_result_free(timed);
+}
+
+/* Unit `u` restored for `layout` into `root`: the file written, or NULL when
+ * restore fails or leaves more than one file. */
+static mem_file *restore_into(mem_root *root, const char *layout, const char *file, uint32_t features,
+                              const sigil_sync_result *u) {
+    game g;
+    make_game(&g, root, layout, features);
+    sigil_sync_result *w = NULL;
+    int rc = u ? sigil_restore(&g.req, u->data, u->len, &w) : SIGIL_ERR_INVALID_ARG;
+    sigil_sync_result_free(w);
+    return rc == SIGIL_OK && root->count == 1 ? root_find(root, file) : NULL;
+}
+
+/* mGBA's libretro core keeps a clock cart's clock in its 128 KiB save RAM at
+ * the chip's size, 8 KiB for an EEPROM, and RetroArch saves the whole buffer
+ * (libretro/mgba at e31759b2: src/gba/savedata.c GBASavedataRTCWrite,
+ * src/platform/libretro/libretro.c _doDeferredSetup). With the ROM naming
+ * the chip and the clock, collect takes those 16 bytes as clock.rtc and the
+ * chip alone as save.sram; restore writes the clock back there over such a
+ * file, puts it after the chip for standalone mGBA, and leaves it out for
+ * the others. */
+static void check_libretro_clock(void) {
+    for (size_t c = 0; c < 4; c++) {
+        const chip *x = &g_chips[c];
+        const uint32_t facts = x->feature | SIGIL_FEATURE_RTC;
+        const size_t at = x->eeprom ? 8 * K : x->len;
+        static uint8_t buffer[128 * K], bare[128 * K], want[128 * K + 16];
+        memset(buffer, 0xFF, sizeof(buffer));
+        memcpy(buffer, x->bytes, x->len);
+        memcpy(bare, buffer, sizeof(bare));
+        memcpy(buffer + at, g_clock, 16);
+        char where[96];
+        snprintf(where, sizeof(where), "libretro mGBA's clock, %s", x->name);
+
+        int rc;
+        sigil_sync_result *u = collect_file("mgba", "Game.srm", buffer, sizeof(buffer), facts, &rc);
+        size_t ram_len = 0, rtc_len = 0;
+        uint8_t *ram = member_of(u, "save.sram", &ram_len);
+        uint8_t *rtc = member_of(u, "clock.rtc", &rtc_len);
+        if (rc != SIGIL_OK || !ram || ram_len != x->len || memcmp(ram, x->bytes, x->len) != 0 || !rtc ||
+            rtc_len != 16 || memcmp(rtc, g_clock, 16) != 0) {
+            fail(where, "not the chip as save.sram and the clock as clock.rtc");
+        }
+        free(ram);
+        free(rtc);
+        size_t len = form_of(x, F_GPSP, false, g_file);
+        sigil_sync_result *gpsp = collect_file("gpsp", "Game.srm", g_file, len, facts, &rc);
+        if (!u || !gpsp || strcmp(u->identity_hash, gpsp->identity_hash) != 0) fail(where, "not gpSP's save's identity");
+        sigil_sync_result_free(gpsp);
+
+        mem_root over = {0}, without = {0}, empty = {0}, vba = {0}, standalone = {0};
+        root_put(&over, "Game.srm", buffer, sizeof(buffer));
+        mem_file *f = restore_into(&over, "mgba", "Game.srm", facts, u);
+        if (!f || f->len != sizeof(buffer) || memcmp(f->data, buffer, sizeof(buffer)) != 0) {
+            fail(where, "restore over libretro mGBA's file isn't the file back");
+        }
+        root_put(&without, "Game.srm", bare, sizeof(bare));
+        f = restore_into(&without, "mgba", "Game.srm", facts, u);
+        if (!f || f->len != sizeof(buffer) || memcmp(f->data, buffer, sizeof(buffer)) != 0) {
+            fail(where, "the clock isn't written where the core keeps it");
+        }
+        f = restore_into(&empty, "mgba", "Game.srm", facts, u);
+        if (!f || f->len != x->len || memcmp(f->data, x->bytes, x->len) != 0) fail(where, "an empty folder doesn't get the chip");
+        len = form_of(x, F_VBA_NEXT, false, g_want);
+        f = restore_into(&vba, "vba_next", "Game.srm", facts, u);
+        if (!f || f->len != len || memcmp(f->data, g_want, len) != 0) fail(where, "not VBA Next's form");
+        memset(want, 0xFF, sizeof(want));
+        memcpy(want, x->bytes, x->len);
+        memcpy(want + at, g_clock, 16);
+        f = restore_into(&standalone, "mgba_standalone", "Game.sav", facts, u);
+        if (!f || f->len != at + 16 || memcmp(f->data, want, at + 16) != 0) {
+            fail(where, "standalone mGBA doesn't get the clock where it reads it");
+        }
+        root_free(&over);
+        root_free(&without);
+        root_free(&empty);
+        root_free(&vba);
+        root_free(&standalone);
+        sigil_sync_result_free(u);
+    }
+
+    /* Without the ROM naming the chip and the clock, nothing says the 16
+     * bytes are a clock: collect keeps them in the save. */
+    const chip *x = &g_chips[1];
+    static uint8_t buffer[128 * K];
+    memset(buffer, 0xFF, sizeof(buffer));
+    memcpy(buffer, x->bytes, x->len);
+    memcpy(buffer + 8 * K, g_clock, 16);
+    static const struct { uint32_t features; size_t len; const char *what; } UNNAMED[] = {
+        { 0, 128 * K, "no facts" },
+        { SIGIL_FEATURE_RTC, 128 * K, "the clock alone" },
+        { SIGIL_FEATURE_GBA_EEPROM, 32 * K, "the chip alone" },
+    };
+    for (size_t i = 0; i < sizeof(UNNAMED) / sizeof(UNNAMED[0]); i++) {
+        int rc;
+        sigil_sync_result *u = collect_file("mgba", "Game.srm", buffer, sizeof(buffer), UNNAMED[i].features, &rc);
+        uint8_t *ram = NULL;
+        size_t ram_len = 0, rtc_len = 0;
+        uint8_t *rtc = member_of(u, "clock.rtc", &rtc_len);
+        if (u && u->shape == SIGIL_SAVE_SHAPE_MULTI) {
+            ram = member_of(u, "save.sram", &ram_len);
+        } else if (u) {
+            ram_len = u->len;
+            ram = (uint8_t *)malloc(ram_len);
+            if (ram) memcpy(ram, u->data, ram_len);
+        }
+        if (rc != SIGIL_OK || rtc || !ram || ram_len != UNNAMED[i].len || memcmp(ram, buffer, ram_len) != 0) {
+            fail(UNNAMED[i].what, "the bytes at 8 KiB taken out of the save");
+        }
+        free(ram);
+        free(rtc);
+        sigil_sync_result_free(u);
+    }
+
+    /* Data past the clock's place means the file isn't the core's buffer
+     * with a clock: every byte stays in the save. */
+    const uint32_t facts = SIGIL_FEATURE_GBA_EEPROM | SIGIL_FEATURE_RTC;
+    buffer[100 * K] = 0x12;
+    int rc;
+    sigil_sync_result *u = collect_file("mgba", "Game.srm", buffer, sizeof(buffer), facts, &rc);
+    size_t ram_len = 0, rtc_len = 0;
+    uint8_t *ram = member_of(u, "save.sram", &ram_len);
+    uint8_t *rtc = member_of(u, "clock.rtc", &rtc_len);
+    if (rc != SIGIL_OK || rtc || !ram || ram_len != 128 * K || memcmp(ram, buffer, ram_len) != 0) {
+        fail("data past the clock's place", "taken for a clock");
+    }
+    free(ram);
+    free(rtc);
+    sigil_sync_result_free(u);
+
+    /* A save larger than the chip the ROM names fills the clock's place, so
+     * restore over the core's buffer writes no clock into it. */
+    static uint8_t big[32 * K];
+    memset(big, 0x5A, sizeof(big));
+    static const char *const NAMES[] = { "save.sram", "clock.rtc" };
+    uint8_t *parts[2] = { big, g_clock };
+    size_t lens[2] = { sizeof(big), 16 };
+    size_t zip_len = 0;
+    uint8_t *zip = legacy_zip(NAMES, parts, lens, 2, &zip_len);
+    static uint8_t bare[128 * K];
+    memset(bare, 0xFF, sizeof(bare));
+    mem_root root = {0};
+    root_put(&root, "Game.srm", bare, sizeof(bare));
+    game g;
+    make_game(&g, &root, "mgba", facts);
+    sigil_sync_result *w = NULL;
+    mem_file *f = NULL;
+    if (!zip || sigil_restore(&g.req, zip, zip_len, &w) != SIGIL_OK || !(f = root_find(&root, "Game.srm")) ||
+        f->len != 128 * K || memcmp(f->data, big, sizeof(big)) != 0 || !all_ff_tail(f->data, sizeof(big), 128 * K)) {
+        fail("a 32 KiB save of an EEPROM cart", "the clock written over the save");
+    }
+    sigil_sync_result_free(w);
+    root_free(&root);
+    free(zip);
 }
 
 /* A zip of one emulator file, as clients uploaded one before sigil (RomM's
@@ -469,7 +626,8 @@ static void check_conflict(void) {
     root_free(&root);
 }
 
-/* No libretro GBA core keeps the clock in a file, so locate expects no .rtc on GBA. */
+/* No libretro GBA core keeps the clock in a file of its own (mGBA's keeps it
+ * in its save RAM), so locate expects no .rtc on GBA. */
 static void check_locate(void) {
     mem_root root = {0};
     uint8_t ram[32 * K];
@@ -499,6 +657,7 @@ int main(void) {
     check_retroarch_length();
     check_never_drops();
     check_clock();
+    check_libretro_clock();
     check_zips();
     check_conflict();
     check_locate();

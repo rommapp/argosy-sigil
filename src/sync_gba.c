@@ -3,9 +3,13 @@
  * the same in every emulator; the file around them is not:
  * - mGBA's libretro core reports 128 KiB until the game addresses the chip,
  *   then the chip's size; an EEPROM is 512 bytes until the game addresses
- *   past them (mgba at e31759b2: src/platform/libretro/libretro.c
+ *   past them (libretro/mgba at e31759b2: src/platform/libretro/libretro.c
  *   retro_get_memory_size; src/gba/savedata.c GBASavedataInitEEPROM,
- *   _ensureEeprom).
+ *   _ensureEeprom). Its save RAM is a 128 KiB buffer, and on a clock cart
+ *   the core writes the clock inside it at the chip's size, past the size it
+ *   reports (libretro.c retro_load_game, _doDeferredSetup; savedata.c
+ *   GBASavedataClean, GBASavedataRTCWrite). A frontend that saves the whole
+ *   buffer, as RetroArch's autosave does, keeps the clock there.
  * - VBA-M's libretro core writes the chip's size; an EEPROM is 512 bytes
  *   until the game addresses 8 KiB, or the override table's size
  *   (visualboyadvance-m v2.2.3: src/libretro/libretro.cpp
@@ -81,13 +85,39 @@ static size_t named_chip(uint32_t features) {
     return 0;
 }
 
-/* Takes the save in `data`, any emulator's file: mGBA's clock footer comes
- * off, VBA Next's EEPROM comes from 128 KiB, and padding comes off down to
- * the chip's size. The size is the chip the ROM names, else the file's own
- * length; it never drops a byte that isn't 0xFF, growing to the next chip
- * size instead. An EEPROM keeps the size of a file that is exactly one; from
- * a padded file it is 512 bytes unless something past them isn't 0xFF. An
- * empty file holds no save. */
+/* Where mGBA keeps a clock cart's clock: the 16 bytes at the chip's size,
+ * GBASavedataSize() & ~0xFF (libretro/mgba at e31759b2 and mGBA 0.10.5:
+ * src/gba/savedata.c GBASavedataRTCWrite, GBASavedataRTCRead). mGBA turns
+ * the clock on only in GBAOverrideApply, and every clock row in its
+ * override table that has an EEPROM forces the 64 Kbit chip
+ * (src/gba/overrides.c), so an EEPROM's clock sits at 8 KiB. */
+static size_t clock_at(bool eeprom, size_t chip_len) {
+    return eeprom && chip_len < GBA_EEPROM_64K ? GBA_EEPROM_64K : chip_len;
+}
+
+/* Where the clock sits in mGBA's libretro save RAM, 128 KiB long: at the
+ * chip the ROM names, when the ROM names the clock too. 0 when the ROM's
+ * facts don't say, or the place is past the buffer, as for 128 KiB flash:
+ * the core's write there stops at the buffer's end (src/util/vfs/vfs-mem.c
+ * _vfmWrite), so it keeps no clock. */
+static size_t clock_in_buffer(uint32_t features) {
+    size_t named = named_chip(features);
+    if (!named || !(features & SIGIL_FEATURE_RTC)) return 0;
+    size_t at = clock_at((features & SIGIL_FEATURE_GBA_EEPROM) != 0, named);
+    return at + GBA_CLOCK_LEN <= GBA_PADDED ? at : 0;
+}
+
+/* Takes the save in `data`, any emulator's file: mGBA's clock comes off,
+ * VBA Next's EEPROM comes from 128 KiB, and padding comes off down to the
+ * chip's size. The clock is a footer at the end of a file 16 bytes past a
+ * multiple of 512, as standalone mGBA writes one, or in a 128 KiB file the
+ * 16 bytes clock_in_buffer names, when they are set and nothing after them
+ * is (the time is BCD, so a written clock is never all 0xFF: src/gba/cart/
+ * gpio.c _rtcUpdateClock). The size is the chip the ROM names, else the
+ * file's own length; it never drops a byte that isn't 0xFF, growing to the
+ * next chip size instead. An EEPROM keeps the size of a file that is
+ * exactly one; from a padded file it is 512 bytes unless something past
+ * them isn't 0xFF. An empty file holds no save. */
 static int take_save(uint32_t features, const uint8_t *data, size_t len, gba_save *s) {
     if (!len) return SIGIL_OK;
     if (len > GBA_CLOCK_LEN && len % 512 == GBA_CLOCK_LEN) {
@@ -99,6 +129,13 @@ static int take_save(uint32_t features, const uint8_t *data, size_t len, gba_sav
     size_t named = named_chip(features);
     bool eeprom = (features & SIGIL_FEATURE_GBA_EEPROM) != 0;
     bool exact = len == GBA_EEPROM_4K || len == GBA_EEPROM_64K;
+    size_t at = len == GBA_PADDED ? clock_in_buffer(features) : 0;
+    if (at && !all_ff(data + at, GBA_CLOCK_LEN) &&
+        all_ff(data + at + GBA_CLOCK_LEN, len - at - GBA_CLOCK_LEN)) {
+        memcpy(s->clock, data + at, GBA_CLOCK_LEN);
+        s->has_clock = true;
+        len = at;
+    }
     if (len == VBA_NEXT_FILE) {
         exact = false;
         bool ram_blank = all_ff(data, VBA_NEXT_EEPROM);
@@ -135,7 +172,7 @@ static int take_save(uint32_t features, const uint8_t *data, size_t len, gba_sav
 
 /* The game's save file the layout names, there or expected. GBA cores keep
  * no clock file: mGBA's libretro core exposes RETRO_MEMORY_RTC for GB carts
- * alone. */
+ * alone and keeps a GBA cart's clock in its save RAM (clock_in_buffer). */
 typedef struct {
     char path[SIGIL_SAVE_PATH_MAX];
     bool present;
@@ -276,26 +313,33 @@ static int read_unit(uint32_t features, const uint8_t *unit, size_t len, size_t 
 /* The bytes of the save file in the emulator's own form. gpSP: the chip,
  * then 0xFF to 128 KiB. VBA Next: 136 KiB, an EEPROM's bytes at 128 KiB and
  * anything else at 0. Standalone mGBA: the chip, then on a clock cart the
- * unit's clock, else the clock already there. Any other emulator: the chip,
- * or 0xFF to 128 KiB over a file already that long, as mGBA's libretro core
- * leaves one in RetroArch. */
+ * unit's clock, else the clock already there, at clock_at. Any other
+ * emulator: the chip; or over a file already 128 KiB long, as mGBA's
+ * libretro core leaves one in RetroArch, the chip, 0xFF to 128 KiB and the
+ * clock where clock_in_buffer puts it, which collect reads back. */
 static int save_file(const sigil_sync_request *req, const gba_save *in, const gba_save *local, uint8_t **out,
                      size_t *len) {
     const char *layout = req->save.layout ? req->save.layout : "";
     bool gpsp = strcmp(layout, "gpsp") == 0, vba_next = strcmp(layout, "vba_next") == 0;
     bool mgba = strcmp(layout, "mgba_standalone") == 0;
     const gba_save *timed = in->has_clock ? in : local->has_clock ? local : NULL;
-    bool footer = mgba && timed;
     size_t at = vba_next && in->eeprom ? VBA_NEXT_EEPROM : 0;
     bool padded = !gpsp && !vba_next && !mgba && local->file_len == GBA_PADDED;
-    size_t body = gpsp || padded ? GBA_PADDED : vba_next ? VBA_NEXT_FILE : in->chip_len;
+    size_t clock = 0; /* where the clock goes; 0 for nowhere */
+    if (timed && mgba) {
+        clock = clock_at(in->eeprom, in->chip_len);
+    } else if (timed && padded) {
+        clock = clock_in_buffer(features_of(req));
+        if (clock < in->chip_len) clock = 0;
+    }
+    size_t body = gpsp || padded ? GBA_PADDED : vba_next ? VBA_NEXT_FILE : mgba && clock ? clock : in->chip_len;
     if (body < at + in->chip_len) body = at + in->chip_len;
-    *len = body + (footer ? GBA_CLOCK_LEN : 0);
+    *len = body + (mgba && clock ? GBA_CLOCK_LEN : 0);
     *out = (uint8_t *)malloc(*len);
     if (!*out) return SIGIL_ERR_OOM;
     memset(*out, 0xFF, body);
     memcpy(*out + at, in->chip, in->chip_len);
-    if (footer) memcpy(*out + body, timed->clock, GBA_CLOCK_LEN);
+    if (clock) memcpy(*out + clock, timed->clock, GBA_CLOCK_LEN);
     return SIGIL_OK;
 }
 

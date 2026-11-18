@@ -119,8 +119,11 @@ typedef enum {
  * SRAM (RetroArch writes `<stem>.rtc`). GB: header byte 0x147 in {0x0F,
  * 0x10, 0xFD, 0xFE}. SNES: (ROMType << 8 | ROMSpeed) is 0x5535 (S-RTC) or
  * 0xF93A (SPC7110 RTC). GBA: the ROM carries Nintendo's clock library id
- * (SIIRTC_Vnnn); no libretro GBA core persists the clock, and standalone
- * mGBA appends it to the `.sav`. */
+ * (SIIRTC_Vnnn). No libretro GBA core exposes a clock region; mGBA keeps
+ * the clock as 16 bytes at the chip's size, after the chip in standalone
+ * mGBA's `.sav` and inside the libretro core's 128 KiB save RAM. With
+ * the save chip's bit, it tells collect where in a 128 KiB file that
+ * clock sits. */
 #define SIGIL_FEATURE_RTC  (1u << 0)
 /* MBC2: a GB cart whose RAM is 512 four-bit cells inside the mapper, which
  * emulators store as 256, 512 or 8192 bytes. GB: header byte 0x147 in
