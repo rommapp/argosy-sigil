@@ -15,7 +15,7 @@
 #define DSV_FOOTER     (DSV_NOTE_LEN + DSV_FIELDS + DSV_COOKIE_LEN)
 
 /* DeSmuME's save types (mc.cpp save_types[]): a .dsv footer's type is the
- * index of the save's size here, and the address size is how many bytes the
+ * index of the padded size here, and the address size is how many bytes the
  * game's commands address the chip with. 0 is autodetect. */
 static const struct { uint32_t size; uint32_t addr_size; } DSV_TYPES[] = {
     { 0, 0 },
@@ -35,10 +35,20 @@ static const struct { uint32_t size; uint32_t addr_size; } DSV_TYPES[] = {
 };
 #define DSV_TYPE_COUNT (sizeof(DSV_TYPES) / sizeof(DSV_TYPES[0]))
 
-/* The DeSmuME type of a save of `len` bytes (mc.cpp searchFileSaveType), 0 when it has none. */
-static uint32_t dsv_type(size_t len) {
+/* The size DeSmuME pads a save to (mc.cpp pad_up_size over saveSizes[]): the
+ * smallest of its sizes that holds `len`, or `len` past the largest. */
+static uint32_t dsv_padded(uint32_t len) {
+    uint32_t best = 0;
     for (size_t i = 1; i < DSV_TYPE_COUNT; i++) {
-        if (DSV_TYPES[i].size == len) return (uint32_t)i;
+        uint32_t size = DSV_TYPES[i].size;
+        if (size >= len && (!best || size < best)) best = size;
+    }
+    return best ? best : len;
+}
+
+static uint32_t dsv_type(uint32_t padded) {
+    for (size_t i = 1; i < DSV_TYPE_COUNT; i++) {
+        if (DSV_TYPES[i].size == padded) return (uint32_t)i;
     }
     return 0;
 }
@@ -63,24 +73,28 @@ static size_t raw_len(const uint8_t *data, size_t len) {
     return len - DSV_FOOTER;
 }
 
-/* The bytes restore writes for `layout`: the raw save, and for DeSmuME what
- * DeSmuME writes when it takes in a raw save (mc.cpp, BackupDevice's
- * constructor): the save and its footer for a size it has a type for
- * (ensure), the save as it is for any other size. */
+/* The bytes restore writes for `layout`: the raw save, or for DeSmuME what
+ * DeSmuME writes when it imports a raw save (mc.cpp import_raw, saveBuffer,
+ * ensure): the save padded with 0xFF to its size for it, then the footer. A
+ * size it has no type for (1 Mbit) is padded to the next one, 2 Mbit, as
+ * DeSmuME pads it; its file read with no footer would count as empty. */
 static int file_bytes(const char *layout, const uint8_t *raw, size_t len, uint8_t **out, size_t *out_len) {
-    uint32_t type = footer_layout(layout) ? dsv_type(len) : 0;
-    *out_len = len + (type ? DSV_FOOTER : 0);
+    bool dsv = footer_layout(layout);
+    uint32_t padded = dsv ? dsv_padded((uint32_t)len) : (uint32_t)len;
+    *out_len = (size_t)padded + (dsv ? DSV_FOOTER : 0);
     *out = (uint8_t *)malloc(*out_len ? *out_len : 1);
     if (!*out) return SIGIL_ERR_OOM;
     memcpy(*out, raw, len);
-    if (!type) return SIGIL_OK;
-    uint8_t *note = *out + len, *fields = note + DSV_NOTE_LEN;
+    if (!dsv) return SIGIL_OK;
+    memset(*out + len, 0xFF, padded - len);
+    uint8_t *note = *out + padded, *fields = note + DSV_NOTE_LEN;
+    uint32_t type = dsv_type(padded);
     memcpy(note, DSV_NOTE, DSV_NOTE_LEN);
     sigil_write_le32(fields, (uint32_t)len);              /* bytes the save holds */
-    sigil_write_le32(fields + 4, (uint32_t)len);          /* padSize: the save's length in the file */
+    sigil_write_le32(fields + 4, padded);                 /* the size it's padded to */
     sigil_write_le32(fields + 8, type);
     sigil_write_le32(fields + 12, DSV_TYPES[type].addr_size);
-    sigil_write_le32(fields + 16, (uint32_t)len);         /* the chip's size */
+    sigil_write_le32(fields + 16, padded);                /* the chip's size */
     sigil_write_le32(fields + 20, 0);                     /* version */
     memcpy(fields + DSV_FIELDS, DSV_COOKIE, DSV_COOKIE_LEN);
     return SIGIL_OK;

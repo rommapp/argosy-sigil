@@ -199,7 +199,7 @@ value, and the default is the first listed.
 | `flycast` | `vmu_save_A1.bin` and the other ports, shared, in the system folder's `dc/` | `reicast_per_content_vmus=VMU A1`: `{dc_vmu_id}.A1.bin`; `=All VMUs`: every port as `{dc_vmu_id}.{port}.bin` | send the container; yes per game |
 | `flycast_standalone` | `{dc_vmu_id}_vmu_save_A1.bin`; other ports `vmu_save_{port}.bin` (shared) | `PerGameVmu=no`: `vmu_save_A1.bin` (shared) | yes for A1; send the container when shared |
 | `melonds` | `{stem}.sav` (DS) | | yes |
-| `desmume` | `{stem}.dsv`: the save, then DeSmuME's footer when DeSmuME has a type for its size (DS) | | yes |
+| `desmume` | `{stem}.dsv`: the save padded to DeSmuME's size for it, then its footer (DS) | | yes |
 | `mednafen_ngp`, `opera`, `pokemini`, `handy`, `fbneo`, `mame2003_plus`, `dosbox_pure`, `same_cdi`, `nestopia` | see each platform's page | | located only |
 | `mupen64plus_next`, `parallel_n64` | `{stem}.srm` | | yes |
 | `mupen64plus_standalone` | `*-{n64_md5_8}.eep`, `.sra`, `.fla`, `.mpk` | | one of the game's files |
