@@ -519,17 +519,22 @@ int sigil_sync_restore_xbox(sigil_sync_ctx *x, const uint8_t *unit, size_t len, 
     memset(&local, 0, sizeof(local));
     memset(&v, 0, sizeof(v));
     int rc = game_id(x, id);
-    if (rc != SIGIL_OK) return rc;
-    rc = read_unit(unit, len, id, &incoming, r->content_hash, r);
-    if (rc != SIGIL_OK) return rc;
-    rc = files_identity(&incoming, r->identity_hash);
-    artifact_of(x, r);
     if (rc == SIGIL_OK) rc = drive_open(x, &v, r);
     if (rc == SIGIL_OK && !v.fs) {
-        /* sigil can't make a drive: the console's own files and its other partitions are the user's. */
+        /* sigil makes no drive: the console's own files and its other
+         * partitions are the user's. Said before the unit is read, so a
+         * restore into an empty root always names the drive it needs. */
         snprintf(r->problem, sizeof(r->problem), "%s", v.path);
         rc = SIGIL_ERR_NO_TARGET;
     }
+    if (rc != SIGIL_OK) return rc;
+    rc = read_unit(unit, len, id, &incoming, r->content_hash, r);
+    if (rc != SIGIL_OK) {
+        drive_close(&v);
+        return rc;
+    }
+    rc = files_identity(&incoming, r->identity_hash);
+    artifact_of(x, r);
     if (rc == SIGIL_OK) rc = game_files(v.fs, id, &local);
     if (rc == SIGIL_ERR_DAMAGED) snprintf(r->problem, sizeof(r->problem), "%s", v.path);
     if (rc == SIGIL_OK) rc = files_identity(&local, local_identity);
