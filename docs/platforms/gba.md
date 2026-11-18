@@ -18,9 +18,20 @@ it, so a mismatch means the bytes are not a GBA header.
 ### Features
 
 The save chip comes from the id Nintendo's save library leaves in the
-ROM, the ids VBA-M's libretro core and gpSP search for to pick a chip.
-Each is followed by a three-digit version (`EEPROM_V124`). Reading them
-reads the whole ROM.
+ROM. Each is followed by a three-digit version (`EEPROM_V124`), and an
+id counts only with it. Reading them reads the whole ROM, at every byte.
+
+VBA-M's libretro core and gpSP search for the same ids to pick a chip,
+by looser rules, so sigil can name no chip where they pick one:
+
+- VBA-M (`src/core/gba/gbaFlash.cpp` `flashDetectSaveType`) takes the
+  prefixes `EEPROM_`, `SRAM_`, `FLASH1M_`, `FLASH512_` and `FLASH` with no
+  digits, at 4-byte steps. `SRAM_` wins over `EEPROM_` and a bare `FLASH`,
+  and `FLASH1M_` or `FLASH512_` counts only when it comes before the others.
+- gpSP (`gba_memory.c` `detect_backup_subcircuit`) takes `EEPROM_V`,
+  `SRAM_V`, `FLASH1M_V`, `FLASH512_V` and `FLASH_V` with no digits in the
+  first 1 MiB, and ranks EEPROM over SRAM over flash. Its game table
+  (`load_game_config_over`) is applied first.
 
 | Feature | The ROM carries | Chip |
 |---|---|---|

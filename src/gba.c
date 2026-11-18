@@ -14,10 +14,15 @@
 #define GBA_ID_MAX        16     /* the longest id, FLASH512_V, and its three digits */
 
 /* The ids Nintendo's libraries leave in the ROM, each followed by a
- * three-digit version (EEPROM_V124). Emulators that detect the save chip
- * from the ROM search for the same ones (visualboyadvance-m v2.2.3
- * src/core/gba/gbaFlash.cpp flashDetectSaveType; libretro/gpsp at 5819380
- * gba_memory.c detect_backup_subcircuit). */
+ * three-digit version (EEPROM_V124); an id counts only with its digits,
+ * found at any byte. Emulators that detect the save chip from the ROM
+ * search for the same ids by looser rules: VBA-M takes the prefixes with
+ * no digits at 4-byte steps and picks among them by kind and order
+ * (visualboyadvance-m v2.2.3 src/core/gba/gbaFlash.cpp
+ * flashDetectSaveType); gpSP takes them with no digits in the first 1 MiB,
+ * ranks EEPROM over SRAM over flash, and applies its game table first
+ * (libretro/gpsp at 5819380 gba_memory.c detect_backup_subcircuit,
+ * load_game_config_over). */
 static const struct { const char *id; uint32_t feature; } GBA_IDS[] = {
     { "SRAM_V", SIGIL_FEATURE_GBA_SRAM },
     { "SRAM_F_V", SIGIL_FEATURE_GBA_SRAM },
