@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 /* GBA sync against saves real emulators wrote: one save in two emulators'
  * files gives one unit, restore writes each emulator's file byte for byte,
- * and standalone mGBA's clock travels as clock.rtc. The games each sample
- * shows on screen are in the manifest. */
+ * and mGBA's clock travels as clock.rtc. The games each sample shows on
+ * screen are in the manifest. Each check runs when its own samples are
+ * present (have), and the test skips when none ran. */
 #include "save_corpus.h"
 #include "legacy_units.h"
 
@@ -21,6 +22,18 @@ static void fail(const char *where, const char *what) {
 }
 
 static corpus_table g_gba;
+static int g_ran = 0;
+
+/* True, counting one more check that ran, when sample `a` and, unless NULL,
+ * sample `b` are on disk. The samples come from more than one place (the
+ * manifest's source column: the maintainer's RomM store, emulator runs, a
+ * public file), so each check runs on its own samples and skips without
+ * them. */
+static bool have(const char *a, const char *b) {
+    if (!corpus_present(&g_gba, "gba", a) || (b && !corpus_present(&g_gba, "gba", b))) return false;
+    g_ran++;
+    return true;
+}
 
 typedef struct {
     sigil_sync_request req;
@@ -115,6 +128,7 @@ static const sample SAMPLES[] = {
 };
 
 static void check_sample(const sample *s) {
+    if (!have(s->id, NULL)) return;
     size_t len = 0;
     char file[SIGIL_SAVE_ENTRY_MAX];
     uint8_t *data = corpus_sample(&g_gba, "gba", s->id, NULL, &len);
@@ -136,6 +150,7 @@ static void check_sample(const sample *s) {
 
 /* VBA Next's own file from no save holds the EEPROM at 128 KiB; without the ROM's facts it is found there. */
 static void check_vba_next_new(void) {
+    if (!have("astro-vba-next-new", NULL)) return;
     size_t len = 0;
     uint8_t *data = corpus_sample(&g_gba, "gba", "astro-vba-next-new", NULL, &len);
     if (!data) return;
@@ -157,6 +172,7 @@ static void check_vba_next_new(void) {
 /* Standalone mGBA grew a 512-byte EEPROM file of an 8 KiB EEPROM game with
  * zeros: they are bytes of the chip, so the unit keeps 8 KiB. */
 static void check_zerofill(void) {
+    if (!have("sma2-mgba-standalone-zerofill", NULL)) return;
     size_t len = 0;
     uint8_t *data = corpus_sample(&g_gba, "gba", "sma2-mgba-standalone-zerofill", NULL, &len);
     if (!data) return;
@@ -182,16 +198,16 @@ static uint8_t *member_of(const sigil_sync_result *r, const char *name, size_t *
 }
 
 /* Standalone mGBA's clock: the footer travels as clock.rtc and comes back
- * byte for byte; libretro mGBA's save of the same game comes back into the
- * standalone folder with the clock that was there. */
+ * byte for byte; libretro mGBA gets the flash alone, with no room for the
+ * clock in its 128 KiB save RAM. */
 static void check_clock(void) {
     const char *E = "Pokemon - Emerald Version (USA, Europe).gba";
-    size_t len = 0, mgba_len = 0;
+    if (!have("emerald-mgba-rtc-footer", NULL)) return;
+    size_t len = 0;
     uint8_t *sav = corpus_sample(&g_gba, "gba", "emerald-mgba-rtc-footer", NULL, &len);
-    uint8_t *srm = corpus_sample(&g_gba, "gba", "emerald-mgba", NULL, &mgba_len);
-    if (!sav || !srm || len != 131072 + 16) {
+    if (!sav || len != 131072 + 16) {
+        fail("emerald-mgba-rtc-footer", "not the manifest's file");
         free(sav);
-        free(srm);
         return;
     }
     sigil_sync_result *u = collect("mgba_standalone", E, "Pokemon - Emerald Version (USA, Europe).sav", sav, len,
@@ -214,7 +230,26 @@ static void check_clock(void) {
         root_free(&empty);
         root_free(&libretro);
     }
+    free(ram);
+    free(rtc);
+    sigil_sync_result_free(u);
+    free(sav);
+}
 
+/* libretro mGBA's save of the same game comes back into the standalone
+ * folder with the clock that was there. */
+static void check_clock_back(void) {
+    const char *E = "Pokemon - Emerald Version (USA, Europe).gba";
+    if (!have("emerald-mgba-rtc-footer", "emerald-mgba")) return;
+    size_t len = 0, mgba_len = 0, rtc_len = 0;
+    uint8_t *sav = corpus_sample(&g_gba, "gba", "emerald-mgba-rtc-footer", NULL, &len);
+    uint8_t *srm = corpus_sample(&g_gba, "gba", "emerald-mgba", NULL, &mgba_len);
+    if (!sav || !srm || len != 131072 + 16 || mgba_len != 131072) {
+        fail("emerald-mgba", "not the manifest's files");
+        free(sav);
+        free(srm);
+        return;
+    }
     sigil_sync_result *back = collect("mgba", E, "Pokemon - Emerald Version (USA, Europe).srm", srm, mgba_len, FLASH1M | RTC);
     uint8_t *clock = member_of(back, "clock.rtc", &rtc_len);
     mem_root folder = {0};
@@ -229,24 +264,20 @@ static void check_clock(void) {
     root_free(&folder);
     free(clock);
     sigil_sync_result_free(back);
-    free(ram);
-    free(rtc);
-    sigil_sync_result_free(u);
     free(sav);
     free(srm);
 }
 
 /* An EEPROM clock cart: standalone mGBA's .sav is the 8 KiB EEPROM and the
- * footer, libretro mGBA's the EEPROM alone; each comes back as its
- * emulator keeps it, and libretro mGBA's save keeps the clock standalone
- * mGBA had. */
+ * footer; it comes back byte for byte, libretro mGBA gets the EEPROM alone
+ * in an empty folder, and VBA Next gets it at 128 KiB. */
 static void check_eeprom_clock(void) {
-    size_t len = 0, mgba_len = 0;
+    if (!have("boktai-mgba-standalone", NULL)) return;
+    size_t len = 0;
     uint8_t *sav = corpus_sample(&g_gba, "gba", "boktai-mgba-standalone", NULL, &len);
-    uint8_t *srm = corpus_sample(&g_gba, "gba", "boktai-mgba", NULL, &mgba_len);
-    if (!sav || !srm || len != 8192 + 16 || mgba_len != 8192) {
+    if (!sav || len != 8192 + 16) {
+        fail("boktai-mgba-standalone", "not the manifest's file");
         free(sav);
-        free(srm);
         return;
     }
     sigil_sync_result *u = collect("mgba_standalone", "Boktai.gba", "Boktai.sav", sav, len, EEPROM | RTC);
@@ -270,6 +301,25 @@ static void check_eeprom_clock(void) {
         root_free(&libretro);
         root_free(&vba);
     }
+    sigil_sync_result_free(u);
+    free(ram);
+    free(rtc);
+    free(sav);
+}
+
+/* libretro mGBA's 8 KiB save of the same game keeps the clock standalone
+ * mGBA had. */
+static void check_eeprom_clock_back(void) {
+    if (!have("boktai-mgba-standalone", "boktai-mgba")) return;
+    size_t len = 0, mgba_len = 0;
+    uint8_t *sav = corpus_sample(&g_gba, "gba", "boktai-mgba-standalone", NULL, &len);
+    uint8_t *srm = corpus_sample(&g_gba, "gba", "boktai-mgba", NULL, &mgba_len);
+    if (!sav || !srm || len != 8192 + 16 || mgba_len != 8192) {
+        fail("boktai-mgba", "not the manifest's files");
+        free(sav);
+        free(srm);
+        return;
+    }
     sigil_sync_result *back = collect("mgba", "Boktai.gba", "Boktai.srm", srm, mgba_len, EEPROM | RTC);
     mem_root folder = {0};
     root_put(&folder, "Boktai.sav", sav, len);
@@ -279,22 +329,19 @@ static void check_eeprom_clock(void) {
     }
     root_free(&folder);
     sigil_sync_result_free(back);
-    sigil_sync_result_free(u);
-    free(ram);
-    free(rtc);
     free(sav);
     free(srm);
 }
 
-/* The maintainer's samples, where present: the manifest's notes give each
- * pair's expected bytes. They run only on a machine that has those files. */
+/* The maintainer's samples: the manifest's notes give each pair's
+ * expected bytes. */
 static void check_store_pairs(void) {
     static const struct { const char *padded, *exact, *content; uint32_t features; } PAIRS[] = {
         { "dbaa-gpsp", "dbaa-retroarch", "Game.gba", EEPROM },
         { "mzm-builtin-128k", "mzm-builtin-32k", "Game.gba", SRAM },
     };
     for (size_t i = 0; i < sizeof(PAIRS) / sizeof(PAIRS[0]); i++) {
-        if (!corpus_present(&g_gba, "gba", PAIRS[i].padded) || !corpus_present(&g_gba, "gba", PAIRS[i].exact)) continue;
+        if (!have(PAIRS[i].padded, PAIRS[i].exact)) continue;
         size_t plen = 0, elen = 0;
         uint8_t *padded = corpus_sample(&g_gba, "gba", PAIRS[i].padded, NULL, &plen);
         uint8_t *exact = corpus_sample(&g_gba, "gba", PAIRS[i].exact, NULL, &elen);
@@ -313,7 +360,7 @@ static void check_store_pairs(void) {
         { "azul-agua-mgba", FLASH1M, 131072 },
     };
     for (size_t i = 0; i < sizeof(KEPT) / sizeof(KEPT[0]); i++) {
-        if (!corpus_present(&g_gba, "gba", KEPT[i].id)) continue;
+        if (!have(KEPT[i].id, NULL)) continue;
         size_t len = 0;
         uint8_t *data = corpus_sample(&g_gba, "gba", KEPT[i].id, NULL, &len);
         for (int named = 0; named < 2; named++) {
@@ -331,18 +378,19 @@ int main(void) {
         fprintf(stderr, "SKIP: no gba manifest\n");
         return TEST_SKIP;
     }
-    if (!corpus_present(&g_gba, "gba", "astro-vba-next")) {
-        fprintf(stderr, "SKIP: gba emulator-run samples missing\n");
-        corpus_free(&g_gba);
-        return TEST_SKIP;
-    }
     for (size_t i = 0; i < sizeof(SAMPLES) / sizeof(SAMPLES[0]); i++) check_sample(&SAMPLES[i]);
     check_vba_next_new();
     check_zerofill();
     check_clock();
+    check_clock_back();
     check_eeprom_clock();
+    check_eeprom_clock_back();
     check_store_pairs();
     corpus_free(&g_gba);
-    printf("gba sync: %d failures\n", g_fails);
+    if (!g_ran) {
+        fprintf(stderr, "SKIP: no gba samples present\n");
+        return TEST_SKIP;
+    }
+    printf("gba sync: %d checks ran, %d failures\n", g_ran, g_fails);
     return corpus_exit(g_fails);
 }
