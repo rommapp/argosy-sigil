@@ -692,6 +692,30 @@ def test_a_clock_tick_changes_content_but_not_identity(tmp_path):
     assert before.identity_hash == after.identity_hash
 
 
+NDS = sigil.SigilResult.persisted("nds", "", "", 0)
+
+
+def test_a_ds_save_crosses_between_melonds_and_desmumes_dsv(tmp_path):
+    melon, desmume, back = tmp_path / "melon", tmp_path / "desmume", tmp_path / "back"
+    for folder in (melon, desmume, back):
+        folder.mkdir()
+    save = bytes(range(256)) * 32
+    (melon / "Game.sav").write_bytes(save)
+
+    unit = sigil.collect(NDS, "melonds", "Game.nds", melon)
+    assert (unit.data, unit.artifact, unit.shape) == (save, "Game.srm", "single")
+
+    sigil.restore(unit.data, NDS, "desmume", "Game.nds", desmume)
+    dsv = (desmume / "Game.dsv").read_bytes()
+    assert dsv[:8192] == save and dsv.endswith(b"|-DESMUME SAVE-|") and len(dsv) == 8192 + 122
+    assert struct.unpack("<6I", dsv[8192 + 82 : 8192 + 106]) == (8192, 8192, 2, 2, 8192, 0)
+
+    again = sigil.collect(NDS, "desmume", "Game.nds", desmume)
+    assert again.identity_hash == unit.identity_hash
+    sigil.restore(again.data, NDS, "melonds", "Game.nds", back)
+    assert (back / "Game.sav").read_bytes() == save
+
+
 MEGA_DRIVE = sigil.SigilResult.persisted("genesis", "", "", 0)
 GAME_GEAR = sigil.SigilResult.persisted("gamegear", "", "", 0)
 

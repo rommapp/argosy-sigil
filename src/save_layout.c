@@ -298,6 +298,13 @@ static const sigil_layout_member MELONDS_MEMBERS[] = {
     M("{stem}.sav", PRIMARY),
 };
 
+/* DeSmuME (libretro/desmume, mc.cpp BackupDevice) writes {stem}.dsv itself,
+ * in the save folder the frontend gives it: the raw save, then a 122-byte
+ * footer. */
+static const sigil_layout_member DESMUME_MEMBERS[] = {
+    M("{stem}.dsv", PRIMARY),
+};
+
 /* Standalone mGBA, VBA-M, SameBoy and Gearboy keep a GB or GBC cart's RAM in
  * {stem}.sav with the MBC3 clock appended (mGBA mbc.c, VBA-M gb.cpp, SameBoy
  * Core/gb.c, Gearboy MBC3MemoryRule.cpp). mGBA, VBA-M and SameBoy save
@@ -588,6 +595,7 @@ static const sigil_layout LAYOUTS[] = {
     ROW("pokemini", NULL, POKEMINI_MEMBERS),
     ROW("handy", NULL, HANDY_MEMBERS),
     ROW("melonds", NULL, MELONDS_MEMBERS),
+    ROW("desmume", NULL, DESMUME_MEMBERS),
     ROW_FULL("fbneo", NULL, FBNEO_MEMBERS, FBNEO_SHARED, FBNEO_SUBDIRS),
     ROW_DIRS("mame2003_plus", NULL, MAME2003_PLUS_MEMBERS, MAME2003_PLUS_SUBDIRS),
     ROW("dosbox_pure", NULL, DOSBOX_PURE_MEMBERS),

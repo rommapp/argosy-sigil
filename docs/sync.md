@@ -22,6 +22,7 @@ and passes back. The calls and their fields are on each language's page
 | 3DS | a zip of the title's save folder, its metadata and its extdata | [3ds](platforms/3ds.md#sync) |
 | GB, GBC | the cart RAM; on a cart with a clock, a zip of `save.sram` and `clock.rtc` | [gb](platforms/gb.md#sync) |
 | N64 | a zip of the save types the game uses (`eeprom`, `pak1` to `pak4`, `sram`, `flash`), whichever emulator wrote them | [n64](platforms/n64.md#sync) |
+| DS | the raw save, without DeSmuME's footer | [nds](platforms/nds.md#sync) |
 | Mega Drive, 32X, Master System, Game Gear | the cart's save RAM as the emulator's file holds it | [genesis](platforms/genesis.md#sync) |
 
 What restore writes for each layout, and which options change it, is in
@@ -49,6 +50,7 @@ next collect then gives the save in sigil's form; upload that.
 | 3DS | a zip rooted at `data/` and `extdata/` |
 | GB, GBC | a raw `.srm`, a `.sav` with its clock appended, or a zip of an emulator's `.srm` and `.rtc` |
 | N64 | a libretro `.srm`, a lone `.eep`, or a zip of an emulator's files (`.srm`, `.eep`, `.sra`, `.fla`, `.mpk`, `_Cont_<n>.mpk`) |
+| DS | a raw save, or a DeSmuME `.dsv` with its footer |
 | Mega Drive, 32X, Master System, Game Gear | a raw `.srm` from genesis_plus_gx or picodrive, or a zip of the one save as `save.sram`, `.srm` or `.sav` |
 | Any | any of the above, or sigil's own unit, ending in the hardcore marker Argosy appended (`{"h":true,...}`, its length as a little-endian u32, then `ARGOSY` 01 00). Restore leaves the marker out of the saves, companion units included, and sets `hardcore_marker`; `content_hash` still covers it |
 | Switch | one folder rooted at `<title>/`: the device save for the titles that keep theirs on the device (Animal Crossing: New Horizons, Nintendo Switch Sports, 1-2-Switch, Ring Fit Adventure, the four Labo kits, Go Vacation), the account save for any other |

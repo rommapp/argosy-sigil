@@ -29,6 +29,10 @@ tests/*.log
 # Working notes: plans, progress and research kept out of the published docs
 /notes/
 
+# Local agent state; only the shared agent guide is committed
+/.claude/*
+!/.claude/CLAUDE.md
+
 # Local sample data
 /local-roms/
 /tests/fixtures/saves/*/files/*
