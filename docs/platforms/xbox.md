@@ -147,7 +147,10 @@ or was never written is replaced by a new cluster at the end of the
 file, counted in the reference counts, and the references the old one
 held are dropped, so the image stays what `qemu-img check` calls clean.
 Autoclear feature bits are cleared with the first change, as the format
-asks of a writer that doesn't know them.
+asks of a writer that doesn't know them. An image that carried a dirty
+bitmap (xemu makes none) loses it that way, and `qemu-img check` then
+reports the bitmap's own clusters as leaked: space the image no longer
+uses, with no harm to what it holds.
 
 E: is at byte `0xABE80000` of a retail drive and `0x131F00000` bytes
 long, whatever the drive's size. Its superblock (`FATX`, a volume id,
