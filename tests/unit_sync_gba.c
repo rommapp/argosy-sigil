@@ -594,6 +594,25 @@ static void check_zips(void) {
     sigil_sync_result_free(w);
     root_free(&root);
     free(other);
+
+    /* RomM's save.sram and clock.rtc, the clock in another layout than
+     * mGBA's 16 bytes: the save restores and the clock is left out. */
+    static const char *const PAIR[] = { "save.sram", "clock.rtc" };
+    uint8_t odd[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    uint8_t *pair_data[2] = { (uint8_t *)x->bytes, odd };
+    size_t pair_lens[2] = { x->len, sizeof(odd) };
+    uint8_t *pair = legacy_zip(PAIR, pair_data, pair_lens, 2, &zip_len);
+    mem_root timed = {0};
+    make_game(&g, &timed, "mgba_standalone", x->feature | SIGIL_FEATURE_RTC);
+    w = NULL;
+    mem_file *f = NULL;
+    if (!pair || sigil_restore(&g.req, pair, zip_len, &w) != SIGIL_OK || !(f = root_find(&timed, "Game.sav")) ||
+        timed.count != 1 || f->len != x->len || memcmp(f->data, x->bytes, x->len) != 0) {
+        fail("save.sram with an 8-byte clock.rtc", "the save doesn't restore without the clock");
+    }
+    sigil_sync_result_free(w);
+    root_free(&timed);
+    free(pair);
 }
 
 /* A local save that changed since the last sync isn't overwritten unasked;

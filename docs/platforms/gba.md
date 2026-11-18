@@ -118,7 +118,9 @@ and grows a shorter `.sav` to 8 KiB with zeros where the cart would read
 restored there gets it as it would from any other source.
 
 Restore also reads any of the files above, and a zip of one with or
-without `clock.rtc`, as clients uploaded them before sigil.
+without `clock.rtc`, as clients uploaded them before sigil. A `clock.rtc`
+that isn't 16 bytes isn't mGBA's clock: it is left out, and the save
+restores without it.
 
 ## Clock format
 

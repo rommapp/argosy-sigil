@@ -291,8 +291,10 @@ static int read_unit(uint32_t features, const uint8_t *unit, size_t len, size_t 
         if (strcmp(m->name, GBA_SRAM_NAME) == 0 || ends_with(m->name, ".srm") || ends_with(m->name, ".sav")) {
             gba_free(s);
             rc = take_save(features, m->data, m->len, s);
-        } else if (strcmp(m->name, GBA_CLOCK_NAME) == 0 && m->len == GBA_CLOCK_LEN) {
-            clock = m;
+        } else if (strcmp(m->name, GBA_CLOCK_NAME) == 0) {
+            /* A clock.rtc of another length isn't mGBA's clock: it is left
+             * out, and the save restores without it. */
+            if (m->len == GBA_CLOCK_LEN) clock = m;
         } else {
             rc = SIGIL_ERR_UNSUPPORTED_FORMAT;
         }
