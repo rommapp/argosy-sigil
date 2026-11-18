@@ -386,6 +386,18 @@ interface SigilFileAccess {
 
     /** Removes the file at [path], or the folder when [path] ends in '/' (sigil empties it first). */
     fun remove(root: String, path: String): Boolean
+
+    /**
+     * True when [writeAt] works. Sigil then writes only the parts that change of a file every
+     * game's saves sit in (an Xbox hard-disk image); false has it hand [write] the whole file.
+     */
+    val writesParts: Boolean get() = false
+
+    /**
+     * Writes [data] at byte [offset] of the file at [path], which is there already: the rest of
+     * the file stays as it is, and it grows when the range ends past its end.
+     */
+    fun writeAt(root: String, path: String, offset: Long, data: ByteArray): Boolean = false
 }
 
 /** One entry of a folder, as [SigilFileAccess.list] returns it. */
@@ -417,6 +429,15 @@ object PosixFileAccess : SigilFileAccess {
     }.isSuccess
 
     override fun remove(root: String, path: String): Boolean = file(root, path.trimEnd('/')).delete()
+
+    override val writesParts: Boolean get() = true
+
+    override fun writeAt(root: String, path: String, offset: Long, data: ByteArray): Boolean = runCatching {
+        java.io.RandomAccessFile(file(root, path), "rw").use { target ->
+            target.seek(offset)
+            target.write(data)
+        }
+    }.isSuccess
 }
 
 /**

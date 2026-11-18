@@ -383,15 +383,19 @@ static jclass g_access_class = NULL;
 static jmethodID g_access_read = NULL;
 static jmethodID g_access_write = NULL;
 static jmethodID g_access_remove = NULL;
+static jmethodID g_access_writes_parts = NULL;
+static jmethodID g_access_write_at = NULL;
 
 static bool load_access_class(JNIEnv *env) {
-    if (g_access_read && g_access_write && g_access_remove) return true;
+    if (g_access_read && g_access_write && g_access_remove && g_access_writes_parts && g_access_write_at) return true;
     if (!g_access_class) g_access_class = global_class(env, "com/nendo/sigil/SigilFileAccess");
     if (!g_access_class) return false;
     g_access_read = find_method(env, g_access_class, "read", "(Ljava/lang/String;Ljava/lang/String;)[B");
     g_access_write = find_method(env, g_access_class, "write", "(Ljava/lang/String;Ljava/lang/String;[B)Z");
     g_access_remove = find_method(env, g_access_class, "remove", "(Ljava/lang/String;Ljava/lang/String;)Z");
-    return g_access_read && g_access_write && g_access_remove;
+    g_access_writes_parts = find_method(env, g_access_class, "getWritesParts", "()Z");
+    g_access_write_at = find_method(env, g_access_class, "writeAt", "(Ljava/lang/String;Ljava/lang/String;J[B)Z");
+    return g_access_read && g_access_write && g_access_remove && g_access_writes_parts && g_access_write_at;
 }
 
 /* A failed or throwing call is an I/O error to sigil; the Java exception is
@@ -934,6 +938,18 @@ static int write_member(void *ctx, const char *relative_path, const uint8_t *dat
     return !access_threw(env) && ok ? 0 : -1;
 }
 
+static int write_member_at(void *ctx, const char *relative_path, uint64_t offset, const uint8_t *data, size_t len) {
+    access_ctx *a = (access_ctx *)ctx;
+    JNIEnv *env = a->env;
+    jstring jpath = jni_string(env, relative_path);
+    jbyteArray jdata = jpath ? byte_array(env, data, len) : NULL;
+    jboolean ok = jdata ? (*env)->CallBooleanMethod(env, a->access, g_access_write_at, a->root, jpath, (jlong)offset, jdata)
+                        : JNI_FALSE;
+    if (jpath) (*env)->DeleteLocalRef(env, jpath);
+    if (jdata) (*env)->DeleteLocalRef(env, jdata);
+    return !access_threw(env) && ok ? 0 : -1;
+}
+
 static int remove_member(void *ctx, const char *relative_path) {
     access_ctx *a = (access_ctx *)ctx;
     JNIEnv *env = a->env;
@@ -1072,7 +1088,7 @@ Java_com_nendo_sigil_Sigil_nativeSync(JNIEnv *env, jclass clazz,
     access_ctx actx = { env, jaccess, jroot };
     sigil_sync_request req;
     memset(&req, 0, sizeof(req));
-    req.struct_version = SIGIL_SYNC_REQUEST_V1;
+    req.struct_version = SIGIL_SYNC_REQUEST_V2;
     req.save.struct_version = SIGIL_SAVE_REQUEST_V1;
     req.save.layout = layout;
     req.save.platform = platform;
@@ -1113,6 +1129,9 @@ Java_com_nendo_sigil_Sigil_nativeSync(JNIEnv *env, jclass clazz,
     req.write = write_member;
     req.remove = remove_member;
     req.write_ctx = &actx;
+    /* An access that can write part of a file gets a drive image's changed parts alone. */
+    jboolean writes_parts = (*env)->CallBooleanMethod(env, jaccess, g_access_writes_parts);
+    req.write_at = !access_threw(env) && writes_parts ? write_member_at : NULL;
 
     sigil_sync_result *r = NULL;
     int rc = !claims_valid || !companions_valid ? SIGIL_ERR_INVALID_ARG
