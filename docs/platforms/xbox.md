@@ -64,7 +64,10 @@ A disc image in a `.zip` is read in place; see [Containers](../containers.md).
 | `x1box` | | `{x1box_hdd}`: the image X1 BOX (`com.izzy2lost.x1box`) copies into its files folder as `hdd.img`, qcow2 or raw; `hdd_path` names another file | emulator source |
 
 Both rows match `xbox` only. `hdd_path` may be the setting as the emulator
-writes it, a whole path: sigil takes the file's name. The image is a file
+writes it, a whole path: sigil takes the file's name. Which file is the
+drive comes from the row; whether it is qcow2 or raw is read from its
+first four bytes, as qemu and X1 BOX read it themselves, never from its
+name (X1 BOX keeps either form as `hdd.img`). The image is a file
 every game shares, so `sigil_save_resolve` reports it in `unkeyed` and
 names no member.
 
@@ -95,7 +98,11 @@ folder with no file in it isn't carried.
 Restore replaces the game's two folders with the unit's: what the drive
 holds of them goes, the unit's files are written, each with its time, and
 a folder gets the time of the newest file in it. `UDATA` and `TDATA` are
-made when the drive has none, as on the image xemu publishes. Every other
+made when the drive has none, as on the image xemu publishes. No byte of
+a save is converted, and an entry is written the way the console's kernel
+writes one: the name padded with `0xFF`, a chain ended with `0xFFFFFFFF`,
+the three time stamps alike (checked against entries the kernel wrote in
+xemu). So a restored drive collects to the same unit, byte for byte. Every other
 title's saves, the rest of E: and the other partitions stay as they are,
 byte for byte. The image is then written back through `write` as one
 file and read back: its bytes, then the game's saves on it. Nothing is
