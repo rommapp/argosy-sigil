@@ -344,10 +344,13 @@ int  sigil_card_repair(const sigil_io *io, sigil_card_repair_report **out);
 void sigil_card_repair_report_free(sigil_card_repair_report *report);
 
 #define SIGIL_SYNC_REQUEST_V1 ...
+#define SIGIL_SYNC_REQUEST_V2 ...
 #define SIGIL_SYNC_RESULT_V1 ...
 
 typedef int (*sigil_save_write_fn)(void *ctx, const char *relative_path, const uint8_t *data, size_t len);
 typedef int (*sigil_save_remove_fn)(void *ctx, const char *relative_path);
+typedef int (*sigil_save_write_at_fn)(void *ctx, const char *relative_path, uint64_t offset, const uint8_t *data,
+                                      size_t len);
 
 typedef enum {
     SIGIL_SYNC_MANAGED,
@@ -387,6 +390,7 @@ typedef struct {
     const sigil_sync_companion *companions;
     size_t                companion_count;
     int                   repair;
+    sigil_save_write_at_fn write_at;
 } sigil_sync_request;
 
 typedef struct {

@@ -934,3 +934,19 @@ def test_xbox_saves_go_into_the_drive_image_and_come_back(tmp_path):
     # Another game's saves aren't this one's, and the drive is left as it is.
     other = sigil.SigilResult.persisted(platform="xbox", title_id="EM-009", save_id="454D0009", features=0)
     assert sigil.collect(other, "xemu", "FlatOut (USA).iso", tmp_path, options=_XEMU_DRIVE).data is None
+
+
+@pytest.mark.skipif(not _XEMU_BLANK.exists() or os.name == "nt", reason="needs the Xbox drive sample and sparse files")
+def test_an_xbox_drive_too_large_to_hold_in_memory_is_written_in_parts(tmp_path):
+    """The binding writes a drive image back as the parts that changed. A sparse image over the
+    2 GiB sigil will hold in memory can only go back that way, and stays sparse."""
+    drive = tmp_path / "xbox_hdd.qcow2"
+    drive.write_bytes(_XEMU_BLANK.read_bytes())
+    size = 5 * 512 * 1024 * 1024
+    os.truncate(drive, size)
+
+    restored = sigil.restore(_stored_zip(_HALO_SAVE), _HALO, "xemu", "Halo (USA).iso", tmp_path, options=_XEMU_DRIVE)
+    back = sigil.collect(_HALO, "xemu", "Halo (USA).iso", tmp_path, options=_XEMU_DRIVE)
+    assert back.identity_hash == restored.identity_hash == _romm_zip_hash(_HALO_SAVE)
+    assert size < drive.stat().st_size < size + 4 * 1024 * 1024
+    assert drive.stat().st_blocks * 512 < 64 * 1024 * 1024

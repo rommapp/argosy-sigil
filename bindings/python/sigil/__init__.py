@@ -906,7 +906,7 @@ def _sync(
         listing = list_save_root(root, core)
 
     req = ffi.new("sigil_sync_request *")
-    req.struct_version = lib.SIGIL_SYNC_REQUEST_V1
+    req.struct_version = lib.SIGIL_SYNC_REQUEST_V2
     _fill_save_request(req.save, keepalive, game, core, content_path, list(listing), options, root, profile)
 
     ids = [ffi.new("char[]", i.encode("utf-8")) for i in game_ids]
@@ -961,6 +961,18 @@ def _sync(
             return -1
         return 0
 
+    @ffi.callback("int(void *, const char *, uint64_t, const uint8_t *, size_t)")
+    def write_member_at(_ctx, relative_path, offset, data, length):
+        # Part of a file that is there: an Xbox drive image gets only what changed.
+        path = os.path.join(root_bytes, ffi.string(relative_path))
+        try:
+            with open(path, "r+b") as f:
+                f.seek(offset)
+                f.write(ffi.buffer(data, length))
+        except OSError:
+            return -1
+        return 0
+
     @ffi.callback("int(void *, const char *)")
     def remove_member(_ctx, relative_path):
         relative = ffi.string(relative_path)
@@ -975,6 +987,7 @@ def _sync(
 
     req.save.open = open_member
     req.write = write_member
+    req.write_at = write_member_at
     req.remove = remove_member
 
     out = ffi.new("sigil_sync_result **")
