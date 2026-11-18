@@ -40,8 +40,9 @@ the same bytes in `{stem}.dsv` with a 122-byte footer: the text
 
 DeSmuME takes a footer by its cookie and version 0 alone, and reads the
 save as everything before it. A `.dsv` without the footer isn't taken as
-a save: DeSmuME detects the chip again, and the game's first write fills
-the file with 0xFF from the start, over the save. DraStic is reported to
+a save: DeSmuME detects the chip again, and the game's first read or
+write fills the file with 0xFF from the start, over the save (`mc.cpp`
+calls `ensure(addr+1)` before either). DraStic is reported to
 write raw `.dsv` files without the footer.
 
 ## Sync
