@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
-/* Nintendo DS sync against saves melonDS and DeSmuME wrote: a .dsv DeSmuME
- * made itself collects to its save, restore for DeSmuME writes the footer
- * DeSmuME writes, and each emulator's save crosses to the other's file. */
+/* Nintendo DS sync against saves melonDS and DeSmuME wrote, for chips of
+ * 512 bytes, 8 KiB and 256 KiB: a .dsv DeSmuME made itself collects to its
+ * save, restore for DeSmuME writes the footer DeSmuME writes, and each
+ * emulator's save crosses to the other's file. */
 #include "save_corpus.h"
 #include "legacy_units.h"
 
@@ -150,8 +151,11 @@ int main(void) {
     }
     check_desmume_footer("mkds-desmume-new", "Mario Kart DS.nds", "Mario Kart DS.dsv");
     check_desmume_footer("sonic-rush-desmume-new", "Sonic Rush.nds", "Sonic Rush.dsv");
+    check_desmume_footer("ytg-desmume-new", "Yoshi Touch & Go (USA).nds", "Yoshi Touch & Go (USA).dsv");
     check_crossing("mkds-melonds", "mkds-desmume", "Mario Kart DS.nds", "Mario Kart DS.sav", "Mario Kart DS.dsv");
     check_crossing("sonic-rush-melonds", "sonic-rush-desmume", "Sonic Rush.nds", "Sonic Rush.sav", "Sonic Rush.dsv");
+    check_crossing("ytg-melonds", "ytg-desmume", "Yoshi Touch & Go (USA).nds", "Yoshi Touch & Go (USA).sav",
+                   "Yoshi Touch & Go (USA).dsv");
     corpus_free(&g_nds);
     printf("nds sync: %d failures\n", g_fails);
     return corpus_exit(g_fails);
