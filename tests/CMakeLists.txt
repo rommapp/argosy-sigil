@@ -65,6 +65,8 @@ sigil_add_test(unit_n64_save)
 target_include_directories(unit_n64_save PRIVATE ${CMAKE_SOURCE_DIR}/src)
 sigil_add_test(unit_sync_gb_mbc2)
 target_include_directories(unit_sync_gb_mbc2 PRIVATE ${CMAKE_SOURCE_DIR}/src)
+sigil_add_test(unit_sync_nds)
+target_include_directories(unit_sync_nds PRIVATE ${CMAKE_SOURCE_DIR}/src)
 sigil_add_test(unit_layouts)
 sigil_add_test(unit_card_repair)
 target_include_directories(unit_card_repair PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -93,7 +95,8 @@ foreach(t integration_card_ps1 integration_card_ps2 integration_card_gamecube
           integration_card_dreamcast integration_card_saturn integration_card_segacd
           integration_clock_gb integration_sync_ps1 integration_sync_ps2
           integration_sync_volumes integration_sync_dreamcast integration_sync_gamecube
-          integration_sync_companions integration_sync_profiles integration_sync_n64 integration_sync_gb)
+          integration_sync_companions integration_sync_profiles integration_sync_n64 integration_sync_gb
+          integration_sync_nds)
     sigil_add_test(${t})
     target_include_directories(${t} PRIVATE ${CMAKE_SOURCE_DIR}/src)
     target_compile_definitions(${t} PRIVATE
