@@ -72,16 +72,16 @@ static uint8_t *save_of(size_t len) {
     return b;
 }
 
-/* `raw` padded with 0xFF to `padded` and DeSmuME's footer, field by field from mc.cpp ensure. */
-static uint8_t *dsv_of(const uint8_t *raw, size_t len, uint32_t padded, uint32_t type, uint32_t addr_size,
-                       size_t *out_len) {
-    *out_len = padded + FOOTER;
+/* What DeSmuME writes when it takes in `raw` (mc.cpp): with a `type`, the save
+ * and its footer, field by field from ensure; with none (0), the save alone. */
+static uint8_t *dsv_of(const uint8_t *raw, size_t len, uint32_t type, uint32_t addr_size, size_t *out_len) {
+    *out_len = len + (type ? FOOTER : 0);
     uint8_t *b = (uint8_t *)malloc(*out_len);
     memcpy(b, raw, len);
-    memset(b + len, 0xFF, padded - len);
-    uint8_t *p = b + padded;
+    if (!type) return b;
+    uint8_t *p = b + len;
     memcpy(p, NOTE, 82);
-    uint32_t fields[6] = { (uint32_t)len, padded, type, addr_size, padded, 0 };
+    uint32_t fields[6] = { (uint32_t)len, (uint32_t)len, type, addr_size, (uint32_t)len, 0 };
     for (size_t i = 0; i < 6; i++) sigil_write_le32(p + 82 + 4 * i, fields[i]);
     memcpy(p + 106, COOKIE, 16);
     return b;
@@ -89,26 +89,26 @@ static uint8_t *dsv_of(const uint8_t *raw, size_t len, uint32_t padded, uint32_t
 
 /* For each chip size: the raw save from melonDS is the unit; restore for
  * DeSmuME writes the .dsv DeSmuME writes for that chip; that .dsv collects
- * back to the save and restores to melonDS's file. DeSmuME has no 128 KiB
- * type and pads such a save to 256 KiB, as it pads its own. */
+ * back to the save and restores to melonDS's file at the same size.
+ * DeSmuME has no 1 Mbit type, so that save goes over as it is, no footer. */
 static void check_sizes(void) {
-    static const struct { uint32_t len, padded, type, addr_size; } CHIPS[] = {
-        { 512u, 512u, 1, 1 },                 /* EEPROM 4 kbit */
-        { 8192u, 8192u, 2, 2 },               /* EEPROM 64 kbit */
-        { 32768u, 32768u, 4, 2 },             /* FRAM 256 kbit */
-        { 65536u, 65536u, 3, 2 },             /* EEPROM 512 kbit */
-        { 131072u, 262144u, 5, 3 },           /* EEPROM 1 Mbit, melonDS only */
-        { 262144u, 262144u, 5, 3 },           /* FLASH 2 Mbit */
-        { 524288u, 524288u, 6, 3 },           /* FLASH 4 Mbit */
-        { 1048576u, 1048576u, 7, 3 },         /* FLASH 8 Mbit */
-        { 8388608u, 8388608u, 10, 3 },        /* 64 Mbit */
+    static const struct { uint32_t len, type, addr_size; } CHIPS[] = {
+        { 512u, 1, 1 },                       /* EEPROM 4 kbit */
+        { 8192u, 2, 2 },                      /* EEPROM 64 kbit */
+        { 32768u, 4, 2 },                     /* FRAM 256 kbit */
+        { 65536u, 3, 2 },                     /* EEPROM 512 kbit */
+        { 131072u, 0, 0 },                    /* EEPROM 1 Mbit, no DeSmuME type */
+        { 262144u, 5, 3 },                    /* FLASH 2 Mbit */
+        { 524288u, 6, 3 },                    /* FLASH 4 Mbit */
+        { 1048576u, 7, 3 },                   /* FLASH 8 Mbit */
+        { 8388608u, 10, 3 },                  /* 64 Mbit */
     };
     for (size_t i = 0; i < sizeof(CHIPS) / sizeof(CHIPS[0]); i++) {
         char where[48];
         snprintf(where, sizeof(where), "%u-byte save", CHIPS[i].len);
         uint8_t *raw = save_of(CHIPS[i].len);
         size_t dsv_len = 0;
-        uint8_t *dsv = dsv_of(raw, CHIPS[i].len, CHIPS[i].padded, CHIPS[i].type, CHIPS[i].addr_size, &dsv_len);
+        uint8_t *dsv = dsv_of(raw, CHIPS[i].len, CHIPS[i].type, CHIPS[i].addr_size, &dsv_len);
         char raw_md5[33];
         sigil_md5_of(raw, CHIPS[i].len, raw_md5);
 
@@ -130,19 +130,19 @@ static void check_sizes(void) {
         }
 
         sigil_sync_result *back = collect(&desmume, "desmume");
-        if (!back || back->len != CHIPS[i].padded || memcmp(back->data, raw, CHIPS[i].len) != 0) {
+        if (!back || back->len != CHIPS[i].len || memcmp(back->data, raw, CHIPS[i].len) != 0) {
             fail(where, "DeSmuME's .dsv collects as the save without its footer");
         }
 
         mem_root again = {0};
         if (!back || restore(&again, "melonds", back->data, back->len, true) != SIGIL_OK ||
-            !(f = root_find(&again, "Game.sav")) || f->len != CHIPS[i].padded || memcmp(f->data, back->data, back->len) != 0) {
+            !(f = root_find(&again, "Game.sav")) || f->len != CHIPS[i].len || memcmp(f->data, raw, CHIPS[i].len) != 0) {
             fail(where, "the DeSmuME unit restores to melonDS's file, raw");
         }
 
         mem_root legacy = {0};
         if (restore(&legacy, "melonds", dsv, dsv_len, true) != SIGIL_OK || !(f = root_find(&legacy, "Game.sav")) ||
-            f->len != CHIPS[i].padded || memcmp(f->data, dsv, CHIPS[i].padded) != 0) {
+            f->len != CHIPS[i].len || memcmp(f->data, raw, CHIPS[i].len) != 0) {
             fail(where, "a .dsv uploaded as it is restores to melonDS's file without the footer");
         }
 
@@ -181,7 +181,7 @@ static void check_default_row(void) {
 static void check_footerless_dsv(void) {
     uint8_t *raw = save_of(8192);
     size_t dsv_len = 0;
-    uint8_t *dsv = dsv_of(raw, 8192, 8192, 2, 2, &dsv_len);
+    uint8_t *dsv = dsv_of(raw, 8192, 2, 2, &dsv_len);
     mem_root root = {0};
     root_put(&root, "Game.dsv", raw, 8192);
     sigil_sync_result *r = collect(&root, "desmume");
@@ -208,7 +208,7 @@ static void check_edges(void) {
 
     uint8_t *raw = save_of(512);
     size_t dsv_len = 0;
-    uint8_t *dsv = dsv_of(raw, 512, 512, 1, 1, &dsv_len);
+    uint8_t *dsv = dsv_of(raw, 512, 1, 1, &dsv_len);
     sigil_write_le32(dsv + dsv_len - 16 - 4, 1);
     mem_root other = {0};
     root_put(&other, "Game.dsv", dsv, dsv_len);
@@ -231,7 +231,7 @@ static void check_conflict(void) {
     uint8_t *ours = save_of(8192), *theirs = save_of(8192);
     theirs[0] ^= 0xFF;
     size_t dsv_len = 0;
-    uint8_t *dsv = dsv_of(ours, 8192, 8192, 2, 2, &dsv_len);
+    uint8_t *dsv = dsv_of(ours, 8192, 2, 2, &dsv_len);
     mem_root root = {0};
     root_put(&root, "Game.dsv", dsv, dsv_len);
     if (restore(&root, "desmume", theirs, 8192, false) != SIGIL_ERR_CONFLICT) {

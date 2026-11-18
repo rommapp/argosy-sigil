@@ -50,22 +50,25 @@ The unit is the raw save, one file named `{stem}.srm`. Collect reads the
 layout's file and drops DeSmuME's footer when it has one, so a save gives
 the same unit from melonDS and from DeSmuME.
 
-Restore writes the raw save to the layout's file. On a `.dsv` it writes
-what DeSmuME writes when it takes in a raw save (`mc.cpp`
-`BackupDevice::ensure`): the save padded with 0xFF to the next of
-DeSmuME's sizes (512 bytes, 8, 32 and 64 KiB, 256 KiB, then each power of
-two to 64 MiB), then the footer, with size the save's own length, and
-type and addr_size from that padded size. A `.dsv` already holding the
-same save without the footer is written again with it.
+Restore writes the raw save to the layout's file. On the `desmume` row it
+writes what DeSmuME writes when it takes in a raw save (`mc.cpp`, the
+`BackupDevice` constructor): for a size DeSmuME has a type for (512
+bytes, 8, 32 and 64 KiB, 256 KiB, then each power of two to 64 MiB), the
+save and the footer (`ensure`), with size and padSize the save's length
+and type and addr_size from that size; for any other size, the save as it
+is, with no footer and no padding. A `.dsv` already holding the same save
+without the footer it should have is written again with it. The footer
+comes from the layout row, never the file's name: DraStic also writes
+`.dsv`.
 
 Restore also reads a `.dsv` with its footer, as clients uploaded before
 sigil.
 
 ## Open items
 
-- DeSmuME has no 1 Mbit type. A 128 KiB save (melonDS's 1 Mbit EEPROM, 14 games in its list) travels to DeSmuME padded to 256 KiB, as DeSmuME pads its own, and comes back at 256 KiB, the save in the first 128 KiB. melonDS reads the 128 KiB and writes 128 KiB, so the unit's identity differs between the two.
+- DeSmuME has no 1 Mbit type. A 128 KiB save (melonDS's 1 Mbit EEPROM, 14 games in its list) goes to DeSmuME as it is, with no footer, as DeSmuME takes in such a save itself; DeSmuME then detects the chip's address size from the game's first command.
 - DeSmuME addresses a few chips with another address size than their size gives (`mc.cpp` lists Over the Hedge: Hammy Goes Nuts, 1 byte, and Puzzler World, 2 bytes). Restore writes the address size by the size.
-- NAND saves (8 to 64 MiB, melonDS types 8 to 10) get the footer by the same rule; neither emulator has been run with one.
+- NAND saves (8 to 64 MiB, melonDS types 8 to 10) get the footer when their size has a DeSmuME type; neither emulator has been run with one.
 - DeSmuME standalone and the `desmume2015` core have no rows; neither was read.
 - DraStic current-version footer behaviour, and whether an option toggles it.
 - melondsds GBA-slot save path.

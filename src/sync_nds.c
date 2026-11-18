@@ -2,8 +2,8 @@
 /* Collect and restore for Nintendo DS carts. The save chip's bytes are the
  * same in every emulator: melonDS keeps them raw, and DeSmuME keeps them in a
  * .dsv followed by a 122-byte footer (mc.cpp). The unit is the raw bytes;
- * restore writes the footer on the .dsv DeSmuME reads and the raw bytes
- * anywhere else. */
+ * restore writes what the layout's emulator writes: DeSmuME's .dsv, or the
+ * raw bytes. */
 #include "sync_internal.h"
 
 #define NDS_MAX_SAVE   (64u * 1024u * 1024u)
@@ -15,7 +15,7 @@
 #define DSV_FOOTER     (DSV_NOTE_LEN + DSV_FIELDS + DSV_COOKIE_LEN)
 
 /* DeSmuME's save types (mc.cpp save_types[]): a .dsv footer's type is the
- * index of the padded size here, and the address size is how many bytes the
+ * index of the save's size here, and the address size is how many bytes the
  * game's commands address the chip with. 0 is autodetect. */
 static const struct { uint32_t size; uint32_t addr_size; } DSV_TYPES[] = {
     { 0, 0 },
@@ -35,22 +35,22 @@ static const struct { uint32_t size; uint32_t addr_size; } DSV_TYPES[] = {
 };
 #define DSV_TYPE_COUNT (sizeof(DSV_TYPES) / sizeof(DSV_TYPES[0]))
 
-/* The size DeSmuME pads a save to (mc.cpp pad_up_size over saveSizes[]): the
- * smallest of its sizes that holds `len`, or `len` past the largest. */
-static uint32_t dsv_padded(uint32_t len) {
-    uint32_t best = 0;
+/* The DeSmuME type of a save of `len` bytes (mc.cpp searchFileSaveType), 0 when it has none. */
+static uint32_t dsv_type(size_t len) {
     for (size_t i = 1; i < DSV_TYPE_COUNT; i++) {
-        uint32_t size = DSV_TYPES[i].size;
-        if (size >= len && (!best || size < best)) best = size;
-    }
-    return best ? best : len;
-}
-
-static uint32_t dsv_type(uint32_t padded) {
-    for (size_t i = 1; i < DSV_TYPE_COUNT; i++) {
-        if (DSV_TYPES[i].size == padded) return (uint32_t)i;
+        if (DSV_TYPES[i].size == len) return (uint32_t)i;
     }
     return 0;
+}
+
+/* The layouts whose file carries DeSmuME's footer. Any other layout keeps the
+ * raw save whatever its file is called: DraStic also writes .dsv. */
+static bool footer_layout(const char *layout) {
+    static const char *const LAYOUTS[] = { "desmume" };
+    for (size_t i = 0; layout && i < sizeof(LAYOUTS) / sizeof(LAYOUTS[0]); i++) {
+        if (strcmp(LAYOUTS[i], layout) == 0) return true;
+    }
+    return false;
 }
 
 /* The save's length in `data`: all of it, or before the footer on a DeSmuME
@@ -63,31 +63,24 @@ static size_t raw_len(const uint8_t *data, size_t len) {
     return len - DSV_FOOTER;
 }
 
-static bool ends_with(const char *s, const char *tail) {
-    size_t n = strlen(s), m = strlen(tail);
-    return n >= m && strcmp(s + n - m, tail) == 0;
-}
-
-/* The bytes restore writes to `path`: the raw save, or on the .dsv DeSmuME
- * reads, the save padded with 0xFF to DeSmuME's size for it and the footer
- * DeSmuME writes when it takes in a raw save (mc.cpp ensure). */
-static int file_bytes(const char *path, const uint8_t *raw, size_t len, uint8_t **out, size_t *out_len) {
-    bool dsv = ends_with(path, ".dsv");
-    uint32_t padded = dsv ? dsv_padded((uint32_t)len) : (uint32_t)len;
-    *out_len = (size_t)padded + (dsv ? DSV_FOOTER : 0);
+/* The bytes restore writes for `layout`: the raw save, and for DeSmuME what
+ * DeSmuME writes when it takes in a raw save (mc.cpp, BackupDevice's
+ * constructor): the save and its footer for a size it has a type for
+ * (ensure), the save as it is for any other size. */
+static int file_bytes(const char *layout, const uint8_t *raw, size_t len, uint8_t **out, size_t *out_len) {
+    uint32_t type = footer_layout(layout) ? dsv_type(len) : 0;
+    *out_len = len + (type ? DSV_FOOTER : 0);
     *out = (uint8_t *)malloc(*out_len ? *out_len : 1);
     if (!*out) return SIGIL_ERR_OOM;
     memcpy(*out, raw, len);
-    if (!dsv) return SIGIL_OK;
-    memset(*out + len, 0xFF, padded - len);
-    uint8_t *note = *out + padded, *fields = note + DSV_NOTE_LEN;
-    uint32_t type = dsv_type(padded);
+    if (!type) return SIGIL_OK;
+    uint8_t *note = *out + len, *fields = note + DSV_NOTE_LEN;
     memcpy(note, DSV_NOTE, DSV_NOTE_LEN);
     sigil_write_le32(fields, (uint32_t)len);              /* bytes the save holds */
-    sigil_write_le32(fields + 4, padded);                 /* the size it's padded to */
+    sigil_write_le32(fields + 4, (uint32_t)len);          /* padSize: the save's length in the file */
     sigil_write_le32(fields + 8, type);
     sigil_write_le32(fields + 12, DSV_TYPES[type].addr_size);
-    sigil_write_le32(fields + 16, padded);                /* the chip's size */
+    sigil_write_le32(fields + 16, (uint32_t)len);         /* the chip's size */
     sigil_write_le32(fields + 20, 0);                     /* version */
     memcpy(fields + DSV_FIELDS, DSV_COOKIE, DSV_COOKIE_LEN);
     return SIGIL_OK;
@@ -185,7 +178,7 @@ int sigil_sync_restore_nds(sigil_sync_ctx *x, const uint8_t *unit, size_t len, s
      * again, so the file is the one the emulator reads. */
     uint8_t *file = NULL;
     size_t file_len = 0;
-    if (rc == SIGIL_OK) rc = file_bytes(f.path, unit, save_len, &file, &file_len);
+    if (rc == SIGIL_OK) rc = file_bytes(x->req->save.layout, unit, save_len, &file, &file_len);
     if (rc == SIGIL_OK && !sigil_sync_file_holds(x->req, f.path, file, file_len)) {
         rc = sigil_sync_put(x->req, f.path, file, file_len);
     }
