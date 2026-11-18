@@ -30,6 +30,7 @@ static const size_t CHIP_SIZES[] = { GBA_EEPROM_4K, GBA_EEPROM_64K, GBA_SRAM, GB
 typedef struct {
     uint8_t *chip;
     size_t   chip_len;
+    size_t   file_len;   /* the save's length in its file, without a clock footer */
     bool     eeprom;
     bool     has_clock;
     uint8_t  clock[GBA_CLOCK_LEN];
@@ -67,10 +68,9 @@ static size_t named_chip(uint32_t features) {
  * off, VBA Next's EEPROM comes from 128 KiB, and padding comes off down to
  * the chip's size. The size is the chip the ROM names, else the file's own
  * length; it never drops a byte that isn't 0xFF, growing to the next chip
- * size instead. An EEPROM is 512 bytes unless something past them isn't
- * 0xFF: emulators that can't tell the two sizes apart write the larger or
- * pad, and every one of them reads a 512-byte file for either. An empty
- * file holds no save. */
+ * size instead. An EEPROM keeps the size of a file that is exactly one; from
+ * a padded file it is 512 bytes unless something past them isn't 0xFF. An
+ * empty file holds no save. */
 static int take_save(uint32_t features, const uint8_t *data, size_t len, gba_save *s) {
     if (!len) return SIGIL_OK;
     if (len > GBA_CLOCK_LEN && len % 512 == GBA_CLOCK_LEN) {
@@ -78,9 +78,12 @@ static int take_save(uint32_t features, const uint8_t *data, size_t len, gba_sav
         memcpy(s->clock, data + len, GBA_CLOCK_LEN);
         s->has_clock = true;
     }
+    s->file_len = len;
     size_t named = named_chip(features);
     bool eeprom = (features & SIGIL_FEATURE_GBA_EEPROM) != 0;
+    bool exact = len == GBA_EEPROM_4K || len == GBA_EEPROM_64K;
     if (len == VBA_NEXT_FILE) {
+        exact = false;
         bool ram_blank = all_ff(data, VBA_NEXT_EEPROM);
         bool eeprom_blank = all_ff(data + VBA_NEXT_EEPROM, GBA_EEPROM_64K);
         if (eeprom || (!named && ram_blank && !eeprom_blank)) {
@@ -98,8 +101,10 @@ static int take_save(uint32_t features, const uint8_t *data, size_t len, gba_sav
         if (CHIP_SIZES[i] > size) size = CHIP_SIZES[i];
     }
     if (size > GBA_EEPROM_64K) eeprom = false;
-    if (eeprom && size == GBA_EEPROM_64K && (len <= GBA_EEPROM_4K || all_ff(data + GBA_EEPROM_4K,
-                                                                           (len < size ? len : size) - GBA_EEPROM_4K))) {
+    if (eeprom && exact) {
+        size = len;
+    } else if (eeprom && size == GBA_EEPROM_64K &&
+               (len <= GBA_EEPROM_4K || all_ff(data + GBA_EEPROM_4K, (len < size ? len : size) - GBA_EEPROM_4K))) {
         size = GBA_EEPROM_4K;
     }
     s->chip = (uint8_t *)malloc(size);
@@ -253,10 +258,10 @@ static int read_unit(uint32_t features, const uint8_t *unit, size_t len, size_t 
 
 /* The bytes of the save file in the emulator's own form. gpSP: the chip,
  * then 0xFF to 128 KiB. VBA Next: 136 KiB, an EEPROM's bytes at 128 KiB and
- * anything else at 0. Standalone mGBA: an EEPROM at 8 KiB, since mGBA takes
- * the games its table names as 8 KiB EEPROMs and fills a shorter file out
- * with zeros; on a clock cart the unit's clock after it, else the clock
- * already there. Any other emulator: the chip as it is. */
+ * anything else at 0. Standalone mGBA: the chip, then on a clock cart the
+ * unit's clock, else the clock already there. Any other emulator: the chip,
+ * or 0xFF to 128 KiB over a file already that long, as mGBA's libretro core
+ * leaves one in RetroArch. */
 static int save_file(const sigil_sync_request *req, const gba_save *in, const gba_save *local, uint8_t **out,
                      size_t *len) {
     const char *layout = req->save.layout ? req->save.layout : "";
@@ -265,7 +270,8 @@ static int save_file(const sigil_sync_request *req, const gba_save *in, const gb
     const gba_save *timed = in->has_clock ? in : local->has_clock ? local : NULL;
     bool footer = mgba && timed;
     size_t at = vba_next && in->eeprom ? VBA_NEXT_EEPROM : 0;
-    size_t body = gpsp ? GBA_PADDED : vba_next ? VBA_NEXT_FILE : mgba && in->eeprom ? GBA_EEPROM_64K : in->chip_len;
+    bool padded = !gpsp && !vba_next && !mgba && local->file_len == GBA_PADDED;
+    size_t body = gpsp || padded ? GBA_PADDED : vba_next ? VBA_NEXT_FILE : in->chip_len;
     if (body < at + in->chip_len) body = at + in->chip_len;
     *len = body + (footer ? GBA_CLOCK_LEN : 0);
     *out = (uint8_t *)malloc(*len);

@@ -112,7 +112,6 @@ static size_t form_of(const chip *c, form f, bool clock, uint8_t *out) {
         break;
     case F_MGBA_STANDALONE:
         memcpy(out, c->bytes, c->len);
-        if (c->eeprom) len = 8 * K;
         if (clock) {
             memcpy(out + len, g_clock, 16);
             len += 16;
@@ -202,20 +201,86 @@ static void check_restore(void) {
     }
 }
 
-/* EEPROM: 512 bytes unless a byte past them isn't 0xFF, whichever size the file came in. */
+/* EEPROM: a file that is exactly 512 bytes or 8 KiB keeps its size; from a
+ * padded file it is 512 bytes unless a byte past them isn't 0xFF. Each
+ * emulator's file comes back from a round trip the same size, byte for byte. */
 static void check_eeprom_size(void) {
     uint8_t small[8 * K];
     memset(small, 0xFF, sizeof(small));
     memcpy(small, g_chips[0].bytes, 512);
+    for (int named = 1; named >= 0; named--) {
+        int rc;
+        sigil_sync_result *r = collect_file("vbam", "Game.srm", small, sizeof(small), named ? SIGIL_FEATURE_GBA_EEPROM : 0, &rc);
+        if (rc != SIGIL_OK || !r || r->len != 8 * K || memcmp(r->data, small, sizeof(small)) != 0) {
+            fail(named ? "exact 8 KiB EEPROM file, nothing past 512" : "exact 8 KiB file, no facts", "not kept at 8 KiB");
+        }
+        sigil_sync_result_free(r);
+    }
+    uint8_t padded[128 * K];
+    memset(padded, 0xFF, sizeof(padded));
+    memcpy(padded, g_chips[0].bytes, 512);
     int rc;
-    sigil_sync_result *r = collect_file("vbam", "Game.srm", small, sizeof(small), SIGIL_FEATURE_GBA_EEPROM, &rc);
-    if (rc != SIGIL_OK || !r || r->len != 512 || memcmp(r->data, small, 512) != 0) {
-        fail("8 KiB EEPROM file, nothing past 512", "not 512 bytes");
+    sigil_sync_result *r = collect_file("gpsp", "Game.srm", padded, sizeof(padded), SIGIL_FEATURE_GBA_EEPROM, &rc);
+    if (rc != SIGIL_OK || !r || r->len != 512 || memcmp(r->data, padded, 512) != 0) {
+        fail("gpSP's EEPROM file, nothing past 512", "not 512 bytes");
     }
     sigil_sync_result_free(r);
-    r = collect_file("vbam", "Game.srm", small, sizeof(small), 0, &rc);
-    if (rc != SIGIL_OK || !r || r->len != 512) fail("8 KiB file, no facts, nothing past 512", "not 512 bytes");
+
+    /* The 8 KiB file round-trips at 8 KiB in each emulator that writes one. */
+    static const struct { const char *layout, *file; } EXACT[] = {
+        { "mgba", "Game.srm" }, { "vbam", "Game.srm" }, { "mgba_standalone", "Game.sav" },
+    };
+    for (size_t i = 0; i < sizeof(EXACT) / sizeof(EXACT[0]); i++) {
+        r = collect_file(EXACT[i].layout, EXACT[i].file, small, sizeof(small), SIGIL_FEATURE_GBA_EEPROM, &rc);
+        mem_root root = {0};
+        game g;
+        make_game(&g, &root, EXACT[i].layout, SIGIL_FEATURE_GBA_EEPROM);
+        sigil_sync_result *w = NULL;
+        mem_file *f = NULL;
+        if (!r || sigil_restore(&g.req, r->data, r->len, &w) != SIGIL_OK || !(f = root_find(&root, EXACT[i].file)) ||
+            f->len != sizeof(small) || memcmp(f->data, small, sizeof(small)) != 0) {
+            fail(EXACT[i].layout, "an 8 KiB EEPROM file doesn't round-trip at 8 KiB");
+        }
+        sigil_sync_result_free(w);
+        sigil_sync_result_free(r);
+        root_free(&root);
+    }
+}
+
+/* mGBA's libretro core in RetroArch leaves a 128 KiB file; restore over it
+ * keeps that length, and into an empty folder writes the chip's size. */
+static void check_retroarch_length(void) {
+    const chip *x = &g_chips[2];
+    uint8_t file[128 * K];
+    memset(file, 0xFF, sizeof(file));
+    memcpy(file, x->bytes, x->len);
+    int rc;
+    sigil_sync_result *r = collect_file("mgba", "Game.srm", file, sizeof(file), x->feature, &rc);
+    if (rc != SIGIL_OK || !r || r->len != x->len) {
+        fail("RetroArch's mGBA file", "not the chip");
+        sigil_sync_result_free(r);
+        return;
+    }
+    mem_root there = {0}, empty = {0};
+    root_put(&there, "Game.srm", file, sizeof(file));
+    game g;
+    make_game(&g, &there, "mgba", x->feature);
+    sigil_sync_result *w = NULL;
+    mem_file *f = NULL;
+    if (sigil_restore(&g.req, r->data, r->len, &w) != SIGIL_OK || !(f = root_find(&there, "Game.srm")) ||
+        f->len != sizeof(file) || memcmp(f->data, file, sizeof(file)) != 0) {
+        fail("RetroArch's mGBA file", "restore over it doesn't keep it byte for byte");
+    }
+    sigil_sync_result_free(w);
+    make_game(&g, &empty, "mgba", x->feature);
+    w = NULL;
+    if (sigil_restore(&g.req, r->data, r->len, &w) != SIGIL_OK || !(f = root_find(&empty, "Game.srm")) || f->len != x->len) {
+        fail("RetroArch's mGBA file", "an empty folder doesn't get the chip's size");
+    }
+    sigil_sync_result_free(w);
     sigil_sync_result_free(r);
+    root_free(&there);
+    root_free(&empty);
 }
 
 /* The ROM's facts never cost data: bytes past the chip they name keep the file at a size that holds them. */
@@ -389,6 +454,7 @@ int main(void) {
     check_collect();
     check_restore();
     check_eeprom_size();
+    check_retroarch_length();
     check_never_drops();
     check_clock();
     check_conflict();

@@ -80,23 +80,29 @@ Collect takes the chip out of any emulator's file. mGBA's footer comes
 off (a file 16 bytes past a multiple of 512 ends in one), VBA Next's
 EEPROM comes from 128 KiB, and padding comes off down to the chip the ROM
 names. Collect never drops a byte that isn't 0xFF: a file holding data
-past the named chip keeps the next size that holds it. An EEPROM is 512
-bytes unless a byte past them isn't 0xFF, so one save gives one unit from
-an emulator that wrote 8 KiB and one that wrote 512 bytes; every emulator
-here reads a 512-byte file for either size.
+past the named chip keeps the next size that holds it. An EEPROM file that
+is exactly 512 bytes or 8 KiB keeps its size. From a padded file an EEPROM
+is 512 bytes unless a byte past them isn't 0xFF; every emulator here reads
+a 512-byte file for either size.
 
 Without the ROM's facts, a file of a chip's own size is that chip, a
 512-byte or 8 KiB file is an EEPROM, VBA Next's EEPROM is found by where it
 sits, and a padded file (gpSP's, mGBA's in RetroArch, VBA Next's SRAM or
 flash) keeps 128 KiB, since nothing in it says which chip it holds.
 
-Restore writes each emulator's own file: gpSP's 128 KiB, VBA Next's 136 KiB
-with an EEPROM at 128 KiB, and for standalone mGBA the save with an EEPROM
-at 8 KiB, then on a clock cart the unit's clock, else the clock already in
-the `.sav`. mGBA takes the EEPROM games its override table names as 8 KiB
-and fills a shorter `.sav` out with zeros, where the cart would read 0xFF.
-Any other core gets the chip as it is. No libretro GBA core keeps the
-clock, so restore writes no `.rtc`.
+Restore writes what each emulator writes itself, picked by the layout
+row: gpSP's 128 KiB, VBA Next's 136 KiB with an EEPROM at 128 KiB, and for
+standalone mGBA the save at its own size, then on a clock cart the unit's
+clock, else the clock already in the `.sav`. Any other core gets the chip
+as it is, or 0xFF to 128 KiB over a file already that long, as mGBA's
+libretro core leaves one in RetroArch. No libretro GBA core keeps the
+clock, so restore writes no `.rtc`. Collecting an emulator's file and
+restoring it for the same emulator gives the file back byte for byte.
+
+Standalone mGBA takes the EEPROM games its override table names as 8 KiB
+and grows a shorter `.sav` to 8 KiB with zeros where the cart would read
+0xFF. That is mGBA's own handling of a 512-byte file, so a 512-byte save
+restored there gets it as it would from any other source.
 
 Restore also reads any of the files above, and a zip of one with or
 without `clock.rtc`, as clients uploaded them before sigil.
@@ -114,6 +120,7 @@ computer's clock each session and keep nothing.
 ## Open items
 
 - Without the ROM's facts a padded save keeps 128 KiB, so gpSP's or VBA Next's save of a game whose ROM sigil hasn't read gets another identity than mGBA's file of the same save.
+- An EEPROM save keeps the size its emulator wrote, so the same save from a 512-byte file and from an exact 8 KiB file (VBA-M starts every EEPROM at 8 KiB) are two units with two identities.
 - A clock cart whose ROM carries no `SIIRTC_V` id is only known as one when its save has mGBA's footer.
 - mGBA's 64 KiB SRAM (`SRAM512`, homebrew) travels like 64 KiB flash; no Nintendo id names it.
 - Pizza Boy A/C: closed source, format and RTC handling unknown.
