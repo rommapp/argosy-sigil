@@ -58,19 +58,30 @@ static int files_add(file_list *l, const char *name, uint8_t *data, size_t len, 
     return SIGIL_OK;
 }
 
+typedef struct {
+    sigil_zip_member member;
+    sigil_zip_stamp  stamp;
+} sorted_file;
+
+static int by_name(const void *a, const void *b) {
+    return strcmp(((const sorted_file *)a)->member.name, ((const sorted_file *)b)->member.name);
+}
+
 /* By name in byte order, so the same saves give the same unit whatever order the drive holds them in. */
-static void files_sort(file_list *l) {
-    for (size_t i = 1; i < l->count; i++) {
-        sigil_zip_member m = l->items[i];
-        sigil_zip_stamp s = l->stamps[i];
-        size_t k = i;
-        for (; k > 0 && strcmp(l->items[k - 1].name, m.name) > 0; k--) {
-            l->items[k] = l->items[k - 1];
-            l->stamps[k] = l->stamps[k - 1];
-        }
-        l->items[k] = m;
-        l->stamps[k] = s;
+static int files_sort(file_list *l) {
+    sorted_file *all = (sorted_file *)malloc((l->count ? l->count : 1) * sizeof(*all));
+    if (!all) return SIGIL_ERR_OOM;
+    for (size_t i = 0; i < l->count; i++) {
+        all[i].member = l->items[i];
+        all[i].stamp = l->stamps[i];
     }
+    qsort(all, l->count, sizeof(*all), by_name);
+    for (size_t i = 0; i < l->count; i++) {
+        l->items[i] = all[i].member;
+        l->stamps[i] = all[i].stamp;
+    }
+    free(all);
+    return SIGIL_OK;
 }
 
 /* The hash over each file's unit name and bytes: RomM's hash of the unit. "" for no files. */
@@ -164,8 +175,8 @@ static int game_files(sigil_fatx *fs, const char *id, file_list *out) {
         snprintf(prefix, sizeof(prefix), "%s/%s/", FOLDERS[f], id);
         rc = read_tree(fs, dir.first, prefix, 0, out);
     }
-    if (rc == SIGIL_OK) files_sort(out);
-    else files_free(out);
+    if (rc == SIGIL_OK) rc = files_sort(out);
+    if (rc != SIGIL_OK) files_free(out);
     return rc;
 }
 
@@ -348,8 +359,8 @@ static int read_unit(const uint8_t *unit, size_t len, const char *id, file_list 
     free(parts);
     free(stamps);
     if (members) sigil_zip_members_free(members, count);
-    if (rc == SIGIL_OK) files_sort(out);
-    else files_free(out);
+    if (rc == SIGIL_OK) rc = files_sort(out);
+    if (rc != SIGIL_OK) files_free(out);
     return rc;
 }
 
