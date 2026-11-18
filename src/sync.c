@@ -161,9 +161,10 @@ static int finish(sigil_sync_ctx *x, sigil_sync_result *r, bool collecting) {
 }
 
 /* The cartridge platform sigil converts the request's saves for: "n64",
- * "gb" or "gbc"; NULL for any other platform. */
+ * "gb", "gbc", "genesis", "32x", "sms" or "gamegear"; NULL for any other
+ * platform. */
 static const char *cart_platform(const sigil_sync_request *req) {
-    static const char *const CARTS[] = { "n64", "gb", "gbc" };
+    static const char *const CARTS[] = { "n64", "gb", "gbc", "genesis", "32x", "sms", "gamegear" };
     const char *slug = req->save.platform ? sigil_layout_platform(req->save.platform) : NULL;
     for (size_t i = 0; slug && i < sizeof(CARTS) / sizeof(CARTS[0]); i++) {
         if (strcmp(slug, CARTS[i]) == 0) return CARTS[i];
@@ -174,6 +175,12 @@ static const char *cart_platform(const sigil_sync_request *req) {
 static bool n64_cart(const sigil_sync_request *req) {
     const char *cart = cart_platform(req);
     return cart && strcmp(cart, "n64") == 0;
+}
+
+/* A Mega Drive, 32X, Master System or Game Gear cart. */
+static bool sega_cart(const sigil_sync_request *req) {
+    const char *cart = cart_platform(req);
+    return cart && strcmp(cart, "n64") != 0 && strcmp(cart, "gb") != 0 && strcmp(cart, "gbc") != 0;
 }
 
 /* Saves kept as plain files: a layout with profiles, or a cartridge's. */
@@ -208,6 +215,7 @@ int sigil_collect(const sigil_sync_request *req, sigil_sync_result **out) {
     if (rc == SIGIL_OK) {
         rc = layout->profiles ? sigil_sync_collect_profiles(&x, layout->profiles, r)
            : n64_cart(req)    ? sigil_sync_collect_n64(&x, r)
+           : sega_cart(req)   ? sigil_sync_collect_genesis(&x, r)
            : cart_platform(req) ? sigil_sync_collect_gb(&x, r)
                               : collect_any(&x, r);
     }
@@ -379,6 +387,7 @@ int sigil_restore(const sigil_sync_request *req, const uint8_t *unit, size_t uni
     if (rc == SIGIL_OK) {
         rc = layout->profiles ? sigil_sync_restore_profiles(&x, layout->profiles, unit, saves_len, r, local_identity)
            : n64_cart(req)    ? sigil_sync_restore_n64(&x, unit, saves_len, unit_len, r, local_identity)
+           : sega_cart(req)   ? sigil_sync_restore_genesis(&x, unit, saves_len, unit_len, r, local_identity)
            : cart_platform(req) ? sigil_sync_restore_gb(&x, unit, saves_len, unit_len, r, local_identity)
                               : restore_units(&x, unit, saves_len, unit_len, r, local_identity);
     }

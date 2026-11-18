@@ -50,7 +50,7 @@ do it yet) or `n/a` (the system has nothing of that kind).
 | [Wii](docs/platforms/wii.md) | yes | yes | n/a | folder | yes |
 | [Wii U](docs/platforms/wiiu.md) | yes | yes | n/a | folder | yes |
 | [Switch](docs/platforms/switch.md) | yes | yes | n/a | folder | yes |
-| [Mega Drive, 32X, Master System, Game Gear](docs/platforms/genesis.md) | no | yes | n/a | single | no |
+| [Mega Drive, 32X, Master System, Game Gear](docs/platforms/genesis.md) | no | yes | n/a | single | yes |
 | [Sega CD](docs/platforms/segacd.md) | no | yes | yes | single or multi | yes |
 | [Saturn](docs/platforms/saturn.md) | no | yes | yes | single or multi | yes |
 | [Dreamcast](docs/platforms/dreamcast.md) | yes | yes | yes | single or multi | yes |

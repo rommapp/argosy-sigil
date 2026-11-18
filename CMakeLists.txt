@@ -168,6 +168,7 @@ set(SIGIL_SOURCES
     src/n64_save.c
     src/sync_n64.c
     src/sync_gb.c
+    src/sync_genesis.c
     src/zip_mem.c
     src/save_names.c
 )
