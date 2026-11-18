@@ -114,15 +114,18 @@ typedef struct {
     const char *key;
     const char *fallback;
     bool        beetle_prefix;
+    bool        file_name;   /* the setting holds a path: the variable is the file's name alone */
 } variable_option;
 
 static const variable_option VARIABLE_OPTIONS[] = {
-    { "cart_size", "genesis_plus_gx_cart_size", "4meg", false },
-    { "nvram_version", "opera_nvram_version", "0", false },
-    { "pcsx2_slot1", "Slot1_Filename", "Mcd001.ps2", false },
-    { "pcsx2_slot2", "Slot2_Filename", "Mcd002.ps2", false },
-    { "left_index", "memcard_left_index", "0", true },
-    { "right_index", "memcard_right_index", "1", true },
+    { "cart_size", "genesis_plus_gx_cart_size", "4meg", false, false },
+    { "nvram_version", "opera_nvram_version", "0", false, false },
+    { "pcsx2_slot1", "Slot1_Filename", "Mcd001.ps2", false, false },
+    { "pcsx2_slot2", "Slot2_Filename", "Mcd002.ps2", false, false },
+    { "left_index", "memcard_left_index", "0", true, false },
+    { "right_index", "memcard_right_index", "1", true, false },
+    { "xemu_hdd", "hdd_path", "xbox_hdd.qcow2", false, true },
+    { "x1box_hdd", "hdd_path", "hdd.img", false, true },
 };
 
 const char *sigil_save_variable_option(const char *layout, const char *var, size_t len, char key[64],
@@ -145,7 +148,14 @@ static const char *variable_option_value(const sigil_save_request *req, const ch
     const char *fallback = NULL;
     if (!sigil_save_variable_option(req->layout, var, len, key, &fallback)) return NULL;
     const char *v = sigil_save_option_value(req, key);
-    return v && *v ? v : fallback;
+    if (!v || !*v) return fallback;
+    for (size_t i = 0; i < sizeof(VARIABLE_OPTIONS) / sizeof(VARIABLE_OPTIONS[0]); i++) {
+        const variable_option *o = &VARIABLE_OPTIONS[i];
+        if (!o->file_name || strlen(o->var) != len || strncmp(o->var, var, len) != 0) continue;
+        const char *sep = last_separator(v);
+        return sep ? sep + 1 : v;
+    }
+    return v;
 }
 
 size_t sigil_gpgx_cart_values(const char **out, size_t cap) {

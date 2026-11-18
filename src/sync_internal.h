@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 /* Shared by the sync sources: sync.c (collect and restore), sync_state.c,
  * the card kinds in sync_kind_*.c, sync_units.c, and the placement paths in
- * sync_cards.c, sync_folder_cards.c, sync_volumes.c, sync_gci_folder.c and
- * sync_profiles.c. */
+ * sync_cards.c, sync_folder_cards.c, sync_volumes.c, sync_gci_folder.c,
+ * sync_profiles.c and sync_xbox.c. */
 #ifndef SIGIL_SYNC_INTERNAL_H
 #define SIGIL_SYNC_INTERNAL_H
 
@@ -215,6 +215,17 @@ int sigil_sync_collect_nds(sigil_sync_ctx *x, sigil_sync_result *r);
  */
 int sigil_sync_restore_nds(sigil_sync_ctx *x, const uint8_t *unit, size_t len, size_t received_len,
                            sigil_sync_result *r, char local_identity[33]);
+/* ---- the original Xbox's hard drive (sync_xbox.c) ------------------------------ */
+
+/** Collect on Xbox: a zip of the game's UDATA and TDATA folders off the drive image's E:. */
+int sigil_sync_collect_xbox(sigil_sync_ctx *x, sigil_sync_result *r);
+/**
+ * Restore on Xbox: the unit's files replace the game's two folders on the
+ * drive image, which is written back whole and read back. SIGIL_ERR_NO_TARGET,
+ * naming the drive, when the save root holds none.
+ */
+int sigil_sync_restore_xbox(sigil_sync_ctx *x, const uint8_t *unit, size_t len, sigil_sync_result *r,
+                            char local_identity[33]);
 
 enum { SYNC_OWN_GAME, SYNC_OWN_OTHER, SYNC_OWN_NONE, SYNC_OWN_COMPANION };
 

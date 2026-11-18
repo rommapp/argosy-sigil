@@ -21,9 +21,9 @@ do it yet) or `n/a` (the system has nothing of that kind).
   game's, for each emulator it lists. The client can upload them as they
   are ([members](docs/quickstart-guides/c.md#without-collect-and-restore)).
 - **Shared card**: the emulator can keep every game's saves on one memory
-  card or backup RAM file, and sigil takes one game's saves out of it and
-  puts them back without touching the others. `n/a` where each game's
-  saves are already files of their own.
+  card, backup RAM file or hard-disk image, and sigil takes one game's
+  saves out of it and puts them back without touching the others. `n/a`
+  where each game's saves are already files of their own.
 - **Unit**: what travels to RomM: one file, several files zipped, or the
   game's save folders zipped. "single or multi" depends on the emulator
   or the cart (a clock file, a second card).
@@ -54,7 +54,7 @@ do it yet) or `n/a` (the system has nothing of that kind).
 | [Sega CD](docs/platforms/segacd.md) | no | yes | yes | single or multi | yes |
 | [Saturn](docs/platforms/saturn.md) | no | yes | yes | single or multi | yes |
 | [Dreamcast](docs/platforms/dreamcast.md) | yes | yes | yes | single or multi | yes |
-| [Xbox](docs/platforms/xbox.md) | yes | no | n/a | folder | no |
+| [Xbox](docs/platforms/xbox.md) | yes | yes | yes | folder | yes |
 | [Xbox 360](docs/platforms/xbox360.md) | yes | no | n/a | folder | no |
 | [Arcade](docs/platforms/arcade.md) | n/a | yes | no | single or multi | no |
 | [Neo Geo](docs/platforms/neogeo.md) | no | yes | no | single or multi | no |
@@ -165,3 +165,8 @@ The Sega CD backup RAM reader (`src/card_segacd.c`) takes its ECC layout
 table and format-block bytes from superctr/buram, Copyright (c) 2022 Ian
 Karlsson, used under the MIT license; the notice is in
 [licenses/buram-MIT.txt](licenses/buram-MIT.txt).
+
+The Xbox drive image reader and writer (`src/disk_image.c`, `src/fatx.c`)
+is a port of `frontend/src/xboxhdd.cpp` from MMagTech/cabinetos,
+Copyright (c) 2026 MMagTech, used under the MIT license; the notice is in
+[licenses/cabinetos-MIT.txt](licenses/cabinetos-MIT.txt).

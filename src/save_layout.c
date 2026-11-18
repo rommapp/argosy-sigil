@@ -551,6 +551,16 @@ static const sigil_layout_profiles PSP_FOLDERS = {
 };
 static const char *const PSP_SUBDIRS[] = { "PSP/SAVEDATA" };
 
+/* xemu (xemu-project/xemu ui/xemu-settings, softmmu/vl.c) runs the console's
+ * own kernel on one hard-disk image every game shares, the file its
+ * `hdd_path` setting names; the image its docs publish is xbox_hdd.qcow2.
+ * X1 BOX (izzy2lost/xemu, android/.../SetupWizardActivity.kt), xemu on
+ * Android, copies the image the user picks, raw or qcow2, into its files
+ * folder as hdd.img. The save root is the folder holding the image. */
+static const sigil_layout_shared XEMU_SHARED[] = { S("{xemu_hdd}") };
+static const sigil_layout_shared X1BOX_SHARED[] = { S("{x1box_hdd}") };
+#define ROW_XBOX_DRIVE(l, s) { l, "xbox", NULL, 0, s, COUNT(s), NULL, 0, NULL, NULL, true }
+
 #define ROW_PROFILES(l, p, d, pr) { l, p, NULL, 0, NULL, 0, d, COUNT(d), NULL, &pr }
 
 #define ROW(l, p, m)            { l, p, m, COUNT(m), NULL, 0, NULL, 0 }
@@ -631,6 +641,8 @@ static const sigil_layout LAYOUTS[] = {
     ROW_PROFILES("ppsspp", "psp", PSP_SUBDIRS, PSP_FOLDERS),
     ROW_PROFILES("ppsspp_standalone", "psp", PSP_SUBDIRS, PSP_FOLDERS),
     ROW_PROFILES("psp_console", "psp", PSP_SUBDIRS, PSP_FOLDERS),
+    ROW_XBOX_DRIVE("xemu", XEMU_SHARED),
+    ROW_XBOX_DRIVE("x1box", X1BOX_SHARED),
 };
 
 const char *sigil_layout_platform(const char *slug) {

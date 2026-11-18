@@ -56,7 +56,8 @@ Cases no sample covers yet. The saves already gathered came from a RomM store an
 ## Other
 
 - Any real 3DO NVRAM.
-- Anything from xemu.
+- An xemu drive image holding saves the Xbox dashboard made or copied.
+- A drive image X1 BOX wrote, raw or qcow2.
 
 ## Every platform
 

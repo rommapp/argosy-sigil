@@ -38,7 +38,7 @@ save folder; sigil never searches the drive.
 | Sega CD | [segacd](segacd.md) | `segacd` (layout rows) | no | synced |
 | Saturn | [saturn](saturn.md) | `saturn` (layout rows) | no | synced |
 | Dreamcast | [dreamcast](dreamcast.md) | `dreamcast` | yes | synced |
-| Xbox | [xbox](xbox.md) | `xbox` | yes | in development |
+| Xbox | [xbox](xbox.md) | `xbox` | yes | synced |
 | Xbox 360 | [xbox360](xbox360.md) | `xbox360` | yes | in development |
 | Arcade (FBNeo, MAME 2003-Plus) | [arcade](arcade.md) | | no | located |
 | Neo Geo | [neogeo](neogeo.md) | | no | located |
@@ -148,6 +148,8 @@ section, fails `bindings/python/test_docs.py`.
 | `ppsspp` | [psp](psp.md) | PPSSPP | libretro core |
 | `ppsspp_standalone` | [psp](psp.md) | PPSSPP | standalone |
 | `psp_console` | [psp](psp.md) | PSP games on a PSP, or on a PS Vita (Adrenaline, the PSP emulator) | console |
+| `xemu` | [xbox](xbox.md) | xemu | standalone |
+| `x1box` | [xbox](xbox.md) | X1 BOX | standalone |
 
 ## Restore targets
 
@@ -161,10 +163,11 @@ The last column says what restore needs to build the target from nothing:
 - **yes**: restore into an empty folder gives the file the emulator reads.
 - **with `profile`**: the same, once the request names the user profile
   whose account save to write.
-- **send the container**: the target is a card or volume every game
-  shares. Restore into an empty folder makes a new one holding only this
-  game's saves, which would replace the user's. Restore into the user's
-  own container instead, and only this game's saves change
+- **send the container**: the target is a card, volume or drive image
+  every game shares. Restore into an empty folder makes a new card or
+  volume holding only this game's saves, which would replace the user's,
+  and makes no drive image at all. Restore into the user's own container
+  instead, and only this game's saves change
   ([sync](../sync.md#whose-saves)).
 - **one of the game's files**: the emulator names its files from a
   database sigil doesn't have, so restore takes the name from a file of
@@ -213,3 +216,4 @@ value, and the default is the first listed.
 | `vita3k` | `ux0/user/{profile}/savedata/{save_id}/` | | with `profile` |
 | `rpcs3`, `aps3e`, `armsx3` | `dev_hdd0/home/{profile}/savedata/{save_id}*/` | | with `profile` |
 | `ppsspp`, `ppsspp_standalone`, `psp_console` | `PSP/SAVEDATA/{save_id}*/` | | yes |
+| `xemu`, `x1box` | the game's `UDATA/{save_id}/` and `TDATA/{save_id}/` folders on E: inside the hard-disk image, `xbox_hdd.qcow2` (`x1box`: `hdd.img`), shared | `hdd_path` names the image | send the container: sigil makes no drive image, and refuses with `SIGIL_ERR_NO_TARGET` naming it |

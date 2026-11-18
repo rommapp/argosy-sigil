@@ -23,6 +23,7 @@ and passes back. The calls and their fields are on each language's page
 | GB, GBC | the cart RAM; on a cart with a clock, a zip of `save.sram` and `clock.rtc` | [gb](platforms/gb.md#sync) |
 | N64 | a zip of the save types the game uses (`eeprom`, `pak1` to `pak4`, `sram`, `flash`), whichever emulator wrote them | [n64](platforms/n64.md#sync) |
 | DS | the raw save, without DeSmuME's footer | [nds](platforms/nds.md#sync) |
+| Xbox | a zip of the game's `UDATA` and `TDATA` folders off the hard-disk image's E: | [xbox](platforms/xbox.md#sync) |
 
 What restore writes for each layout, and which options change it, is in
 [restore targets](platforms/README.md#restore-targets).
@@ -50,13 +51,15 @@ next collect then gives the save in sigil's form; upload that.
 | GB, GBC | a raw `.srm`, a `.sav` with its clock appended, or a zip of an emulator's `.srm` and `.rtc` |
 | N64 | a libretro `.srm`, a lone `.eep`, or a zip of an emulator's files (`.srm`, `.eep`, `.sra`, `.fla`, `.mpk`, `_Cont_<n>.mpk`) |
 | DS | a raw save, or a DeSmuME `.dsv` with its footer |
+| Xbox | a zip of `UDATA/` and `TDATA/` as they sit on a drive's E:, in any case, other games' folders left out |
 | Any | any of the above, or sigil's own unit, ending in the hardcore marker Argosy appended (`{"h":true,...}`, its length as a little-endian u32, then `ARGOSY` 01 00). Restore leaves the marker out of the saves, companion units included, and sets `hardcore_marker`; `content_hash` still covers it |
 | Switch | one folder rooted at `<title>/`: the device save for the titles that keep theirs on the device (Animal Crossing: New Horizons, Nintendo Switch Sports, 1-2-Switch, Ring Fit Adventure, the four Labo kits, Go Vacation), the account save for any other |
 
 ## Whose saves
 
 A game's saves are the ones carrying one of its ids, on its own card and on
-the shared cards beside it. Restore puts each save back on the card it was
+the shared cards beside it; on an Xbox drive image, the two folders named
+after its title id ([xbox](platforms/xbox.md#sync)). Restore puts each save back on the card it was
 on, or on the game's own card when it is new; it never touches another
 game's save, and refuses with `SIGIL_ERR_NO_SPACE` before writing when the
 saves don't fit. A unit holding none of the game's saves is refused with
@@ -190,7 +193,7 @@ Restore refuses, writing nothing, with:
 | `SIGIL_ERR_REGION` | a GameCube companion's save is from another Dolphin region than the game | the save |
 | `SIGIL_ERR_DAMAGED` | a file the saves go in is damaged and `repair` is 0, it isn't a card sigil can read, or it holds a corrupt save of the game or a companion (above) | the file |
 | `SIGIL_ERR_AMBIGUOUS` | more than one file could be the emulator's card and the options don't say which: Dolphin raw cards of two sizes with no `MemoryCardSize`. On layouts with profiles, two or more profiles and none picked, for a unit with an account save (ask the user which profile is theirs; `profiles` or `sigil_save_profiles` lists them); or two emulator folders under the root. Collect refuses the same way | the files, the profiles as `id name`, or the folders, one per line |
-| `SIGIL_ERR_NO_TARGET` | the unit holds a volume the emulator's settings keep no file for: a `cart.ram` for a core with no cart, a VMU port flycast doesn't keep per game. On layouts with profiles, a member no folder of the game takes, an account save with no profile there, or a folder outside the root | the unit member |
+| `SIGIL_ERR_NO_TARGET` | the unit holds a volume the emulator's settings keep no file for: a `cart.ram` for a core with no cart, a VMU port flycast doesn't keep per game. On layouts with profiles, a member no folder of the game takes, an account save with no profile there, or a folder outside the root. On Xbox, the save root holds no drive image, or a file's name can't be a FATX name | the unit member; the drive image's name when there is none |
 | `SIGIL_ERR_UNSUPPORTED_FORMAT` | layouts with profiles: two unit members go to one file | |
 | `SIGIL_ERR_IO` | a unit member's path would leave the save root, or a file the listing holds won't open through `open`. Collect refuses the same way, so a file it can't read never counts as no saves | |
 | `SIGIL_ERR_EXISTS` | Dolphin's GCI folder holds other games' files under the name Dolphin gives a new save and each of its ten `0`-inserted forms, so Dolphin would write over one | the save |

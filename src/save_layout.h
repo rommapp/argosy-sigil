@@ -126,6 +126,8 @@ typedef struct {
     size_t                     subdir_count;
     const char                *region_option; /* option forcing the region shared files are picked by */
     const sigil_layout_profiles *profiles;    /* saves are folders per user profile; NULL otherwise */
+    bool                       xbox_drive;    /* the row's shared file is an Xbox hard-disk image: a game's
+                                                 saves are its UDATA and TDATA folders on the image's E: */
 } sigil_layout;
 
 /* The slug layout rows use for `slug`: "scd" and "mega_cd" give "segacd",

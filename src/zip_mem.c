@@ -157,3 +157,75 @@ int sigil_zip_read_mem(const uint8_t *zip, size_t len, size_t max_member, sigil_
     *count = n;
     return SIGIL_OK;
 }
+
+/* Walks the central directory, calling `each` with every file entry's record
+ * and its number among the file entries. */
+static int each_file_entry(const uint8_t *zip, size_t len, void (*each)(void *ctx, const uint8_t *central, size_t i),
+                           void *ctx, size_t *count) {
+    const uint8_t *end = zip ? find_end(zip, len) : NULL;
+    if (!end) return SIGIL_ERR_UNSUPPORTED_FORMAT;
+    size_t entries = sigil_read_le16(end + 10);
+    size_t dir_size = sigil_read_le32(end + 12), dir_off = sigil_read_le32(end + 16);
+    if (dir_off > len || dir_size > len - dir_off) return SIGIL_ERR_UNSUPPORTED_FORMAT;
+    size_t at = dir_off, n = 0;
+    for (size_t i = 0; i < entries; i++) {
+        if (at + CENTRAL_SIZE > dir_off + dir_size || sigil_read_le32(zip + at) != CENTRAL_SIG) return SIGIL_ERR_UNSUPPORTED_FORMAT;
+        const uint8_t *c = zip + at;
+        size_t name_len = sigil_read_le16(c + 28);
+        at += CENTRAL_SIZE + name_len + sigil_read_le16(c + 30) + sigil_read_le16(c + 32);
+        if (at > dir_off + dir_size || name_len == 0) return SIGIL_ERR_UNSUPPORTED_FORMAT;
+        if (c[CENTRAL_SIZE + name_len - 1] == '/') continue;
+        if (each) each(ctx, c, n);
+        n++;
+    }
+    *count = n;
+    return SIGIL_OK;
+}
+
+typedef struct {
+    uint8_t               *zip;
+    size_t                 len;
+    const sigil_zip_stamp *stamps;
+    size_t                 count;
+} stamp_writer;
+
+static void write_stamp(void *ctx, const uint8_t *central, size_t i) {
+    stamp_writer *w = (stamp_writer *)ctx;
+    size_t local = sigil_read_le32(central + 42);
+    if (i >= w->count || local > w->len || w->len - local < LOCAL_SIZE) return;
+    uint8_t *c = w->zip + (central - w->zip);
+    sigil_write_le16(c + 12, w->stamps[i].time);
+    sigil_write_le16(c + 14, w->stamps[i].date);
+    sigil_write_le16(w->zip + local + 10, w->stamps[i].time);
+    sigil_write_le16(w->zip + local + 12, w->stamps[i].date);
+}
+
+int sigil_zip_set_stamps(uint8_t *zip, size_t len, const sigil_zip_stamp *stamps, size_t count) {
+    stamp_writer w = { zip, len, stamps, count };
+    size_t files = 0;
+    return each_file_entry(zip, len, write_stamp, &w, &files);
+}
+
+static void read_stamp(void *ctx, const uint8_t *central, size_t i) {
+    sigil_zip_stamp *stamps = (sigil_zip_stamp *)ctx;
+    stamps[i].time = sigil_read_le16(central + 12);
+    stamps[i].date = sigil_read_le16(central + 14);
+}
+
+int sigil_zip_get_stamps(const uint8_t *zip, size_t len, sigil_zip_stamp **out, size_t *count) {
+    *out = NULL;
+    *count = 0;
+    size_t files = 0;
+    int rc = each_file_entry(zip, len, NULL, NULL, &files);
+    if (rc != SIGIL_OK) return rc;
+    sigil_zip_stamp *stamps = (sigil_zip_stamp *)calloc(files ? files : 1, sizeof(*stamps));
+    if (!stamps) return SIGIL_ERR_OOM;
+    rc = each_file_entry(zip, len, read_stamp, stamps, &files);
+    if (rc != SIGIL_OK) {
+        free(stamps);
+        return rc;
+    }
+    *out = stamps;
+    *count = files;
+    return SIGIL_OK;
+}
