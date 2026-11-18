@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 /* What the cartridge converters share (sync_cart.c and the suffix tests in
  * sigil_util.h), through collect and restore: each converter names its unit
- * for the content with its own extension, an empty file holds no save, and
- * N64 takes an emulator file's extension in either case. */
+ * for the content with its own extension, the file is the row's primary
+ * member, an empty file holds no save, and N64 takes an emulator file's
+ * extension in either case. */
 #include "legacy_units.h"
 #include <stdio.h>
 
@@ -142,6 +143,33 @@ static void check_n64_case(void) {
     }
 }
 
+/* The file is the row's primary member, never a sidecar: on the fbneo row,
+ * which has no platform and so serves these carts too, collect takes no save
+ * from fbneo/{romset}.nv alone, and restore writes fbneo/{romset}.fs. */
+static void check_primary_member(void) {
+    static const struct { const char *platform, *content, *primary, *sidecar; } CASES[] = {
+        { "genesis", "Game.md", "fbneo/Game.fs", "fbneo/Game.nv" },
+        { "nds", "Game.nds", "fbneo/Game.fs", "fbneo/Game.nv" },
+    };
+    uint8_t side[0x40], save[0x2000];
+    memset(side, 0x11, sizeof(side));
+    memset(save, 0x22, sizeof(save));
+    for (size_t i = 0; i < sizeof(CASES) / sizeof(CASES[0]); i++) {
+        mem_root root = {0};
+        root_put(&root, CASES[i].sidecar, side, sizeof(side));
+        sigil_sync_result *r = collect(&root, CASES[i].platform, "fbneo", CASES[i].content, 0);
+        if (!r || r->data) fail(CASES[i].platform, "collect takes no save from the sidecar alone");
+        sigil_sync_result_free(r);
+        mem_file *p = NULL, *n = NULL;
+        if (restore(&root, CASES[i].platform, "fbneo", CASES[i].content, save, sizeof(save)) != SIGIL_OK ||
+            !(p = root_find(&root, CASES[i].primary)) || p->len != sizeof(save) || memcmp(p->data, save, sizeof(save)) ||
+            !(n = root_find(&root, CASES[i].sidecar)) || n->len != sizeof(side) || memcmp(n->data, side, sizeof(side))) {
+            fail(CASES[i].platform, "restore writes the primary file and leaves the sidecar as it was");
+        }
+        root_free(&root);
+    }
+}
+
 static void check_suffixes(void) {
     if (!sigil_ends_with("Game.srm", ".srm") || sigil_ends_with("Game.SRM", ".srm") || sigil_ends_with("srm", ".srm") ||
         sigil_ends_with(NULL, ".srm")) {
@@ -157,6 +185,7 @@ int main(void) {
     check_names();
     check_empty();
     check_n64_case();
+    check_primary_member();
     check_suffixes();
     printf("cart sync: %d failures\n", g_fails);
     return g_fails ? 1 : 0;
