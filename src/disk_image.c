@@ -531,3 +531,61 @@ int sigil_disk_file(sigil_disk *d, uint8_t **out, size_t *len) {
     *len = total;
     return SIGIL_OK;
 }
+
+void sigil_disk_detach(sigil_disk *d) {
+    d->io = NULL;
+}
+
+#define RUN_MAX (1u << 20)
+
+static int compare_index(const void *a, const void *b) {
+    uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
+    return x < y ? -1 : x > y;
+}
+
+int sigil_disk_runs(sigil_disk *d, sigil_disk_run_fn each, void *ctx) {
+    uint64_t *staged = (uint64_t *)malloc((d->staged ? d->staged : 1) * sizeof(*staged));
+    uint8_t *run = (uint8_t *)malloc(RUN_MAX);
+    if (!staged || !run) {
+        free(staged);
+        free(run);
+        return SIGIL_ERR_OOM;
+    }
+    size_t n = 0;
+    for (size_t i = 0; i < d->slot_count; i++) {
+        if (d->slots[i].data) staged[n++] = d->slots[i].index;
+    }
+    qsort(staged, n, sizeof(*staged), compare_index);
+    /* The first page that lies wholly past the file's end. */
+    uint64_t tail = (d->file_len + STAGE_PAGE - 1) / STAGE_PAGE;
+    uint64_t pages = (d->new_len + STAGE_PAGE - 1) / STAGE_PAGE;
+    int rc = SIGIL_OK;
+    /* Past the end: every page up to the new end, staged or zeros. */
+    for (uint64_t page = tail; rc == SIGIL_OK && page < pages;) {
+        size_t len = 0;
+        uint64_t first = page;
+        for (; page < pages && len + STAGE_PAGE <= RUN_MAX; page++, len += STAGE_PAGE) {
+            const stage_page *p = stage_find(d, page);
+            if (p) memcpy(run + len, p->data, STAGE_PAGE);
+            else memset(run + len, 0, STAGE_PAGE);
+        }
+        uint64_t off = first * STAGE_PAGE;
+        if (off + len > d->new_len) len = (size_t)(d->new_len - off);
+        rc = each(ctx, off, run, len);
+    }
+    /* Inside the file: the staged pages, neighbours joined. */
+    for (size_t i = 0; rc == SIGIL_OK && i < n && staged[i] < tail;) {
+        size_t len = 0;
+        uint64_t first = staged[i];
+        for (; i < n && staged[i] < tail && staged[i] == first + len / STAGE_PAGE && len + STAGE_PAGE <= RUN_MAX; i++) {
+            memcpy(run + len, stage_find(d, staged[i])->data, STAGE_PAGE);
+            len += STAGE_PAGE;
+        }
+        uint64_t off = first * STAGE_PAGE;
+        if (off + len > d->new_len) len = (size_t)(d->new_len - off);
+        rc = each(ctx, off, run, len);
+    }
+    free(staged);
+    free(run);
+    return rc;
+}

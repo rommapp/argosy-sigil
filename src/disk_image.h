@@ -4,7 +4,8 @@
  * (xemu-project/xemu at v0.8.136: docs/interop/qcow2.rst, with the masks,
  * flags and bounds of block/qcow2.h). Reads go through the
  * file's sigil_io. Writes are staged in memory and change nothing until the
- * caller takes them with sigil_disk_file, so a restore that fails halfway
+ * caller takes them, as the whole file (sigil_disk_file) or as the parts
+ * that changed (sigil_disk_runs), so a restore that fails before then
  * leaves the file as it was.
  *
  * Ported from CabinetOS's frontend/src/xboxhdd.cpp (MIT; the notice is in
@@ -59,5 +60,20 @@ bool sigil_disk_changed(const sigil_disk *d);
  * SIGIL_ERR_OOM for a file over SIGIL_DISK_MAX_FILE.
  */
 int sigil_disk_file(sigil_disk *d, uint8_t **out, size_t *len);
+
+/** Lets go of the file's sigil_io, which the caller may then close. Only sigil_disk_runs works after it. */
+void sigil_disk_detach(sigil_disk *d);
+
+/** One run of the file's bytes as they will be; return SIGIL_OK to go on. */
+typedef int (*sigil_disk_run_fn)(void *ctx, uint64_t off, const uint8_t *data, size_t len);
+
+/**
+ * Calls `each` with every part of the file the staged writes change, as
+ * runs of at most 1 MiB: first everything past the file's present end, in
+ * order, which nothing in the file refers to until the rest is written,
+ * then the changed pages inside it, in order. Stops at the first run `each`
+ * refuses and returns its code.
+ */
+int sigil_disk_runs(sigil_disk *d, sigil_disk_run_fn each, void *ctx);
 
 #endif

@@ -21,8 +21,12 @@ static int hand_back(sigil_sync_result *r, int rc, sigil_sync_result **out) {
 }
 
 static bool request_valid(const sigil_sync_request *req) {
-    return req && req->struct_version == SIGIL_SYNC_REQUEST_V1 && req->save.open && req->save.content_path &&
-           req->save.listing;
+    return req && (req->struct_version == SIGIL_SYNC_REQUEST_V1 || req->struct_version == SIGIL_SYNC_REQUEST_V2) &&
+           req->save.open && req->save.content_path && req->save.listing;
+}
+
+sigil_save_write_at_fn sigil_sync_write_at(const sigil_sync_request *req) {
+    return req->struct_version >= SIGIL_SYNC_REQUEST_V2 ? req->write_at : NULL;
 }
 
 /* ---- collect ------------------------------------------------------------------ */

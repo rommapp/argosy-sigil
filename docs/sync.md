@@ -171,6 +171,23 @@ saves the unit lacks through `remove`; it refuses with
 `remove` is `NULL`. A path ending in `/` is a directory sigil emptied (a
 dropped PCSX2 save folder, which PCSX2 would still show): remove it.
 
+`write` takes a whole file. Where every game's saves sit inside one large
+file, an Xbox hard-disk image, a request may also give `write_at`
+(`SIGIL_SYNC_REQUEST_V2`), which writes part of a file at a byte offset.
+Restore then writes only the parts of the image that change: first what
+it adds past the image's end, which nothing in the image refers to yet,
+then the changed pages inside it, lowest first, each run at most 1 MiB,
+and it reads every run back. The Python, Go and Kotlin bindings give it
+themselves (Kotlin through `SigilFileAccess.writeAt`). Without it restore
+holds the image in memory and hands it to `write` whole, which it refuses
+to do for an image over 2 GiB.
+
+A whole-file `write` can be made all or nothing by the client: write a
+new file, then rename it over the old one. A restore through `write_at`
+that fails between two writes (`SIGIL_ERR_IO`) leaves the image part
+written. A client that can't have that points `write_at`, and `open`, at
+a copy of the image and swaps it in once restore returns `SIGIL_OK`.
+
 ## Companions
 
 A game that reads an earlier title's save, as a sequel reads its prequel's,

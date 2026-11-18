@@ -14,8 +14,11 @@
 
 static int g_fails = 0;
 
+/* Every restore runs twice: the drive written back as one file, then as the parts that changed. */
+static int g_parts = 0;
+
 static void fail(const char *where, const char *what) {
-    fprintf(stderr, "FAIL %s: %s\n", where, what);
+    fprintf(stderr, "FAIL %s%s: %s\n", where, g_parts ? " (written in parts)" : "", what);
     g_fails++;
 }
 
@@ -49,6 +52,11 @@ static void make_game(game *g, mem_root *root, const char *save_id) {
     g->option.value = DRIVE;
     g->req.save.options = &g->option;
     g->req.save.option_count = 1;
+    root->exclusive = 1;
+    if (g_parts) {
+        g->req.struct_version = SIGIL_SYNC_REQUEST_V2;
+        g->req.write_at = root_write_at;
+    }
 }
 
 /* Puts sample `id`'s drive in `root`; false when the sample isn't on disk. */
@@ -187,10 +195,13 @@ int main(void) {
     }
     root_free(&root);
 
-    restore_into(flatout, "454D0009", "orta-xemu", "FlatOut into Orta's drive");
-    restore_into(flatout, "454D0009", "xemu-blank", "FlatOut into the blank image");
-    restore_into(orta, "53450007", "flatout-cabinetos", "Orta into FlatOut's drive");
-    restore_into(orta, "53450007", "xemu-blank", "Orta into the blank image");
+    for (g_parts = 0; g_parts < 2; g_parts++) {
+        restore_into(flatout, "454D0009", "orta-xemu", "FlatOut into Orta's drive");
+        restore_into(flatout, "454D0009", "xemu-blank", "FlatOut into the blank image");
+        restore_into(orta, "53450007", "flatout-cabinetos", "Orta into FlatOut's drive");
+        restore_into(orta, "53450007", "xemu-blank", "Orta into the blank image");
+    }
+    g_parts = 0;
 
     sigil_sync_result_free(flatout);
     sigil_sync_result_free(orta);

@@ -332,7 +332,7 @@ files, companions, refusals); each system's page under
 
 ```c
 typedef struct {
-    uint32_t struct_version;          /* SIGIL_SYNC_REQUEST_V1 */
+    uint32_t struct_version;          /* SIGIL_SYNC_REQUEST_V2; _V1 for a request without write_at. */
     sigil_save_request save;          /* As for sigil_save_resolve. save.open is required. */
     const char *const *game_ids;      /* Every id the game's saves may carry: all discs of a set. */
     size_t game_id_count;
@@ -358,6 +358,11 @@ typedef struct {
     size_t companion_count;
     int repair;                       /* Rebuild the damaged structures SIGIL_ERR_DAMAGED named instead of
                                          refusing. */
+    sigil_save_write_at_fn write_at;  /* restore, optional, with SIGIL_SYNC_REQUEST_V2: writes part of one file
+                                         of the save root at a byte offset (called with write_ctx), growing
+                                         it when the range ends past its end. An Xbox drive image then gets
+                                         only the parts that change instead of going to `write` whole; see
+                                         docs/sync.md, "Writing and removing". */
 } sigil_sync_request;
 
 typedef struct {

@@ -113,10 +113,12 @@ writes one: the name padded with `0xFF`, a chain ended with `0xFFFFFFFF`,
 the three time stamps alike (checked against entries the kernel wrote in
 xemu). So a restored drive collects to the same unit, byte for byte. Every other
 title's saves, the rest of E: and the other partitions stay as they are,
-byte for byte. The image is then written back through `write` as one
-file and read back: its bytes, then the game's saves on it. Nothing is
-written when the drive already holds the unit's saves, or when anything
-before the write fails.
+byte for byte. The image is then written back and read back: what was
+written, then the game's saves on it. A request with `write_at` gets
+only the parts of the image that changed
+([sync](../sync.md#writing-and-removing)); any other gets the whole image
+through `write` as one file. Nothing is written when the drive already
+holds the unit's saves, or when anything before the first write fails.
 
 Restore also reads a zip of `UDATA/` and `TDATA/` as a client took them
 off a drive before it used sigil's units, in any case and with the saves
@@ -133,7 +135,7 @@ it as the game saves.
 | `SIGIL_ERR_UNSUPPORTED_FORMAT` | restore: two members go to one file, or one folder is spelled two ways. Either call: a qcow2 image using a feature sigil doesn't write (below) | |
 | `SIGIL_ERR_DAMAGED` | the file isn't a drive image with a FATX partition E:, its qcow2 tables don't hold together, or a chain of the game's files on E: is broken | the image |
 | `SIGIL_ERR_NO_SPACE` | restore: E: is too full; `blocks_short` counts 16 KiB clusters | the file that didn't fit |
-| `SIGIL_ERR_OOM` | restore: the image is over 2 GiB, which sigil won't hold in memory to write back as one file. A raw image is the whole 8 GB drive, so it collects and doesn't restore | |
+| `SIGIL_ERR_OOM` | restore without `write_at`: the image is over 2 GiB, which sigil won't hold in memory to write back as one file. A raw image is the whole 8 GB drive, so it restores only through `write_at` | |
 
 Many games sign their saves; "non-roamable" titles also mix in the
 console's key from `eeprom.bin`, so their saves validate only with the
@@ -200,7 +202,8 @@ The qcow2 and FATX code is a port of CabinetOS's MIT-licensed
 - A folder with no file in it isn't carried (X1 BOX's export keeps one as a folder entry). The kernel makes a game's `UDATA` and `TDATA` folders again when the game starts.
 - Restore replaces the game's two folders with the unit's. X1 BOX's own import merges instead and keeps files the zip doesn't hold.
 - An image carrying a qcow2 dirty bitmap loses it, and `qemu-img check` then reports the bitmap's clusters as leaked ([The drive image](#the-drive-image)). xemu makes no bitmaps.
-- A drive image over 2 GiB, and any raw image, collects but doesn't restore: `write` takes a whole file, and sigil won't hold that much in memory.
+- A drive image over 2 GiB, and any raw image, restores only for a request that gives `write_at`.
+- The Kotlin binding reads a file whole through `SigilFileAccess.read`, so on Android a drive image is held in memory to collect or restore it: a raw 8 GB image is out of its reach until that binding can read part of a file.
 - X1 BOX wasn't run: its row and its FATX layout come from its source (`SetupWizardActivity.kt`, `HakuxHddSync.kt`, `XboxSaveManager.kt`, `xemu_fatx_import.c` at `57bc6d6`), and its raw and qcow2 images are the forms tested with xemu.
 - A game's saves under another title id (a title that reads an earlier one's saves) stay with that title: `game_ids` isn't read here.
 - A drive with partitions past E: (F:, G:) works; saves on those partitions aren't read.

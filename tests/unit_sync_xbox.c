@@ -10,8 +10,12 @@
 
 static int g_fails = 0;
 
+/* Every check runs twice: with the drive written back as one file, and with
+ * a request that can write part of a file, which gets only what changed. */
+static int g_parts = 0;
+
 static void fail(const char *where, const char *what) {
-    fprintf(stderr, "FAIL %s: %s\n", where, what);
+    fprintf(stderr, "FAIL %s%s: %s\n", where, g_parts ? " (written in parts)" : "", what);
     g_fails++;
 }
 
@@ -52,6 +56,12 @@ static void make_game(game *g, mem_root *root, const char *layout, const char *s
         g->option.value = DRIVE;
         g->req.save.options = &g->option;
         g->req.save.option_count = 1;
+    }
+    /* The drive must be closed before it is written: a client may replace the file. */
+    root->exclusive = 1;
+    if (g_parts) {
+        g->req.struct_version = SIGIL_SYNC_REQUEST_V2;
+        g->req.write_at = root_write_at;
     }
 }
 
@@ -786,8 +796,10 @@ static void check_write_failures(void) {
         if (corrupt) {
             root.corrupt_write = 1;
             root.corrupt_at = 70000;
+            root.corrupt_part = 1;
         } else {
             root.fail_write = 1;
+            root.fail_part = 2;
         }
         game game;
         make_game(&game, &root, "xemu", HALO);
@@ -916,6 +928,13 @@ static int raw_write(void *ctx, const char *path, const uint8_t *data, size_t le
     g_raw_writes++;
     return -1;
 }
+static size_t g_raw_part_bytes = 0;
+static int raw_write_at(void *ctx, const char *path, uint64_t offset, const uint8_t *data, size_t len) {
+    if (strcmp(path, "hdd.img") != 0 || offset + len > g_raw_size) return -1;
+    xb_set((xb_guest *)ctx, offset, data, len);
+    g_raw_part_bytes += len;
+    return 0;
+}
 
 static void check_raw(uint64_t size, const char *where) {
     g_raw_size = size;
@@ -941,13 +960,80 @@ static void check_raw(uint64_t size, const char *where) {
     sigil_sync_result_free(r);
     r = NULL;
 
-    /* Written back as one file, a raw drive is all of it held in memory: refused, nothing written. */
     sigil_sync_result *other = collect_halo(2, 16, 2, where);
-    CHECK(other && sigil_restore(&game.req, other->data, other->len, &r) == SIGIL_ERR_OOM && g_raw_writes == 0, where,
-          "a rewrite of the whole drive wasn't refused");
+    if (!g_parts) {
+        /* Written back as one file, a raw drive is all of it held in memory: refused, nothing written. */
+        CHECK(other && sigil_restore(&game.req, other->data, other->len, &r) == SIGIL_ERR_OOM && g_raw_writes == 0, where,
+              "a rewrite of the whole drive wasn't refused");
+    } else {
+        /* Written in parts, only what changed goes to the file. */
+        xb_guest before;
+        xb_copy(&g, &before);
+        game.req.write_ctx = &g;
+        game.req.write_at = raw_write_at;
+        g_raw_part_bytes = 0;
+        CHECK(other && sigil_restore(&game.req, other->data, other->len, &r) == SIGIL_OK && g_raw_writes == 0, where,
+              "restore into a raw image failed");
+        CHECK(g_raw_part_bytes > 0 && g_raw_part_bytes < 512u * 1024u, where, "more than the save's own clusters were written");
+        xb_tree tree;
+        xb_walk(&g, &tree);
+        CHECK(tree.faults == 0, where, "E:'s FAT chains are wrong");
+        if (other) unit_on_drive(other->data, other->len, &g, &tree, where);
+        others_intact(&before, &g, "4d530004", where);
+        only_game_changed(&before, &g, "4d530004", where);
+        xb_tree_free(&tree);
+        xb_free(&before);
+    }
     sigil_sync_result_free(r);
     sigil_sync_result_free(other);
     sigil_sync_result_free(qcow);
+    xb_free(&g);
+}
+
+/* Both ways of writing leave the same file, and the parts are a small share of it. */
+static void check_parts_match_whole(unsigned bits, unsigned compress_every, const char *where) {
+    sigil_sync_result *unit = collect_halo(1, 16, 2, where);
+    xb_guest g;
+    second_drive(&g);
+    mem_root whole = {0}, parts = {0};
+    put_drive(&whole, DRIVE, &g, bits, compress_every, 3);
+    put_drive(&parts, DRIVE, &g, bits, compress_every, 3);
+    game game;
+    sigil_sync_result *r1 = NULL, *r2 = NULL;
+    g_parts = 0;
+    make_game(&game, &whole, "xemu", HALO);
+    game.req.overwrite_local = 1;
+    CHECK(unit && sigil_restore(&game.req, unit->data, unit->len, &r1) == SIGIL_OK && whole.parts == 0, where,
+          "the whole-file restore failed");
+    g_parts = 1;
+    make_game(&game, &parts, "xemu", HALO);
+    game.req.overwrite_local = 1;
+    size_t before = root_find(&parts, DRIVE)->len;
+    CHECK(unit && sigil_restore(&game.req, unit->data, unit->len, &r2) == SIGIL_OK && parts.parts > 0 && parts.writes == 1,
+          where, "the restore in parts failed");
+    mem_file *a = root_find(&whole, DRIVE), *b = root_find(&parts, DRIVE);
+    CHECK(a && b && a->len == b->len && memcmp(a->data, b->data, a->len) == 0, where,
+          "the two ways of writing left different files");
+    /* A compressed cluster is written anew, whole, so only an image with plain clusters shows the saving. */
+    CHECK(bits < 16 || compress_every == 1 || parts.part_bytes < before / 2, where, "the parts were most of the file");
+
+    /* A request from before write_at existed has no such field to read. */
+    mem_root old = {0};
+    put_drive(&old, DRIVE, &g, bits, compress_every, 3);
+    make_game(&game, &old, "xemu", HALO);
+    game.req.struct_version = SIGIL_SYNC_REQUEST_V1;
+    game.req.overwrite_local = 1;
+    sigil_sync_result *r3 = NULL;
+    CHECK(unit && sigil_restore(&game.req, unit->data, unit->len, &r3) == SIGIL_OK && old.parts == 0 && old.writes == 1,
+          where, "a V1 request was written in parts");
+    g_parts = 0;
+    sigil_sync_result_free(r3);
+    sigil_sync_result_free(r2);
+    sigil_sync_result_free(r1);
+    sigil_sync_result_free(unit);
+    root_free(&old);
+    root_free(&whole);
+    root_free(&parts);
     xb_free(&g);
 }
 
@@ -1031,26 +1117,32 @@ static void check_autoclear(void) {
 }
 
 int main(void) {
-    check_collect();
-    check_collect_edges();
-    check_restore(16, 2, 3, "restore, 64 KiB clusters, half compressed");
-    check_restore(16, 1, 3, "restore, every cluster compressed");
-    check_restore(16, 0, 2, "restore, qcow2 version 2");
-    check_restore(12, 3, 3, "restore, 4 KiB clusters");
-    check_restore(9, 0, 3, "restore, 512-byte clusters");
-    check_restore_blank();
-    check_both_ways();
-    check_units_from_before();
-    check_refusals();
-    check_conflict();
-    check_images();
-    check_write_failures();
-    check_names();
-    check_needs_a_named_drive();
-    check_raw(XB_DISK_SIZE, "a raw image, 8 GiB");
-    check_raw(XB_RETAIL_SIZE, "a raw image that ends where E: does");
-    check_large_tree();
-    check_autoclear();
+    for (g_parts = 0; g_parts < 2; g_parts++) {
+        check_collect();
+        check_collect_edges();
+        check_restore(16, 2, 3, "restore, 64 KiB clusters, half compressed");
+        check_restore(16, 1, 3, "restore, every cluster compressed");
+        check_restore(16, 0, 2, "restore, qcow2 version 2");
+        check_restore(12, 3, 3, "restore, 4 KiB clusters");
+        check_restore(9, 0, 3, "restore, 512-byte clusters");
+        check_restore_blank();
+        check_both_ways();
+        check_units_from_before();
+        check_refusals();
+        check_conflict();
+        check_images();
+        check_write_failures();
+        check_names();
+        check_needs_a_named_drive();
+        check_raw(XB_DISK_SIZE, "a raw image, 8 GiB");
+        check_raw(XB_RETAIL_SIZE, "a raw image that ends where E: does");
+        check_large_tree();
+        check_autoclear();
+    }
+    g_parts = 0;
+    check_parts_match_whole(16, 2, "parts and whole, 64 KiB clusters");
+    check_parts_match_whole(16, 1, "parts and whole, every cluster compressed");
+    check_parts_match_whole(12, 0, "parts and whole, 4 KiB clusters");
     if (g_fails) {
         fprintf(stderr, "%d check(s) failed\n", g_fails);
         return 1;

@@ -36,6 +36,7 @@ extern "C" {
 #define SIGIL_SAVE_UNIT_V1    1u
 #define SIGIL_CARD_LISTING_V1 1u
 #define SIGIL_SYNC_REQUEST_V1 1u
+#define SIGIL_SYNC_REQUEST_V2 2u   /* adds write_at */
 #define SIGIL_SYNC_RESULT_V1  1u
 #define SIGIL_SUPPORT_V1  1u
 #define SIGIL_OPTIONS_V1  1u
@@ -551,6 +552,12 @@ typedef int (*sigil_save_write_fn)(void *ctx, const char *relative_path, const u
 /* Removes one file of the save root; returns 0 on success. */
 typedef int (*sigil_save_remove_fn)(void *ctx, const char *relative_path);
 
+/* Writes `len` bytes at byte `offset` of one file of the save root, which is
+ * there already: the rest of the file stays as it is, and it grows when the
+ * range ends past its end. Returns 0 on success. */
+typedef int (*sigil_save_write_at_fn)(void *ctx, const char *relative_path, uint64_t offset, const uint8_t *data,
+                                      size_t len);
+
 typedef enum {
     SIGIL_SYNC_MANAGED = 0,   /* the caller launches the game and calls collect after it closes */
     SIGIL_SYNC_UNMANAGED      /* the game runs outside the caller, which syncs on its own schedule */
@@ -575,7 +582,7 @@ typedef struct {
 } sigil_sync_companion_result;
 
 typedef struct {
-    uint32_t              struct_version;   /* SIGIL_SYNC_REQUEST_V1 */
+    uint32_t              struct_version;   /* SIGIL_SYNC_REQUEST_V2, or _V1 for a request that ends before write_at */
     sigil_save_request    save;             /* the emulator, content, options and save root; save.open is required */
     const char *const    *game_ids;         /* every id the game's saves may carry, as disc identification reports
                                                them: all discs of a set, and PCSX2's memcardFilters for PS2 */
@@ -602,6 +609,14 @@ typedef struct {
     size_t                companion_count;
     int                   repair;           /* 1 to rebuild the damaged structures that SIGIL_ERR_DAMAGED
                                                named, instead of refusing */
+    sigil_save_write_at_fn write_at;        /* restore, optional, read when struct_version is SIGIL_SYNC_REQUEST_V2:
+                                               writes part of a file of the save root, called with write_ctx. Where
+                                               every game's saves sit inside one large file (an Xbox hard-disk image),
+                                               restore writes only the parts of it that change, new parts at its end
+                                               first, and reads each back. NULL, or a V1 request, has restore hand the
+                                               whole file to `write` instead. A restore that fails between two of these
+                                               writes leaves the file part written: a client that can't have that
+                                               restores into a copy of the file and swaps it in on SIGIL_OK */
 } sigil_sync_request;
 
 typedef struct {
