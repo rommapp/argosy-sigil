@@ -2,8 +2,9 @@
 /* Mega Drive, Master System, Game Gear and 32X sync against saves Genesis Plus
  * GX and PicoDrive wrote: each core's save crosses to the other's file and back
  * to the same identity, the file restore writes for Genesis Plus GX is the one
- * Genesis Plus GX itself wrote after loading it, and a 32X save comes back to
- * PicoDrive as it was. */
+ * Genesis Plus GX itself wrote after loading it, a newer save next to an older,
+ * shorter file reaches PicoDrive whole, and a 32X save comes back to PicoDrive
+ * as it was. */
 #include "save_corpus.h"
 #include "legacy_units.h"
 
@@ -174,6 +175,36 @@ static void check_round_trip(const char *platform, const char *gpgx_id, const ch
     free(pico);
 }
 
+/* A newer save restored for PicoDrive next to an older Genesis Plus GX file,
+ * shorter than it, as a saves folder both cores share holds: PicoDrive gets
+ * the whole save, the same file restore writes into an empty folder. */
+static void check_stale_file(const char *platform, const char *stale_id, const char *save_id, const char *content,
+                             const char *srm) {
+    size_t stale_len = 0, save_len = 0;
+    uint8_t *stale = corpus_sample(&g_genesis, "genesis", stale_id, NULL, &stale_len);
+    uint8_t *save = corpus_sample(&g_genesis, "genesis", save_id, NULL, &save_len);
+    if (!stale || !save) {
+        free(stale);
+        free(save);
+        return;
+    }
+    mem_root empty = {0}, shared = {0};
+    root_put(&shared, srm, stale, stale_len);
+    mem_file *e = NULL, *s = NULL;
+    if (stale_len >= without_ff(save, save_len)) {
+        fail(save_id, "the older file is shorter than the newer save");
+    } else if (!restore(&empty, platform, "picodrive", content, save, save_len) || !(e = root_find(&empty, srm)) ||
+               !restore(&shared, platform, "picodrive", content, save, save_len) || !(s = root_find(&shared, srm)) ||
+               s->len != e->len || memcmp(s->data, e->data, e->len) != 0 || s->len < save_len ||
+               memcmp(s->data, save, save_len) != 0) {
+        fail(save_id, "next to the older, shorter file, PicoDrive gets the whole save, as into an empty folder");
+    }
+    root_free(&empty);
+    root_free(&shared);
+    free(stale);
+    free(save);
+}
+
 /* A 32X save, which only PicoDrive keeps, comes back to PicoDrive byte for byte. */
 static void check_picodrive_alone(const char *id, const char *content, const char *srm) {
     size_t len = 0;
@@ -249,6 +280,10 @@ int main(void) {
                      "Phantasy Star (USA, Europe).srm", false);
     check_round_trip("gamegear", "defenders-of-oasis-gpgx", "defenders-of-oasis-picodrive",
                      "Defenders of Oasis (USA, Europe).gg", "Defenders of Oasis (USA, Europe).srm", false);
+    check_stale_file("gamegear", "defenders-of-oasis-gpgx", "defenders-of-oasis-gpgx-back",
+                     "Defenders of Oasis (USA, Europe).gg", "Defenders of Oasis (USA, Europe).srm");
+    check_stale_file("genesis", "wonder-boy-mw-gpgx", "wonder-boy-mw-gpgx-back",
+                     "Wonder Boy in Monster World (USA, Europe).md", "Wonder Boy in Monster World (USA, Europe).srm");
     check_picodrive_fill("cave-story-md-picodrive-new", "doukutsu-en.gen", "doukutsu-en.srm");
     check_picodrive_alone("36-great-holes-picodrive",
                           "Golf Magazine Presents - 36 Great Holes Starring Fred Couples (Europe).32x",
