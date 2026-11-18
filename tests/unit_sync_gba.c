@@ -464,7 +464,11 @@ static void check_libretro_clock(void) {
         len = form_of(x, F_VBA_NEXT, false, g_want);
         f = restore_into(&vba, "vba_next", "Game.srm", facts, u);
         if (!f || f->len != len || memcmp(f->data, g_want, len) != 0) fail(where, "not VBA Next's form");
-        memset(want, 0xFF, sizeof(want));
+        /* Standalone mGBA's file: the chip, then for a 512-byte EEPROM the
+         * zeros mGBA grows the file to 8 KiB with (mGBA 0.10.5 savedata.c
+         * GBASavedataInitEEPROM: truncate, then 0xFF only below 512), then
+         * the clock at 8 KiB (GBASavedataRTCWrite). */
+        memset(want, 0x00, sizeof(want));
         memcpy(want, x->bytes, x->len);
         memcpy(want + at, g_clock, 16);
         f = restore_into(&standalone, "mgba_standalone", "Game.sav", facts, u);

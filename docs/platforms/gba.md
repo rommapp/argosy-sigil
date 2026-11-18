@@ -125,8 +125,12 @@ restoring it for the same emulator gives the file back byte for byte.
 
 Standalone mGBA takes the EEPROM games its override table names as 8 KiB
 and grows a shorter `.sav` to 8 KiB with zeros where the cart would read
-0xFF. That is mGBA's own handling of a 512-byte file, so a 512-byte save
-restored there gets it as it would from any other source.
+0xFF (`GBASavedataInitEEPROM` truncates the file to the chip's size and
+sets 0xFF only below 512 bytes). That is mGBA's own handling of a 512-byte
+file, so a 512-byte save restored there gets it as it would from any other
+source. On a clock cart restore writes the 8 KiB itself, to put the clock
+where mGBA reads it, and fills it the same way: measured with Boktai,
+mGBA 0.10.5 grew a 512-byte `.sav` to 8,192 bytes, all zeros past 512.
 
 Restore also reads any of the files above, and a zip of one with or
 without `clock.rtc`, as clients uploaded them before sigil. A `clock.rtc`

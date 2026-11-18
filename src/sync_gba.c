@@ -315,7 +315,10 @@ static int read_unit(uint32_t features, const uint8_t *unit, size_t len, size_t 
 /* The bytes of the save file in the emulator's own form. gpSP: the chip,
  * then 0xFF to 128 KiB. VBA Next: 136 KiB, an EEPROM's bytes at 128 KiB and
  * anything else at 0. Standalone mGBA: the chip, then on a clock cart the
- * unit's clock, else the clock already there, at clock_at. Any other
+ * unit's clock, else the clock already there, at clock_at; a 512-byte
+ * EEPROM grows to 8 KiB with zeros first, as mGBA grows the file itself
+ * (mGBA 0.10.5: src/gba/savedata.c GBASavedataInitEEPROM truncates it to
+ * the chip's size and sets 0xFF only below 512 bytes). Any other
  * emulator: the chip; or over a file already 128 KiB long, as mGBA's
  * libretro core leaves one in RetroArch, the chip, 0xFF to 128 KiB and the
  * clock where clock_in_buffer puts it, which collect reads back. */
@@ -340,6 +343,7 @@ static int save_file(const sigil_sync_request *req, const gba_save *in, const gb
     *out = (uint8_t *)malloc(*len);
     if (!*out) return SIGIL_ERR_OOM;
     memset(*out, 0xFF, body);
+    if (mgba && clock > in->chip_len) memset(*out + in->chip_len, 0x00, clock - in->chip_len);
     memcpy(*out + at, in->chip, in->chip_len);
     if (clock) memcpy(*out + clock, timed->clock, GBA_CLOCK_LEN);
     return SIGIL_OK;
