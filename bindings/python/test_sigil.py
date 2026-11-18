@@ -824,3 +824,50 @@ def test_two_profiles_and_none_picked_is_ambiguous_listing_them(tmp_path):
     )
     with pytest.raises(sigil.SigilUnsupportedFormatError):
         sigil.list_profiles("pcsx_rearmed", tmp_path)
+
+
+_FH2 = sigil.SigilResult.persisted("xbox360", "4D530AA4", "4D530AA4", 0)
+_CABINET_XUID = "E030000043414231"
+_CANARY_XUID = "E03000004B4F4E41"
+
+
+def _xenia(base: Path, xuid: str, save: bytes | None) -> None:
+    """A Xenia content folder with one profile, holding Forza Horizon 2's save when `save` is given."""
+    profile = base / "content" / xuid / "FFFE07D1/00010000" / xuid
+    profile.mkdir(parents=True)
+    (profile / "Account").write_bytes(b"\xa5" * 404)
+    if save is not None:
+        (profile / "4D530AA4.gpd").write_bytes(b"achievements")
+        folder = base / "content" / xuid / "4D530AA4/00000001/ForzaProfile"
+        folder.mkdir(parents=True)
+        (folder / "PlayerDatabase").write_bytes(save)
+        headers = base / "content" / xuid / "4D530AA4/Headers/00000001"
+        headers.mkdir(parents=True)
+        (headers / "ForzaProfile.header").write_bytes(b"\xed" * 328)
+
+
+def test_an_xbox_360_save_moves_between_xenias_under_each_ones_profile(tmp_path):
+    edge, canary, fresh = tmp_path / "edge", tmp_path / "canary", tmp_path / "fresh"
+    _xenia(edge, _CABINET_XUID, b"progress")
+    _xenia(canary, _CANARY_XUID, None)
+    fresh.mkdir()
+
+    unit = sigil.collect(_FH2, "xenia_edge", "Forza Horizon 2.iso", edge)
+    assert unit.profile == _CABINET_XUID
+    assert unit.profiles == (sigil.SigilProfile(_CABINET_XUID, ""),)
+    assert unit.artifact == "4D530AA4.zip"
+    assert sigil.list_profiles("xenia_canary", canary) == (sigil.SigilProfile(_CANARY_XUID, ""),)
+
+    written = sigil.restore(unit.data, _FH2, "xenia_canary", "Forza Horizon 2.iso", canary)
+    assert written.profile == _CANARY_XUID
+    save = Path("4D530AA4/00000001/ForzaProfile/PlayerDatabase")
+    header = Path("4D530AA4/Headers/00000001/ForzaProfile.header")
+    assert (canary / "content" / _CANARY_XUID / save).read_bytes() == b"progress"
+    assert (canary / "content" / _CANARY_XUID / header).read_bytes() == b"\xed" * 328
+    assert not (canary / "content" / _CABINET_XUID).exists()
+    assert not (canary / "content" / _CANARY_XUID / "FFFE07D1/00010000" / _CANARY_XUID / "4D530AA4.gpd").exists()
+
+    with pytest.raises(sigil.SigilNoTargetError):
+        sigil.restore(unit.data, _FH2, "xenia", "Forza Horizon 2.iso", fresh)
+    sigil.restore(unit.data, _FH2, "xenia", "Forza Horizon 2.iso", fresh, profile=_CABINET_XUID)
+    assert (fresh / "content" / _CABINET_XUID / save).read_bytes() == b"progress"

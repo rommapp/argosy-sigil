@@ -70,7 +70,9 @@ typedef enum {
     SIGIL_PROFILES_CEMU,       /* act/<id>/account.dat: PersistentId= and MiiName= (UTF-16BE in hex) lines */
     SIGIL_PROFILES_VITA3K,     /* user/<id>/user.xml: the name attribute of <user> */
     SIGIL_PROFILES_RPCS3,      /* home/<id>/localusername: the name alone */
-    SIGIL_PROFILES_RYUJINX     /* system/Profiles.json: "user_id" (32 hex) and "name" per profile */
+    SIGIL_PROFILES_RYUJINX,    /* system/Profiles.json: "user_id" (32 hex) and "name" per profile */
+    SIGIL_PROFILES_XENIA       /* <id>/FFFE07D1/00010000/<id>/Account: the gamertag is encrypted with a
+                                  console key sigil doesn't carry, so a profile is its id alone */
 } sigil_profiles_format;
 
 /* One folder of a game's saves on a layout with profiles. Templates are

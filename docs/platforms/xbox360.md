@@ -1,7 +1,8 @@
 # Xbox 360
 
-Status: in development
-Extraction works, but sigil has no layout for Xenia or XenDroid, so it locates no saves.
+Status: synced
+sigil reads the XEX title id and syncs a game's saves on Xenia Canary,
+Xenia Edge and XenDroid with collect and restore, per profile.
 
 ## Identification
 
@@ -27,17 +28,82 @@ STFS packages are not implemented.
 The XDVDFS walker is shared with the original Xbox; see [Xbox](xbox.md#xdvdfs).
 A `.zar` is a ZArchive written by Xenia; see [Containers](../containers.md).
 
+## Save layouts
+
+| Layout | Files (role, option) | Shared | Verified |
+|---|---|---|---|
+| `xenia`, `xenia_canary`, `xenia_edge` | folders per profile: `content/{profile}/{save_id}/00000001/<save>/`, each save's header in `content/{profile}/{save_id}/Headers/00000001/`; the same under the all-zero XUID for a save no profile owns | | emulator source |
+| `xendroid` | as `xenia`, under the `content/` folder of XenDroid's storage root | | emulator source |
+
+The rows list `content`, which `sigil_save_layout_subdirs()` names, and
+match `xbox360` only. `xenia` is Xenia Canary's and Xenia Edge's tree;
+`xenia_canary`, `xenia_edge` and `xendroid` are the same rows under the
+names those emulators go by. Xenia keeps a game's saves per profile, and
+a save the game marks shared, or makes with no one signed in, under the
+all-zero XUID:
+
+| Layout | Account | Device | Profile list |
+|---|---|---|---|
+| `xenia`, `xenia_canary`, `xenia_edge`, `xendroid` | `content/{profile}/{save_id}/00000001/` and `content/{profile}/{save_id}/Headers/00000001/` | the same under `0000000000000000` | `content/{profile}/FFFE07D1/00010000/{profile}/Account`; ids only |
+
+The base folder is the one holding `content/`, Xenia's storage root
+unless `--content_root` moves it; a moved content root is still found when
+its folder is named `content`. A profile id is the
+profile's XUID as Xenia names its folder, 16 uppercase hex digits
+(`E030000043414231`). How sigil picks the profile is in
+[profiles](../save-units.md#profiles).
+
+**Profiles are listed by id alone.** The profile's name, its gamertag, is
+in the `Account` file, which is encrypted with a key of the console's
+that sigil doesn't carry, so every profile's `name` is empty. A client
+asks the user which XUID is theirs, or uses the one it knows. A profile
+folder without an `Account` file is not a profile, as a user folder
+without `localusername` isn't on RPCS3. A XUID a client passes that the
+emulator doesn't list is used as given: pass it in uppercase, as Xenia
+names its folders.
+
 ## Save formats
 
 Xenia keeps each save as an extracted folder,
-`content/<XUID>/<save_id>/00000001/<save name>/`, with its metadata in a
-`.header` file under `Headers/`. The XUID is the signed-in profile's.
-XenDroid uses the same tree under its own `compose/content/`. Copying
-the folder and its header moves a save between Xenia installs; moving
-one to a console needs the STFS package rebuilt and re-signed.
+`content/<XUID>/<title id>/00000001/<save name>/`, with its metadata in
+`content/<XUID>/<title id>/Headers/00000001/<save name>.header`. Xenia
+Edge writes the header as `XCONTENT_AGGREGATE_DATA` alone (328 bytes);
+Xenia Canary rewrites it as the whole container header, padded to 4 KiB,
+when the game closes the save. Each reads the other's form
+(`content_manager.cc` in Edge, `xcontent_package_directory.cc` in
+Canary), so a save and its header move between them unchanged. Canary
+doesn't list a save whose header is missing, so the header travels with
+the save. XenDroid uses Canary's tree under its own storage root's
+`content/`. Copying the folder and its header moves a save between Xenia
+installs; moving one to a console needs the STFS package rebuilt and
+re-signed.
+
+A profile is `content/<XUID>/FFFE07D1/00010000/<XUID>/`: the `Account`,
+the dashboard's `FFFE07D1.gpd` and one `<title id>.gpd` per game played,
+which holds the game's achievements and the settings some games keep
+there. A unit carries none of them.
+
+## Sync
+
+On a layout with profiles the unit is a zip of the game's save folders,
+and `companions` is `SIGIL_ERR_INVALID_ARG`. An Xbox 360 unit holds
+`<title id>/00000001/...` and `<title id>/Headers/00000001/...` for the
+profile's saves and `device/<title id>/...` for the all-zero XUID's,
+never a XUID, so it restores under any profile. The general rules for
+profile layouts are in [sync](../sync.md).
+
+Restore also reads Xenia's `content/` folder zipped as it is, as clients
+uploaded before sigil: `<XUID>/<title id>/00000001/...`,
+`<XUID>/<title id>/Headers/00000001/...` and
+`0000000000000000/<title id>/...`. It writes those saves as it writes
+sigil's own unit, under the profile the request picks, and leaves out the
+profile folders and gamer pictures such a zip holds (each
+`<XUID>/FFFE07D1/`).
 
 ## Open items
 
 - GoD containers and STFS packages are not read for identification.
-- No Xenia or XenDroid layout row. It would key folders per XUID the way the [profile rows](../save-units.md) key them per user.
+- Some games bind a save to the profile it was made under. Forza Horizon 2 calls its save "tampered" under any other XUID and loads it again under its own. Such a save moves between emulators only under the same XUID: pass the XUID the save was made under as `profile`.
+- Achievements, and the settings a game keeps in its GPD rather than in a save, don't travel. A game that keeps all its progress there (Left 4 Dead 2 writes no save folder) has nothing to sync.
+- XenDroid's row is read from its source (`rfandango/XenDroid`); it hasn't been run.
 - The extractor is experimental until it is validated against real-world samples.

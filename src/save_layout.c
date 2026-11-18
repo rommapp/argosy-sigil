@@ -491,6 +491,34 @@ static const sigil_layout_profiles RPCS3_PROFILES = {
 };
 static const char *const RPCS3_SUBDIRS[] = { "dev_hdd0/home" };
 
+/* Xenia Canary, Xenia Edge and XenDroid (src/xenia/kernel/xam/content_manager.cc
+ * ResolvePackageRoot and the header path beside it; profile_manager.cc
+ * GetProfilePath): content/<XUID>/<title>/00000001/<save>/ is a save, its
+ * header content/<XUID>/<title>/Headers/00000001/<save>.header. A save the
+ * game marks shared, or makes with no one signed in, sits under the all-zero
+ * XUID. A profile is content/<XUID>/FFFE07D1/00010000/<XUID>/; the game's
+ * achievements and the profile's settings stay there and don't travel. A unit
+ * from before sigil is the content folder zipped as it is, <XUID>/...: its
+ * save folders restore, its profile folders and gamer pictures (each
+ * <XUID>/FFFE07D1/) are left out. The device areas come first so the all-zero
+ * XUID of such a unit is never taken for a profile. */
+static const sigil_layout_area XENIA_AREAS[] = {
+    { "content/0000000000000000/{save_id}/00000001/", "device/{save_id}/00000001/", SIGIL_SAVE_AREA_DEVICE, false,
+      "0000000000000000/{save_id}/00000001/" },
+    { "content/0000000000000000/{save_id}/Headers/00000001/", "device/{save_id}/Headers/00000001/",
+      SIGIL_SAVE_AREA_DEVICE, false, "0000000000000000/{save_id}/Headers/00000001/" },
+    { "content/{profile}/{save_id}/00000001/", "{save_id}/00000001/", SIGIL_SAVE_AREA_ACCOUNT, false,
+      "{profile}/{save_id}/00000001/" },
+    { "content/{profile}/{save_id}/Headers/00000001/", "{save_id}/Headers/00000001/", SIGIL_SAVE_AREA_ACCOUNT, false,
+      "{profile}/{save_id}/Headers/00000001/" },
+};
+static const char *const XENIA_DROPPED[] = { "{profile}/FFFE07D1/" };
+static const sigil_layout_profiles XENIA_PROFILES = {
+    "content", SIGIL_PROFILES_XENIA, "content/{profile}/FFFE07D1/00010000/{profile}/Account", XENIA_AREAS,
+    COUNT(XENIA_AREAS), NULL, 0, false, false, NULL, NULL, 0, NULL, XENIA_DROPPED, COUNT(XENIA_DROPPED),
+};
+static const char *const XENIA_SUBDIRS[] = { "content" };
+
 /* mupen64plus 2.6+, RMG and simple64 (mupen64plus-core src/main/main.c
  * get_save_filename): {goodname[:32]}-{MD5[:8]} from mupen64plus.ini, or the
  * header name for a ROM the database lacks, so the hash suffix is what sigil
@@ -620,6 +648,10 @@ static const sigil_layout LAYOUTS[] = {
     /* aPS3e (aenu1/aps3e) and ARMSX3 keep RPCS3's tree under their config/ folder, user 00000001. */
     ROW_PROFILES("aps3e", "ps3", RPCS3_SUBDIRS, RPCS3_PROFILES),
     ROW_PROFILES("armsx3", "ps3", RPCS3_SUBDIRS, RPCS3_PROFILES),
+    ROW_PROFILES("xenia", "xbox360", XENIA_SUBDIRS, XENIA_PROFILES),
+    ROW_PROFILES("xenia_canary", "xbox360", XENIA_SUBDIRS, XENIA_PROFILES),
+    ROW_PROFILES("xenia_edge", "xbox360", XENIA_SUBDIRS, XENIA_PROFILES),
+    ROW_PROFILES("xendroid", "xbox360", XENIA_SUBDIRS, XENIA_PROFILES),
     ROW_PROFILES("ppsspp", "psp", PSP_SUBDIRS, PSP_FOLDERS),
     ROW_PROFILES("ppsspp_standalone", "psp", PSP_SUBDIRS, PSP_FOLDERS),
     ROW_PROFILES("psp_console", "psp", PSP_SUBDIRS, PSP_FOLDERS),

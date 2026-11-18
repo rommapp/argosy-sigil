@@ -65,6 +65,8 @@ static bool walk(const sigil_layout_profiles *row, const char *template_, const 
             size_t cap = 0;
             char *slot = var_slot(v, t, tn, &cap);
             if (!slot || pn >= cap) return false;
+            /* A variable a template names twice (Xenia's profile folder) is one folder name. */
+            if (slot[0] && (strlen(slot) != pn || strncmp(slot, p, pn) != 0)) return false;
             memcpy(slot, p, pn);
             slot[pn] = '\0';
         } else if (tn != pn || strncmp(t, p, tn) != 0) {
@@ -488,7 +490,7 @@ static void vita3k_name(const char *xml, size_t len, char out[SIGIL_PROFILE_NAME
 
 static void name_from(int format, const uint8_t *data, size_t len, char out[SIGIL_PROFILE_NAME_MAX]) {
     out[0] = '\0';
-    if (!data) return;
+    if (!data || format == SIGIL_PROFILES_XENIA) return;
     const char *text = (const char *)data;
     if (format == SIGIL_PROFILES_CEMU) {
         size_t value_len = 0;
@@ -1181,7 +1183,8 @@ void sigil_profile_lines(const sigil_profile_root *p, char *out, size_t cap) {
     size_t n = 0;
     out[0] = '\0';
     for (size_t i = 0; i < p->profile_count && n < cap; i++) {
-        int w = snprintf(out + n, cap - n, "%s%s %s", i ? "\n" : "", p->profiles[i].id, p->profiles[i].name);
+        const char *name = p->profiles[i].name;
+        int w = snprintf(out + n, cap - n, "%s%s%s%s", i ? "\n" : "", p->profiles[i].id, name[0] ? " " : "", name);
         if (w > 0) n += (size_t)w;
     }
 }
