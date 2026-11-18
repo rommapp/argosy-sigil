@@ -397,6 +397,48 @@ static void check_clock(void) {
     sigil_sync_result_free(timed);
 }
 
+/* A zip of one emulator file, as clients uploaded one before sigil (RomM's
+ * save.sram, an emulator's .srm or .sav), restores as the file itself does;
+ * a zip holding anything else is refused and nothing is written. */
+static void check_zips(void) {
+    const chip *x = &g_chips[1];
+    uint8_t source[VBA_NEXT_FILE + 16];
+    size_t len = form_of(x, F_VBA_NEXT, false, source);
+    uint8_t *data[1] = { source };
+    size_t lens[1] = { len };
+    static const char *const ONE[][1] = { { "save.sram" }, { "Game.srm" }, { "Game.sav" } };
+    for (size_t i = 0; i < 3; i++) {
+        size_t zip_len = 0;
+        uint8_t *zip = legacy_zip(ONE[i], data, lens, 1, &zip_len);
+        mem_root root = {0};
+        game g;
+        make_game(&g, &root, "gpsp", x->feature);
+        size_t want = form_of(x, F_GPSP, false, g_want);
+        sigil_sync_result *w = NULL;
+        mem_file *f = NULL;
+        if (!zip || sigil_restore(&g.req, zip, zip_len, &w) != SIGIL_OK || !(f = root_find(&root, "Game.srm")) ||
+            f->len != want || memcmp(f->data, g_want, want) != 0) {
+            fail(ONE[i][0], "a zip of VBA Next's file restores for gpSP as the file does");
+        }
+        sigil_sync_result_free(w);
+        root_free(&root);
+        free(zip);
+    }
+    static const char *const OTHER[] = { "notes.txt" };
+    size_t zip_len = 0;
+    uint8_t *other = legacy_zip(OTHER, data, lens, 1, &zip_len);
+    mem_root root = {0};
+    game g;
+    make_game(&g, &root, "mgba", x->feature);
+    sigil_sync_result *w = NULL;
+    if (!other || sigil_restore(&g.req, other, zip_len, &w) != SIGIL_ERR_UNSUPPORTED_FORMAT || root.count) {
+        fail("zip of notes.txt", "refused, nothing written");
+    }
+    sigil_sync_result_free(w);
+    root_free(&root);
+    free(other);
+}
+
 /* A local save that changed since the last sync isn't overwritten unasked;
  * the same save in another emulator's form is no conflict. */
 static void check_conflict(void) {
@@ -457,6 +499,7 @@ int main(void) {
     check_retroarch_length();
     check_never_drops();
     check_clock();
+    check_zips();
     check_conflict();
     check_locate();
     printf("gba sync: %d failures\n", g_fails);
