@@ -76,7 +76,7 @@ byte's top bit. The file around them is not.
 
 | Emulator | File |
 |---|---|
-| mGBA libretro (`mgba`, the default row) | The core reports 128 KiB of save RAM, 0xFF past what was read in, until the game addresses the chip, then the chip's size; an EEPROM is 512 bytes until the game addresses past them (`src/platform/libretro/libretro.c` `retro_get_memory_size`; `src/gba/savedata.c` `GBASavedataInitEEPROM`, `_ensureEeprom`). The save RAM is a 128 KiB buffer, and on a clock cart the core writes the [clock](#clock-format) inside it at the chip's size, 8 KiB for an EEPROM, past the size it reports (`savedata.c` `GBASavedataClean`, `GBASavedataRTCWrite`; `libretro.c` `retro_load_game`, `_doDeferredSetup`). For 128 KiB flash the place is past the buffer, and the core keeps no clock. RetroArch 1.22.2's SRAM autosave, every 10 seconds by default on desktop and Android (`config.def.h` `DEFAULT_AUTOSAVE_INTERVAL`), writes the length the core reported when the game loaded (`save.c` `autosave_init`), so during play the `.srm` is 128 KiB with the clock in it. Its save on quit asks the core again (`save.c` `content_save_ram_file`) and writes the chip's size. Measured with Boktai: 131,072 bytes with the clock at 8 KiB after the game saved, 8,192 bytes after quitting. A frontend that asks the core at each save writes the chip's size. |
+| mGBA libretro (`mgba`, the default row) | The core reports 128 KiB of save RAM, 0xFF past what was read in, until the game addresses the chip, then the chip's size; an EEPROM is 512 bytes until the game addresses past them (`src/platform/libretro/libretro.c` `retro_get_memory_size`; `src/gba/savedata.c` `GBASavedataInitEEPROM`, `_ensureEeprom`). The save RAM is a 128 KiB buffer, and on a clock cart the core writes the [clock](#clock-format) inside it at the chip's size, 8 KiB for an EEPROM, past the size it reports (`savedata.c` `GBASavedataClean`, `GBASavedataRTCWrite`; `libretro.c` `retro_load_game`, `_doDeferredSetup`). For 128 KiB flash the place is past the buffer, and the core keeps no clock. RetroArch 1.22.2's SRAM autosave, every 10 seconds by default on x86 and x86-64 builds and on Windows, macOS, Android, iOS and Dingux, and off by default elsewhere, ARM Linux included (`config.def.h` `DEFAULT_AUTOSAVE_INTERVAL`), writes the length the core reported when the game loaded (`save.c` `autosave_init`), so during play the `.srm` is 128 KiB with the clock in it. Its save on quit asks the core again (`save.c` `content_save_ram_file`) and writes the chip's size. Measured with Boktai: 131,072 bytes with the clock at 8 KiB after the game saved, 8,192 bytes after quitting. A frontend that asks the core at each save writes the chip's size. |
 | VBA-M libretro (`vbam`, the default row) | The chip's size, from its override table or the ROM's ids. An EEPROM is 512 bytes, or the override table's size, until the game addresses 8 KiB (`src/libretro/libretro.cpp` `load_image_preferences`; `src/core/gba/gbaEeprom.cpp` `eepromWrite`). Read, not run. |
 | gpSP (`gpsp`) | 128 KiB for every chip: the chip's bytes, then 0xFF (`libretro/libretro.c` `retro_get_memory_size`, `retro_load_game`). |
 | VBA Next (`vba_next`) | 136 KiB for every chip: SRAM or flash at 0, an EEPROM's bytes at 128 KiB (`libretro/libretro.c` `libretro_save_buf`; `src/memory.c` `eepromData`). It never reads an EEPROM from 0, so another emulator's EEPROM file loads as no save: `adjust_save_ram`, which could move it, runs only in `retro_init`, before the save is loaded. |
@@ -150,10 +150,12 @@ weekday, hour, minute and second, then the control byte, then the time it
 read them at as a u64 LE Unix time. It writes them at the chip's size
 (`GBASavedataSize() & ~0xFF`, `GBASavedataRTCWrite`): standalone mGBA
 after the chip in the `.sav`, the libretro core inside its 128 KiB save
-RAM. mGBA turns the clock on only for the carts its override table lists
-with one (`src/gba/overrides.c` `GBAOverrideApply`), and each of those
-rows with an EEPROM forces the 64 Kbit chip, so an EEPROM's clock sits at
-8 KiB.
+RAM. mGBA turns the clock on only in `GBAOverrideApply`
+(`src/gba/overrides.c`): for a cart its built-in override table, or the
+user's own overrides, give a clock, and for a Pokemon ROM hack it doesn't
+recognise, which `GBAOverrideApplyDefaults` gives 128 KiB flash and a
+clock. Each clock row in the built-in table with an EEPROM forces the
+64 Kbit chip, so an EEPROM's clock sits at 8 KiB.
 
 Standalone mGBA reads the clock back when the game starts and runs it on
 from there by the computer's clock. The libretro core reads it only when

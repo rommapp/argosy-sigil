@@ -89,7 +89,7 @@ static size_t named_chip(uint32_t features) {
  * GBASavedataSize() & ~0xFF (libretro/mgba at e31759b2 and mGBA 0.10.5:
  * src/gba/savedata.c GBASavedataRTCWrite, GBASavedataRTCRead). mGBA turns
  * the clock on only in GBAOverrideApply, and every clock row in its
- * override table that has an EEPROM forces the 64 Kbit chip
+ * built-in override table that has an EEPROM forces the 64 Kbit chip
  * (src/gba/overrides.c), so an EEPROM's clock sits at 8 KiB. */
 static size_t clock_at(bool eeprom, size_t chip_len) {
     return eeprom && chip_len < GBA_EEPROM_64K ? GBA_EEPROM_64K : chip_len;
