@@ -381,6 +381,38 @@ def test_card_damage_names_match_across_bindings():
     )
 
 
+def _c_features() -> dict[str, int]:
+    bits = re.findall(r"#define SIGIL_FEATURE_(\w+)\s+\(1u << (\d+)\)", HEADER.read_text())
+    assert bits, "no SIGIL_FEATURE_* bits in sigil.h"
+    return {name: 1 << int(shift) for name, shift in bits}
+
+
+def test_feature_bits_match_across_bindings():
+    """Kotlin writes each SIGIL_FEATURE_* value out and the CLI names each
+    bit; Python and Go take the values from the C macros, which cffi knows
+    only when build_sigil.py declares them. A bit added in C and missed in a
+    binding can't be tested for there, and a Kotlin value that drifts tests
+    for another bit."""
+    features = _c_features()
+    py = dict(re.findall(r"^FEATURE_(\w+): int = lib\.SIGIL_FEATURE_(\w+)$", PY_INIT.read_text(), re.M))
+    assert py == {name: name for name in features}, f"Python FEATURE_* {py} disagrees with sigil.h {sorted(features)}"
+    cdef = set(re.findall(r"#define SIGIL_FEATURE_(\w+) \.\.\.", (ROOT / "bindings" / "python" / "build_sigil.py").read_text()))
+    assert cdef == set(features), f"build_sigil.py declares {sorted(cdef)}, sigil.h {sorted(features)}"
+
+    go = {c: g for g, c in re.findall(r"\bFeature(\w+)\s+uint32 = C\.SIGIL_FEATURE_(\w+)", GO.read_text())}
+    assert set(go) == set(features), f"Go Feature* constants {go} disagree with sigil.h {sorted(features)}"
+    for c_name, go_name in go.items():
+        assert go_name.lower() == c_name.replace("_", "").lower(), f"Go Feature{go_name} holds SIGIL_FEATURE_{c_name}"
+
+    kotlin = {name: int(value) for name, value in re.findall(r"const val FEATURE_(\w+) = (\d+)", KOTLIN.read_text())}
+    assert kotlin == features, f"Kotlin FEATURE_* {kotlin} disagrees with sigil.h {features}"
+
+    cli = dict(re.findall(r'\{ SIGIL_FEATURE_(\w+), "([^"]+)" \}', CLI.read_text()))
+    assert set(cli) == set(features), f"cli features_to_str names {sorted(cli)}, sigil.h {sorted(features)}"
+    for name, string in cli.items():
+        assert string == _canonical_string(name), f"cli names SIGIL_FEATURE_{name} {string!r}"
+
+
 def test_every_error_code_has_an_error_in_each_binding():
     """A code with no mapping reaches Python as the bare base class and Go as
     a formatted number, so a caller can't match on it."""
