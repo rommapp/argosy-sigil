@@ -103,6 +103,8 @@ static const uint8_t EMERALD_CLOCK[16] = { 0x25, 0x09, 0x28, 0x00, 0x19, 0x56, 0
                                            0xfa, 0x84, 0xd9, 0x68, 0x00, 0x00, 0x00, 0x00 };
 static const uint8_t BOKTAI_CLOCK[16] = { 0x26, 0x11, 0x18, 0x03, 0x02, 0x25, 0x56, 0x40,
                                           0xb4, 0x0c, 0xfd, 0x6a, 0x00, 0x00, 0x00, 0x00 };
+static const uint8_t RETROARCH_CLOCK[16] = { 0x26, 0x11, 0x18, 0x03, 0x21, 0x34, 0x00, 0x40,
+                                             0xc8, 0x19, 0xfe, 0x6a, 0x00, 0x00, 0x00, 0x00 };
 
 /* An emulator's file: collected, the unit is the chip `want_md5` names; restored
  * for the same emulator, it is the emulator's file again, byte for byte. */
@@ -333,6 +335,60 @@ static void check_eeprom_clock_back(void) {
     free(srm);
 }
 
+/* RetroArch's autosave of libretro mGBA's whole 128 KiB save RAM holds the
+ * EEPROM and, at 8 KiB, the core's clock; its save on quit a moment later
+ * is the EEPROM alone. The two give one unit's identity, the clock travels
+ * as clock.rtc, and restore writes back what RetroArch wrote: over a 128 KiB
+ * file the autosave, into an empty folder the quit file. VBA Next gets the
+ * EEPROM at 128 KiB. */
+static void check_retroarch_clock(void) {
+    if (!have("boktai-retroarch-autosave", "boktai-retroarch-quit")) return;
+    size_t len = 0, quit_len = 0;
+    uint8_t *autosave = corpus_sample(&g_gba, "gba", "boktai-retroarch-autosave", NULL, &len);
+    uint8_t *quit = corpus_sample(&g_gba, "gba", "boktai-retroarch-quit", NULL, &quit_len);
+    if (!autosave || !quit || len != 131072 || quit_len != 8192) {
+        fail("boktai-retroarch-autosave", "not the manifest's files");
+        free(autosave);
+        free(quit);
+        return;
+    }
+    sigil_sync_result *u = collect("mgba", "Boktai.gba", "Boktai.srm", autosave, len, EEPROM | RTC);
+    sigil_sync_result *q = collect("mgba", "Boktai.gba", "Boktai.srm", quit, quit_len, EEPROM | RTC);
+    size_t ram_len = 0, rtc_len = 0;
+    uint8_t *ram = member_of(u, "save.sram", &ram_len);
+    uint8_t *rtc = member_of(u, "clock.rtc", &rtc_len);
+    if (!ram || ram_len != quit_len || memcmp(ram, quit, quit_len) != 0 || !rtc || rtc_len != 16 ||
+        memcmp(rtc, RETROARCH_CLOCK, 16) != 0) {
+        fail("boktai-retroarch-autosave", "not the EEPROM as save.sram and the clock at 8 KiB as clock.rtc");
+    } else if (!q || strcmp(u->identity_hash, q->identity_hash) != 0) {
+        fail("boktai-retroarch-quit", "not the autosave's identity");
+    } else {
+        mem_root over = {0}, empty = {0}, vba = {0};
+        uint8_t *bare = (uint8_t *)malloc(len);
+        if (bare) {
+            memset(bare, 0xFF, len);
+            memcpy(bare, quit, quit_len);
+            root_put(&over, "Boktai.srm", bare, len);
+        }
+        mem_file *f = restore(&over, "mgba", "Boktai.gba", "Boktai.srm", u->data, u->len, EEPROM | RTC);
+        if (!f || f->len != len || memcmp(f->data, autosave, len) != 0) fail("boktai-retroarch-autosave", "restore over a 128 KiB file isn't RetroArch's autosave");
+        f = restore(&empty, "mgba", "Boktai.gba", "Boktai.srm", u->data, u->len, EEPROM | RTC);
+        if (!f || f->len != quit_len || memcmp(f->data, quit, quit_len) != 0) fail("boktai-retroarch-quit", "restore into an empty folder isn't RetroArch's quit file");
+        f = restore(&vba, "vba_next", "Boktai.gba", "Boktai.srm", u->data, u->len, EEPROM | RTC);
+        if (!f || f->len != 0x22000 || memcmp(f->data + 0x20000, quit, quit_len) != 0) fail("boktai-retroarch-autosave", "VBA Next's EEPROM isn't at 128 KiB");
+        root_free(&over);
+        root_free(&empty);
+        root_free(&vba);
+        free(bare);
+    }
+    free(ram);
+    free(rtc);
+    sigil_sync_result_free(u);
+    sigil_sync_result_free(q);
+    free(autosave);
+    free(quit);
+}
+
 /* The maintainer's samples: the manifest's notes give each pair's
  * expected bytes. */
 static void check_store_pairs(void) {
@@ -385,6 +441,7 @@ int main(void) {
     check_clock_back();
     check_eeprom_clock();
     check_eeprom_clock_back();
+    check_retroarch_clock();
     check_store_pairs();
     corpus_free(&g_gba);
     if (!g_ran) {
