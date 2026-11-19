@@ -414,8 +414,8 @@ static bool slot_in_dir(const sigil_fatx *fs, uint32_t dir, uint64_t slot) {
 
 /* Writes the entry into a directory this restore made, which nothing points
  * at yet; into a directory there at open it waits for PHASE_LINK, in the
- * slot of a removed entry of the same name, so the name is never there
- * twice, or in a free one. */
+ * slot of a removed entry of the same name, so the two never show together,
+ * or in a free one. */
 static int add_entry(sigil_fatx *fs, uint32_t dir, const char *name, uint8_t attr, uint32_t first, uint32_t size,
                      uint16_t time, uint16_t date) {
     uint8_t raw[ENTRY_SIZE];

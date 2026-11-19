@@ -91,9 +91,10 @@ bool sigil_fatx_name_ok(const char *name);
  *  0. the new files and folders, with their FAT entries, which no entry
  *     there at open points at yet;
  *  1. the entries that put them in directories there at open, each in the
- *     slot of a removed entry of the same name when there is one, so a name
- *     is never there twice; 0xE5 on the other removed entries; the FAT entry
- *     that adds a cluster to a directory there at open;
+ *     slot of a removed entry of the same name when there is one, so the
+ *     entry it replaces and the new one never show together; 0xE5 on the
+ *     other removed entries; the FAT entry that adds a cluster to a
+ *     directory there at open;
  *  2. the FAT entries of what was removed, freed.
  * Phases 1 and 2 are staged by sigil_fatx_flush.
  */
