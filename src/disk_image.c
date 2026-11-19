@@ -215,6 +215,28 @@ static int page_write(const sigil_disk *d, stage_page *p, unsigned step, size_t 
     return SIGIL_OK;
 }
 
+/* Stages every page of the new cluster at `off` as step `step` leaves it,
+ * zeros where nothing is written yet. A page wholly past the file's old end
+ * goes out once ahead of everything (sigil_disk_runs), as its first step
+ * leaves it, so that step must be no later than the one that first points at
+ * the cluster: else a page first written in a later phase would show that
+ * phase as soon as the cluster is mapped. */
+static int stage_cluster(sigil_disk *d, uint64_t off, unsigned step) {
+    for (uint64_t index = off / STAGE_PAGE; index <= (off + d->cluster_size - 1) / STAGE_PAGE; index++) {
+        stage_page *p = stage_find(d, index);
+        if (p && page_at(p, step)) continue;
+        uint8_t *page = NULL;
+        int rc = base_page(d, index, &page);
+        if (rc == SIGIL_OK && p) {
+            p->ver[step] = page;
+        } else if (rc == SIGIL_OK) {
+            rc = stage_add(d, index, step, page);
+        }
+        if (rc != SIGIL_OK) return rc;
+    }
+    return SIGIL_OK;
+}
+
 /* Stages a write that step `step` makes. */
 static int file_write(sigil_disk *d, unsigned step, uint64_t off, const uint8_t *buf, size_t len) {
     if (off + len > d->new_len) d->new_len = off + len;
@@ -427,7 +449,8 @@ static int refcount_where(sigil_disk *d, uint64_t cluster, bool make, uint64_t *
         d->next_cluster += d->cluster_size;
         if (block + d->cluster_size > d->new_len) d->new_len = block + d->cluster_size;
         sigil_write_be64(raw, block);
-        rc = file_write(d, STEP_COUNT_UP, d->rt_off + ti * 8, raw, sizeof(raw));
+        rc = stage_cluster(d, block, STEP_COUNT_UP);
+        if (rc == SIGIL_OK) rc = file_write(d, STEP_COUNT_UP, d->rt_off + ti * 8, raw, sizeof(raw));
         if (rc == SIGIL_OK) rc = refcount_add(d, block >> d->cluster_bits, 1);
         if (rc != SIGIL_OK) return rc;
     } else if (!host_valid(d, block)) {
@@ -451,12 +474,14 @@ static int refcount_add(sigil_disk *d, uint64_t cluster, int delta) {
     return file_write(d, delta > 0 ? STEP_COUNT_UP : STEP_COUNT_DOWN, where, raw, sizeof(raw));
 }
 
-/* A new cluster at the end of the file, zeroed and counted once. */
-static int allocate(sigil_disk *d, uint64_t *out) {
+/* A new cluster at the end of the file, zeroed and counted once, its pages
+ * staged at `step`, no later than the step that maps it. */
+static int allocate(sigil_disk *d, unsigned step, uint64_t *out) {
     uint64_t off = d->next_cluster;
     d->next_cluster += d->cluster_size;
     if (off + d->cluster_size > d->new_len) d->new_len = off + d->cluster_size;
-    int rc = refcount_add(d, off >> d->cluster_bits, 1);
+    int rc = stage_cluster(d, off, step);
+    if (rc == SIGIL_OK) rc = refcount_add(d, off >> d->cluster_bits, 1);
     *out = off;
     return rc;
 }
@@ -481,7 +506,7 @@ static int qcow2_write(sigil_disk *d, uint64_t index, size_t at, const uint8_t *
     int rc = SIGIL_OK;
     if (!(d->l1[i1] & QCOW2_OFFSET_MASK)) {
         uint64_t made = 0;
-        rc = allocate(d, &made);
+        rc = allocate(d, STEP_MAP(d->phase), &made);   /* an L2 table, which the L1 entry maps */
         if (rc != SIGIL_OK) return rc;
         d->l1[i1] = made | QCOW2_COPIED;
         sigil_write_be64(raw, d->l1[i1]);
@@ -509,7 +534,7 @@ static int qcow2_write(sigil_disk *d, uint64_t index, size_t at, const uint8_t *
             return SIGIL_OK;
         }
         memcpy(whole + at, buf, n);
-        if (!own) rc = allocate(d, &host);
+        if (!own) rc = allocate(d, STEP_DATA(d->phase), &host);
     }
     if (rc == SIGIL_OK) rc = file_write(d, STEP_DATA(d->phase), host, whole, (size_t)d->cluster_size);
     free(whole);

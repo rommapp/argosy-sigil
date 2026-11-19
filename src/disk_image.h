@@ -52,7 +52,7 @@ int sigil_disk_write(sigil_disk *d, uint64_t off, const void *buf, size_t len);
 bool sigil_disk_changed(const sigil_disk *d);
 
 /* How many phases a drive's writes can be put in. */
-#define SIGIL_DISK_PHASES 3u
+#define SIGIL_DISK_PHASES 4u
 
 /**
  * Puts the writes staged from now on in phase `phase`. Writes start in phase

@@ -5,6 +5,7 @@
  * nothing else on it. Drives are built and read back by xbox_drive.h, which
  * shares no code with the library. */
 #include "sync_internal.h"
+#include "disk_image.h"
 #include "mem_root.h"
 #include "xbox_drive.h"
 
@@ -1086,6 +1087,159 @@ static void check_broken_old_chain(void) {
     xb_free(&g);
 }
 
+/* ---- the drive image's own order ------------------------------------------------- */
+
+/* One staged write: `len` bytes of `byte` at `off` on the drive, in `phase`. */
+typedef struct {
+    unsigned phase;
+    uint64_t off;
+    size_t   len;
+    uint8_t  byte;
+} disk_change;
+
+typedef struct {
+    uint64_t off;
+    uint8_t *data;
+    size_t   len;
+} disk_run;
+
+typedef struct {
+    disk_run *runs;
+    size_t    count;
+} disk_runs;
+
+static int keep_run(void *ctx, uint64_t off, const uint8_t *data, size_t len) {
+    disk_runs *r = (disk_runs *)ctx;
+    r->runs = (disk_run *)realloc(r->runs, (r->count + 1) * sizeof(*r->runs));
+    disk_run *k = &r->runs[r->count++];
+    k->off = off;
+    k->len = len;
+    k->data = (uint8_t *)malloc(len);
+    memcpy(k->data, data, len);
+    return SIGIL_OK;
+}
+
+static void put_run(uint8_t **img, size_t *len, uint64_t off, const uint8_t *data, size_t n) {
+    if (off + n > *len) {
+        *img = (uint8_t *)realloc(*img, (size_t)(off + n));
+        memset(*img + *len, 0, (size_t)(off + n) - *len);
+        *len = (size_t)(off + n);
+    }
+    memcpy(*img + off, data, n);
+}
+
+/* The writes `changes` staged on a drive image in their phases and written
+ * in parts, stopped after each part, and again with that part torn (its last
+ * 4 KiB, or its first 512 bytes, stored): every reference stays counted, and
+ * no write of a phase shows until every write of the phases before it does. */
+static void check_disk_phases(unsigned bits, unsigned compress_every, const disk_change *changes, size_t n,
+                              const char *where) {
+    xb_guest g;
+    blank_drive(&g);
+    uint8_t *img = NULL;
+    size_t len = 0;
+    xb_qcow2(&g, bits, compress_every, 3, &img, &len);
+    xb_free(&g);
+    sigil_io *io = mem_root_io(img, len);
+    sigil_disk *d = NULL;
+    disk_runs runs = { NULL, 0 };
+    CHECK(sigil_disk_open(io, &d) == SIGIL_OK, where, "the image doesn't open");
+    for (size_t i = 0; d && i < n; i++) {
+        uint8_t *buf = (uint8_t *)malloc(changes[i].len);
+        memset(buf, changes[i].byte, changes[i].len);
+        CHECK(sigil_disk_set_phase(d, changes[i].phase) == SIGIL_OK &&
+                  sigil_disk_write(d, changes[i].off, buf, changes[i].len) == SIGIL_OK,
+              where, "a write wasn't staged");
+        free(buf);
+    }
+    if (d) CHECK(sigil_disk_runs(d, true, keep_run, &runs) == SIGIL_OK, where, "the parts weren't given");
+    sigil_disk_close(d);
+    sigil_io_close(io);
+    for (size_t k = 0; k < 3 * runs.count + 1; k++) {
+        size_t stop = k % (runs.count + 1);
+        int torn = (int)(k / (runs.count + 1));
+        if (torn && stop == runs.count) continue;
+        char at[200];
+        snprintf(at, sizeof(at), "%s, stopped after %zu of %zu writes%s", where, stop, runs.count,
+                 torn == 1 ? ", the next with only its last 4 KiB" : torn == 2 ? ", the next with only its first 512 bytes" : "");
+        uint8_t *file = (uint8_t *)malloc(len);
+        size_t file_len = len;
+        memcpy(file, img, len);
+        for (size_t i = 0; i < stop; i++) put_run(&file, &file_len, runs.runs[i].off, runs.runs[i].data, runs.runs[i].len);
+        if (torn) {
+            const disk_run *t = &runs.runs[stop];
+            size_t keep = t->len < (torn == 1 ? 4096u : 512u) ? t->len : (torn == 1 ? 4096u : 512u);
+            put_run(&file, &file_len, torn == 1 ? t->off + t->len - keep : t->off, torn == 1 ? t->data + t->len - keep : t->data,
+                    keep);
+        }
+        xb_guest after;
+        xb_check check;
+        xb_read_image(file, file_len, &after, &check);
+        CHECK(check.faults == 0, at, "a cluster is referenced more often than it is counted, or a table is wrong");
+        unsigned shown_all = 0;   /* the phases before this one all show */
+        for (unsigned phase = 0; phase < SIGIL_DISK_PHASES; phase++) {
+            bool any = false, all = true;
+            for (size_t i = 0; i < n; i++) {
+                if (changes[i].phase != phase) continue;
+                uint8_t *got = (uint8_t *)malloc(changes[i].len);
+                xb_get(&after, changes[i].off, got, changes[i].len);
+                bool shows = true;
+                for (size_t b = 0; b < changes[i].len; b++) shows = shows && got[b] == changes[i].byte;
+                free(got);
+                any = any || shows;
+                all = all && shows;
+            }
+            if (any && shown_all < phase) {
+                char what[96];
+                snprintf(what, sizeof(what), "phase %u shows before phase %u is all there", phase, shown_all);
+                fail(at, what);
+            }
+            if (all && shown_all == phase) shown_all = phase + 1;
+        }
+        if (stop == runs.count && !torn) CHECK(shown_all == SIGIL_DISK_PHASES, at, "the writes aren't all there");
+        xb_free(&after);
+        free(file);
+    }
+    for (size_t i = 0; i < runs.count; i++) free(runs.runs[i].data);
+    free(runs.runs);
+    free(img);
+}
+
+static void check_disk_phase_drives(void) {
+    /* A later phase writes into a page that a cluster an earlier phase
+     * replaced holds as zeros, as an entry goes into a directory filled with
+     * 0x00; other writes of that earlier phase lie far off, in other L2
+     * tables, so their entries go out in other parts. */
+    static const disk_change zero_page[] = {
+        { 0, 0x100000000ull, 64, 0x5A },
+        { 0, 0x80000ull + 0x9000, 64, 0x5B },
+        { 0, 0x180000000ull, 64, 0x5C },
+        { 0, 0x8CA80000ull + 0x150000, 64, 0x5D },
+        { 1, 0x100000000ull + 4096, 64, 0xA5 },
+        { 2, 0x100000000ull + 8192, 64, 0xA6 },
+        { 3, 0x80000ull + 0x9000 + 128, 64, 0xA7 },
+    };
+    /* A later phase maps a cluster through the second page of an L2 table an
+     * earlier phase made. */
+    static const disk_change l2_page[] = {
+        { 0, 0x140000000ull, 64, 0x5A },
+        { 0, 0x80000ull + 0x9000, 64, 0x5B },
+        { 0, 0x8CA80000ull + 0x150000, 64, 0x5D },
+        { 1, 0x140000000ull + 0x2000000ull, 64, 0xA5 },
+        { 2, 0x140000000ull + 0x4000000ull, 64, 0xA6 },
+    };
+    static const unsigned forms[][2] = { { 16, 1 }, { 16, 0 }, { 12, 1 } };
+    for (size_t f = 0; f < sizeof(forms) / sizeof(forms[0]); f++) {
+        char where[96];
+        snprintf(where, sizeof(where), "the image's order, a zero page, %u-bit clusters%s", forms[f][0],
+                 forms[f][1] ? ", compressed" : "");
+        check_disk_phases(forms[f][0], forms[f][1], zero_page, sizeof(zero_page) / sizeof(zero_page[0]), where);
+        snprintf(where, sizeof(where), "the image's order, an L2 table's second page, %u-bit clusters%s", forms[f][0],
+                 forms[f][1] ? ", compressed" : "");
+        check_disk_phases(forms[f][0], forms[f][1], l2_page, sizeof(l2_page) / sizeof(l2_page[0]), where);
+    }
+}
+
 /* ---- a restore stopped part way ------------------------------------------------- */
 
 /* What a restore that stopped part way left on `after`, a drive that began
@@ -1379,6 +1533,7 @@ int main(void) {
     check_parts_match_whole(16, 2, "parts and whole, 64 KiB clusters");
     check_parts_match_whole(16, 1, "parts and whole, every cluster compressed");
     check_parts_match_whole(12, 0, "parts and whole, 4 KiB clusters");
+    check_disk_phase_drives();
     check_stopped_drives();
     check_raw_stopped_drives();
     if (g_fails) {
