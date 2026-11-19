@@ -271,6 +271,41 @@ def test_restore_writes_the_unit_and_refuses_over_unsynced_changes(tmp_path):
     assert not forced.hardcore_marker
 
 
+def test_a_write_that_fails_leaves_the_file_as_it_was(tmp_path, monkeypatch):
+    source, target = tmp_path / "source", tmp_path / "target"
+    source.mkdir()
+    target.mkdir()
+    (source / "Chrono Cross.srm").write_bytes(_ps1_card([("BASLUSP01041CROSS", 2)]))
+    unit = sigil.collect(_CROSS, "pcsx_rearmed", "Chrono Cross.cue", source)
+    old = _ps1_card([("BASLUSP01041OTHER", 1)])
+    (target / "Chrono Cross.srm").write_bytes(old)
+
+    def no_space(_fd):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(sigil.os, "fsync", no_space)
+    with pytest.raises(sigil.SigilIOError):
+        sigil.restore(unit.data, _CROSS, "pcsx_rearmed", "Chrono Cross.cue", target, overwrite_local=True)
+    assert (target / "Chrono Cross.srm").read_bytes() == old
+    assert sorted(p.name for p in target.iterdir()) == ["Chrono Cross.srm"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permissions")
+def test_restore_replaces_a_file_whole_and_keeps_its_permissions(tmp_path):
+    source, target = tmp_path / "source", tmp_path / "target"
+    source.mkdir()
+    target.mkdir()
+    (source / "Chrono Cross.srm").write_bytes(_ps1_card([("BASLUSP01041CROSS", 2)]))
+    unit = sigil.collect(_CROSS, "pcsx_rearmed", "Chrono Cross.cue", source)
+    card = target / "Chrono Cross.srm"
+    card.write_bytes(_ps1_card([("BASLUSP01041OTHER", 1)]))
+    card.chmod(0o640)
+    sigil.restore(unit.data, _CROSS, "pcsx_rearmed", "Chrono Cross.cue", target, overwrite_local=True)
+    assert [e.name for e in sigil.list_card(card).entries] == ["BASLUSP01041CROSS"]
+    assert card.stat().st_mode & 0o777 == 0o640
+    assert sorted(p.name for p in target.iterdir()) == ["Chrono Cross.srm"]
+
+
 def test_restore_leaves_out_and_reports_argosys_hardcore_marker(tmp_path):
     source, plain, target = tmp_path / "source", tmp_path / "plain", tmp_path / "target"
     for d in (source, plain, target):
