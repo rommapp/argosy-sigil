@@ -938,14 +938,16 @@ static int raw_write(void *ctx, const char *path, const uint8_t *data, size_t le
 }
 static size_t g_raw_part_bytes = 0;
 static int g_raw_stop = 0, g_raw_calls = 0;   /* the part write that fails, 1-based, or 0; the writes made */
-static bool g_raw_torn = false;                /* the one that fails stores its last 4 KiB first */
+static int g_raw_torn = 0;                     /* how it tears, as mem_root's torn */
 static int raw_write_at(void *ctx, const char *path, uint64_t offset, const uint8_t *data, size_t len) {
     bool stop = ++g_raw_calls == g_raw_stop;
     if ((stop && !g_raw_torn) || strcmp(path, "hdd.img") != 0 || offset + len > g_raw_size) return -1;
     if (stop) {
-        size_t keep = len < 4096 ? len : 4096;
-        offset += len - keep;
-        data += len - keep;
+        size_t keep = len < (g_raw_torn == 1 ? 4096u : 512u) ? len : (g_raw_torn == 1 ? 4096u : 512u);
+        if (g_raw_torn == 1) {
+            offset += len - keep;
+            data += len - keep;
+        }
         len = keep;
     }
     xb_set((xb_guest *)ctx, offset, data, len);
@@ -1359,7 +1361,6 @@ static void check_left(const xb_guest *before, const xb_guest *done, const xb_gu
               t ? "the unit's TDATA folder shows beside an old one of the same name" :
                   "the unit's UDATA folder shows beside an old one of the same name");
     }
-
     others_intact(before, after, "4d530004", where);
     if (!xb_only_game_changed(before, after, "4d530004", true)) fail(where, "the stop changed something that isn't the game's");
     xb_tree_free(&old);
@@ -1369,9 +1370,9 @@ static void check_left(const xb_guest *before, const xb_guest *done, const xb_gu
 
 /* A restore in parts stopped after each of its writes, the next one never
  * made, as a crash would stop it; then again with the write it stops at
- * torn, only its last 4 KiB stored, as a power cut can leave a write. What
- * each stop left is checked, sigil still reads the drive, and restoring
- * again from there finishes. */
+ * torn, only its last 4 KiB or its first 512 bytes stored, as a power cut can
+ * leave a write. What each stop left is checked, sigil still reads the
+ * drive, and restoring again from there finishes. */
 static void check_stopped(const xb_guest *before, unsigned bits, unsigned compress_every, unsigned version,
                           const char *where) {
     sigil_sync_result *unit = collect_halo(1, 16, 2, where);
@@ -1393,10 +1394,11 @@ static void check_stopped(const xb_guest *before, unsigned bits, unsigned compre
     xb_tree_free(&tree);
     sigil_sync_result_free(r);
     root_free(&root);
-    for (int k = 0; unit && k < 2 * calls; k++) {
-        int n = k % calls, torn = k >= calls;
+    for (int k = 0; unit && k < 3 * calls; k++) {
+        int n = k % calls, torn = k / calls;
         char at[200];
-        snprintf(at, sizeof(at), "%s, stopped after %d of %d writes%s", where, n, calls, torn ? ", the next torn" : "");
+        snprintf(at, sizeof(at), "%s, stopped after %d of %d writes%s", where, n, calls,
+                 torn == 1 ? ", the next with only its last 4 KiB" : torn == 2 ? ", the next with only its first 512 bytes" : "");
         root_put(&root, DRIVE, img, len);
         root.fail_part = n + 1;
         root.torn = torn;
@@ -1469,12 +1471,18 @@ static void check_stopped_drives(void) {
     xb_free(&g);
     blank_drive(&g);
     check_stopped(&g, 16, 1, 3, "stopped, a blank drive");
+    /* An empty root filled with zeros, which read as its end. */
+    uint8_t *zeros = (uint8_t *)calloc(1, XB_CLUSTER);
+    xb_set(&g, xb_cluster_off(1), zeros, XB_CLUSTER);
+    free(zeros);
+    check_stopped(&g, 16, 1, 3, "stopped, an empty root filled with zeros");
+    check_stopped(&g, 16, 0, 3, "stopped, an empty root filled with zeros, uncompressed");
     xb_free(&g);
 }
 
 /* The restore into a raw image stopped after each of its writes, whole and
- * torn, as check_stopped does it for qcow2: on a raw image the order of E:'s
- * own writes is all there is. */
+ * torn both ways, as check_stopped does it for qcow2: on a raw image the
+ * order of E:'s own writes is all there is. */
 static void check_raw_stopped(const xb_guest *before, const char *where) {
     g_raw_size = XB_DISK_SIZE;
     static const char *const listing[] = { "hdd.img" };
@@ -1485,11 +1493,12 @@ static void check_raw_stopped(const xb_guest *before, const char *where) {
     game game;
     g_parts = 1;
     int calls = 0;
-    for (int k = -1; unit && k < 2 * calls; k++) {
+    for (int k = -1; unit && k < 3 * calls; k++) {
         int n = k < 0 ? -1 : k % calls;
-        g_raw_torn = k >= calls;
+        g_raw_torn = k < 0 ? 0 : k / calls;
         char at[200];
-        snprintf(at, sizeof(at), "%s, stopped after %d of %d writes%s", where, n, calls, g_raw_torn ? ", the next torn" : "");
+        snprintf(at, sizeof(at), "%s, stopped after %d of %d writes%s", where, n, calls,
+                 g_raw_torn == 1 ? ", the next with only its last 4 KiB" : g_raw_torn == 2 ? ", the next with only its first 512 bytes" : "");
         xb_guest after;
         xb_copy(before, &after);
         make_game(&game, &unused, "x1box", HALO);
@@ -1523,7 +1532,7 @@ static void check_raw_stopped(const xb_guest *before, const char *where) {
         xb_free(&after);
     }
     g_raw_stop = 0;
-    g_raw_torn = false;
+    g_raw_torn = 0;
     g_parts = 0;
     xb_free(&done);
     sigil_sync_result_free(unit);

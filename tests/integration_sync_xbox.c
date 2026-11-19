@@ -183,8 +183,8 @@ static void restore_into(const sigil_sync_result *unit, const char *owner, const
 }
 
 /* The restore of `unit` into sample `into`, in parts, stopped after each of
- * its writes, the next one never made, then again with that write torn, only
- * its last 4 KiB stored. What each stop leaves has every qcow2 reference
+ * its writes, the next one never made, then again with that write torn: only
+ * its last 4 KiB stored, or only its first 512 bytes. What each stop leaves has every qcow2 reference
  * counted (clusters counted that nothing refers to are the only waste), E:'s
  * chains whole (clusters marked used that nothing holds are the only waste
  * there), each of the game's two folders holding all its old files or all
@@ -218,10 +218,11 @@ static void stop_each(const sigil_sync_result *unit, const char *owner, const ch
     xb_tree old, new;
     xb_walk(&before, &old);
     xb_walk(&done, &new);
-    for (int k = 0; k < 2 * calls; k++) {
-        int n = k % calls, torn = k >= calls;
+    for (int k = 0; k < 3 * calls; k++) {
+        int n = k % calls, torn = k / calls;
         char at[200];
-        snprintf(at, sizeof(at), "%s, stopped after %d of %d writes%s", where, n, calls, torn ? ", the next torn" : "");
+        snprintf(at, sizeof(at), "%s, stopped after %d of %d writes%s", where, n, calls,
+                 torn == 1 ? ", the next with only its last 4 KiB" : torn == 2 ? ", the next with only its first 512 bytes" : "");
         root_put(&root, DRIVE, img, len);
         root.fail_part = n + 1;
         root.torn = torn;

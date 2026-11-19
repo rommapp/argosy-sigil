@@ -32,7 +32,8 @@ typedef struct {
     int         parts;           /* writes of part of a file */
     size_t      part_bytes;      /* the bytes they carried */
     int         fail_part;       /* the part write (1-based) that reports failure; 0 for none */
-    int         torn;            /* 1 for fail_part to store its last 4 KiB first, as a disk can before a power cut */
+    int         torn;            /* how fail_part tears, as a power cut can: 1 stores its last 4 KiB, 2 its
+                                    first 512 bytes; 0 stores nothing */
     int         corrupt_part;    /* the part write (1-based) stored with its last byte flipped; 0 for none */
     int         in_parts;        /* part writes since the last open: together they count as one write */
     int         open_streams;    /* streams root_open gave that aren't closed yet */
@@ -136,9 +137,11 @@ static int root_write_at(void *ctx, const char *path, uint64_t offset, const uin
     }
     r->parts++;
     if (f && r->parts == r->fail_part && r->torn) {
-        size_t keep = len < 4096 ? len : 4096;
-        offset += len - keep;
-        data += len - keep;
+        size_t keep = len < (r->torn == 1 ? 4096u : 512u) ? len : (r->torn == 1 ? 4096u : 512u);
+        if (r->torn == 1) {
+            offset += len - keep;
+            data += len - keep;
+        }
         len = keep;
     } else if (!f || r->parts == r->fail_part || (r->exclusive && r->open_streams)) {
         return -1;

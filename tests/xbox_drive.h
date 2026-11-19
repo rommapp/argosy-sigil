@@ -648,7 +648,8 @@ static void xb_qcow2(const xb_guest *g, unsigned bits, unsigned compress_every, 
 /* ---- qcow2, read back and checked ------------------------------------------------ */
 
 typedef struct {
-    int      faults;   /* a reference the counts don't cover, a flag that is wrong, a table outside the file */
+    int      faults;   /* a reference the counts don't cover, a COPIED flag that disagrees with a count of 1,
+                          a table outside the file */
     uint64_t leaks;    /* clusters counted more often than they are referenced: wasted, not harmful */
 } xb_check;
 
@@ -670,6 +671,15 @@ static void xb_read_image(const uint8_t *img, size_t len, xb_guest *g, xb_check 
     uint64_t rt_entries = (uint64_t)xb_be32(img + 56) * cs / 8;
     uint64_t file_clusters = (len + cs - 1) / cs;
     uint32_t *need = (uint32_t *)calloc(file_clusters + 1, sizeof(*need));
+    /* Each L2 table and each uncompressed data cluster, with whether its entry says COPIED: qemu's
+     * check_oflag_copied (block/qcow2-refcount.c at v9.2.0) holds COPIED to a count of exactly 1. */
+    uint64_t *copied = (uint64_t *)malloc(sizeof(*copied) * 1024);
+    size_t copied_n = 0, copied_cap = 1024;
+#define XB_COPIED(host, flag)                                                                      \
+    do {                                                                                           \
+        if (copied_n == copied_cap) copied = (uint64_t *)realloc(copied, sizeof(*copied) * (copied_cap *= 2)); \
+        copied[copied_n++] = ((host) / cs) << 1 | ((flag) ? 1u : 0u);                              \
+    } while (0)
 #define XB_REF(off, bytes, what)                                                                   \
     for (uint64_t c_ = (off) / cs; c_ <= ((off) + (bytes) - 1) / cs; c_++) {                       \
         if (c_ >= file_clusters) {                                                                 \
@@ -692,10 +702,7 @@ static void xb_read_image(const uint8_t *img, size_t len, xb_guest *g, xb_check 
         uint64_t l1e = xb_be64(img + l1_off + (uint64_t)i1 * 8), l2_off = l1e & 0x00FFFFFFFFFFFE00ull;
         if (!l2_off) continue;
         XB_REF(l2_off, cs, "an L2 table");
-        if (!(l1e >> 63)) {
-            fprintf(stderr, "qcow2: L1 entry %u lacks the COPIED flag\n", i1);
-            check->faults++;
-        }
+        XB_COPIED(l2_off, l1e >> 63);
         for (size_t i2 = 0; i2 < per_l2 && !check->faults; i2++) {
             uint64_t e = xb_be64(img + l2_off + i2 * 8), index = (uint64_t)i1 * per_l2 + i2;
             if (e & (1ull << 62)) {
@@ -727,16 +734,24 @@ static void xb_read_image(const uint8_t *img, size_t len, xb_guest *g, xb_check 
                 continue;
             }
             XB_REF(host, cs, "a data cluster");
-            if (!(e >> 63)) {
-                fprintf(stderr, "qcow2: data cluster %llu lacks the COPIED flag\n", (unsigned long long)index);
-                check->faults++;
-            }
+            XB_COPIED(host, e >> 63);
             if (!(e & 1) && host + cs <= len) xb_set(g, index * cs, img + host, cs);
         }
     }
+#define XB_COUNT(c) (((c) / per_block < rt_entries && (xb_be64(img + rt_off + ((c) / per_block) * 8) & ~511ull))       \
+    ? (uint32_t)((img[(xb_be64(img + rt_off + ((c) / per_block) * 8) & ~511ull) + ((c) % per_block) * 2] << 8) |       \
+                 img[(xb_be64(img + rt_off + ((c) / per_block) * 8) & ~511ull) + ((c) % per_block) * 2 + 1])         \
+    : 0u)
+    for (size_t i = 0; i < copied_n && !check->faults; i++) {
+        uint64_t c = copied[i] >> 1;
+        if (c < file_clusters && (XB_COUNT(c) == 1) != (copied[i] & 1)) {
+            fprintf(stderr, "qcow2: cluster %llu is counted %u times and its entry %s COPIED\n", (unsigned long long)c,
+                    XB_COUNT(c), (copied[i] & 1) ? "says" : "doesn't say");
+            check->faults++;
+        }
+    }
     for (uint64_t c = 0; c < file_clusters && !check->faults; c++) {
-        uint64_t block = c / per_block < rt_entries ? xb_be64(img + rt_off + (c / per_block) * 8) & ~511ull : 0;
-        uint32_t have = block ? (uint32_t)((img[block + (c % per_block) * 2] << 8) | img[block + (c % per_block) * 2 + 1]) : 0;
+        uint32_t have = XB_COUNT(c);
         if (have < need[c]) {
             fprintf(stderr, "qcow2: cluster %llu is counted %u times and referenced %u times\n",
                     (unsigned long long)c, have, need[c]);
@@ -746,6 +761,9 @@ static void xb_read_image(const uint8_t *img, size_t len, xb_guest *g, xb_check 
         }
     }
 #undef XB_REF
+#undef XB_COPIED
+#undef XB_COUNT
+    free(copied);
     free(piece);
     free(need);
 }
