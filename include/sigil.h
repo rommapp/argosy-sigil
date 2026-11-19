@@ -545,7 +545,10 @@ SIGIL_API void sigil_card_repair_report_free(sigil_card_repair_report *report);
  * travels to RomM; restore puts a unit back. sigil keeps what it must remember
  * between calls in an opaque state blob the caller stores and passes back. */
 
-/* Writes one file of the save root; returns 0 on success. */
+/* Writes one file of the save root, whole; returns 0 on success. A write that
+ * fails must leave the file as it was, as writing a temporary file beside it
+ * and renaming it over does: one file can hold every game's saves (a shared
+ * card, a drive image). */
 typedef int (*sigil_save_write_fn)(void *ctx, const char *relative_path, const uint8_t *data, size_t len);
 
 /* Removes one file of the save root; returns 0 on success. */
