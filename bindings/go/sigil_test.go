@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -348,6 +349,38 @@ func TestRestoreWritesTheUnitAndRefusesOverUnsyncedChanges(t *testing.T) {
 	forced, err := Restore(unit.Data, chronoCross, "pcsx_rearmed", "Chrono Cross.cue", target, &SyncOptions{OverwriteLocal: true})
 	if err != nil || forced.IdentityHash != unit.IdentityHash || forced.HardcoreMarker {
 		t.Fatalf("forced restore = %+v, %v", forced, err)
+	}
+}
+
+func TestRestoreReplacesAFileWholeAndKeepsItsPermissions(t *testing.T) {
+	source, target := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "Chrono Cross.srm"), ps1Card([]cardSave{{"BASLUSP01041CROSS", 2}}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unit, err := Collect(chronoCross, "pcsx_rearmed", "Chrono Cross.cue", source, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	card := filepath.Join(target, "Chrono Cross.srm")
+	if err := os.WriteFile(card, ps1Card([]cardSave{{"BASLUSP01041OTHER", 1}}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(card, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Restore(unit.Data, chronoCross, "pcsx_rearmed", "Chrono Cross.cue", target, &SyncOptions{OverwriteLocal: true}); err != nil {
+		t.Fatal(err)
+	}
+	listing, err := ListCard(card)
+	if err != nil || len(listing.Entries) != 1 || listing.Entries[0].Name != "BASLUSP01041CROSS" {
+		t.Fatalf("card = %+v, %v", listing, err)
+	}
+	if st, err := os.Stat(card); err != nil || (runtime.GOOS != "windows" && st.Mode().Perm() != 0o640) {
+		t.Fatalf("stat = %v, %v; want mode 0640", st, err)
+	}
+	entries, err := os.ReadDir(target)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("target holds %v, %v; want the card alone", entries, err)
 	}
 }
 

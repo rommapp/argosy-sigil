@@ -161,6 +161,12 @@ a slot never used: collect passes over it and restore may format it.
 
 `write` and `remove` only ever get relative paths with no `..` segment;
 sigil fails the restore with `SIGIL_ERR_IO` before passing any other.
+
+`write` replaces a whole file, and a write that fails must leave the file
+as it was: one file can hold every game's saves (a shared card or volume).
+The Python, Go and Kotlin bindings write a temporary file beside it, named
+`.sigil-<random>.tmp`, and rename it over the file, keeping its
+permissions. A caller with its own `write` does the same.
 Where saves are files of their own (Dolphin's GCI folder, PCSX2 folder
 cards, layouts with profiles), restore removes the files of the game's
 saves the unit lacks through `remove`; it refuses with
