@@ -112,17 +112,6 @@ static const char *path_basename(const char *path) {
     return slash ? slash + 1 : path;
 }
 
-static bool name_has_suffix(const char *name, const char *suffix) {
-    if (!name) return false;
-    size_t n = strlen(name), s = strlen(suffix);
-    if (n < s) return false;
-    const char *tail = name + (n - s);
-    for (size_t i = 0; i < s; i++) {
-        if (sigil_to_lower(tail[i]) != sigil_to_lower(suffix[i])) return false;
-    }
-    return true;
-}
-
 /* `.7z` is listed as the hook point for a reader that does not exist yet, so
  * today it simply fails to open and falls through to the filename scanner.
  * Adding one means vendoring the LZMA SDK's container sources (7zArcIn.c,
@@ -186,7 +175,7 @@ static sigil_platform sniff_from_extension(const char *filename) {
 
     /* `Game.xiso.iso` is a real convention in Xbox sets, and the trailing
      * `.iso` alone would throw away what the name already states. */
-    if (name_has_suffix(filename, ".xiso.iso")) return SIGIL_PLATFORM_XBOX;
+    if (sigil_ends_with_nocase(filename, ".xiso.iso")) return SIGIL_PLATFORM_XBOX;
 
     /* `.iso`/`.bin`/`.chd` are ambiguous between PSP/PSX/PS2/Wii/GC/Dreamcast/Xbox;
      * refuse to guess without a hint. `.elf`/`.axf` are 3DS homebrew to azahar

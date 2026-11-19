@@ -166,9 +166,11 @@ set(SIGIL_SOURCES
     src/sync_profiles.c
     src/rzip.c
     src/n64_save.c
+    src/sync_cart.c
     src/sync_n64.c
     src/sync_gb.c
     src/sync_nds.c
+    src/sync_genesis.c
     src/zip_mem.c
     src/save_names.c
 )

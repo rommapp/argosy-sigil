@@ -100,61 +100,31 @@ static int file_bytes(const char *layout, const uint8_t *raw, size_t len, uint8_
     return SIGIL_OK;
 }
 
-/* The game's save file the layout names, there or expected. */
-typedef struct {
-    char path[SIGIL_SAVE_PATH_MAX];
-    bool present;
-} nds_file;
-
-static int file_of(const sigil_sync_request *req, nds_file *f) {
-    memset(f, 0, sizeof(*f));
-    sigil_save_unit *unit = NULL;
-    int rc = sigil_save_resolve(&req->save, &unit);
-    if (rc != SIGIL_OK) return rc;
-    for (size_t i = 0; i < unit->member_count + unit->expected_count && !f->path[0]; i++) {
-        bool present = i < unit->member_count;
-        const sigil_save_member *m = present ? &unit->members[i] : &unit->expected[i - unit->member_count];
-        if (m->role == SIGIL_SAVE_ROLE_RTC) continue;
-        snprintf(f->path, sizeof(f->path), "%s", m->path);
-        f->present = present;
-    }
-    sigil_save_unit_free(unit);
-    return SIGIL_OK;
-}
-
-/* The raw save in the game's file, NULL when there's none. An empty file holds no save. */
-static int read_local(const sigil_sync_request *req, const nds_file *f, uint8_t **raw, size_t *len) {
-    *raw = NULL;
-    *len = 0;
-    if (!f->present) return SIGIL_OK;
-    int rc = sigil_sync_read_file(req, f->path, NDS_MAX_SAVE + DSV_FOOTER, raw, len);
-    if (rc == SIGIL_OK) *len = raw_len(*raw, *len);
-    if (rc == SIGIL_OK && !*len) {
+/* The raw save in the game's file, NULL when there's none: a file of
+ * DeSmuME's footer alone holds no save, as an empty one doesn't. */
+static int read_raw(const sigil_sync_request *req, const sigil_sync_cart_file *f, uint8_t **raw, size_t *len) {
+    int rc = sigil_sync_cart_read(req, f, NDS_MAX_SAVE + DSV_FOOTER, raw, len);
+    if (*raw) *len = raw_len(*raw, *len);
+    if (*raw && !*len) {
         free(*raw);
         *raw = NULL;
     }
-    return rc == SIGIL_ERR_NOT_FOUND ? SIGIL_ERR_IO : rc;
-}
-
-static void artifact_of(const sigil_sync_request *req, sigil_sync_result *r) {
-    char stem[SIGIL_SAVE_ENTRY_MAX];
-    sigil_content_stem(req->save.content_path, stem, sizeof(stem));
-    snprintf(r->artifact, sizeof(r->artifact), "%s.srm", stem);
+    return rc;
 }
 
 int sigil_sync_collect_nds(sigil_sync_ctx *x, sigil_sync_result *r) {
-    nds_file f;
+    sigil_sync_cart_file f;
     uint8_t *raw = NULL;
     size_t len = 0;
-    int rc = file_of(x->req, &f);
-    if (rc == SIGIL_OK) rc = read_local(x->req, &f, &raw, &len);
+    int rc = sigil_sync_cart_file_of(x->req, &f);
+    if (rc == SIGIL_OK) rc = read_raw(x->req, &f, &raw, &len);
     if (rc == SIGIL_OK && raw) {
         sigil_md5_of(raw, len, r->identity_hash);
         memcpy(r->content_hash, r->identity_hash, sizeof(r->content_hash));
         r->data = raw;
         r->len = len;
         r->shape = SIGIL_SAVE_SHAPE_SINGLE;
-        artifact_of(x->req, r);
+        sigil_sync_cart_artifact(x->req, ".srm", r);
         raw = NULL;
     }
     free(raw);
@@ -169,13 +139,13 @@ int sigil_sync_restore_nds(sigil_sync_ctx *x, const uint8_t *unit, size_t len, s
     sigil_md5_of(unit, save_len, r->identity_hash);
     sigil_md5_of(unit, received_len, r->content_hash);
     r->shape = SIGIL_SAVE_SHAPE_SINGLE;
-    artifact_of(x->req, r);
+    sigil_sync_cart_artifact(x->req, ".srm", r);
 
-    nds_file f;
+    sigil_sync_cart_file f;
     uint8_t *local = NULL;
     size_t local_len = 0;
-    int rc = file_of(x->req, &f);
-    if (rc == SIGIL_OK) rc = read_local(x->req, &f, &local, &local_len);
+    int rc = sigil_sync_cart_file_of(x->req, &f);
+    if (rc == SIGIL_OK) rc = read_raw(x->req, &f, &local, &local_len);
     if (rc == SIGIL_OK && local) sigil_md5_of(local, local_len, local_identity);
     free(local);
     bool already = false;
