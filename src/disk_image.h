@@ -26,7 +26,8 @@ typedef struct sigil_disk sigil_disk;
  * reference counts. SIGIL_ERR_UNSUPPORTED_FORMAT for an image outside that,
  * which this code couldn't keep consistent: a backing file, encryption,
  * internal snapshots, an external data file, extended L2 entries, another
- * compression type or reference count width, or one qemu left marked dirty.
+ * compression type or reference count width, dirty bitmaps or any other
+ * autoclear feature bit, or one qemu left marked dirty.
  * SIGIL_ERR_DAMAGED for a qcow2 file whose header or tables don't hold
  * together, or one qemu marked corrupt.
  */

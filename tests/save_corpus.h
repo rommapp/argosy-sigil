@@ -148,9 +148,9 @@ static unsigned char *corpus_read_file(const char *path, size_t *len_out) {
     return buf;
 }
 
-/* Samples a check named that weren't there. Once a platform's samples are
- * present, every sample a check names must be: a test with any missing
- * sample fails instead of passing on the checks that did run. */
+/* Samples a check asked corpus_sample for that weren't there. Any of them
+ * fails the test, so it can't pass on the checks that did run: a test that
+ * skips a check without its samples asks corpus_present first. */
 static int g_corpus_missing = 0;
 
 /* The manifest row of sample `id`: its row with `path`, or its first row when `path` is NULL. */

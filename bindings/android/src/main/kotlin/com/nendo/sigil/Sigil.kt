@@ -381,7 +381,10 @@ interface SigilFileAccess {
     /** The whole file at [path], or null when it can't be read. */
     fun read(root: String, path: String): ByteArray?
 
-    /** Writes [data] as the file at [path], making the folders above it. */
+    /**
+     * Writes [data] as the whole file at [path], making the folders above it. A write that fails
+     * leaves the file as it was, as writing a temporary file beside it and renaming it over does.
+     */
     fun write(root: String, path: String, data: ByteArray): Boolean
 
     /** Removes the file at [path], or the folder when [path] ends in '/' (sigil empties it first). */
@@ -422,11 +425,38 @@ object PosixFileAccess : SigilFileAccess {
 
     override fun read(root: String, path: String): ByteArray? = runCatching { file(root, path).readBytes() }.getOrNull()
 
-    override fun write(root: String, path: String, data: ByteArray): Boolean = runCatching {
-        val target = file(root, path)
-        target.parentFile?.let { parent -> if (!parent.isDirectory) parent.mkdirs() }
-        target.writeBytes(data)
-    }.isSuccess
+    /**
+     * The bytes go to a temporary file beside the target, which is renamed over it, so a write
+     * that fails leaves the file as it was. The file keeps its POSIX permissions.
+     */
+    override fun write(root: String, path: String, data: ByteArray): Boolean {
+        val target = file(root, path).toPath()
+        val parent = target.parent ?: return false
+        val temp = parent.resolve(".sigil-${java.util.UUID.randomUUID().toString().replace("-", "").take(16)}.tmp")
+        return runCatching {
+            java.nio.file.Files.createDirectories(parent)
+            java.nio.channels.FileChannel.open(
+                temp,
+                java.nio.file.StandardOpenOption.CREATE_NEW,
+                java.nio.file.StandardOpenOption.WRITE
+            ).use { channel ->
+                val buffer = java.nio.ByteBuffer.wrap(data)
+                while (buffer.hasRemaining()) channel.write(buffer)
+                channel.force(true)
+            }
+            if (java.nio.file.Files.exists(target)) {
+                runCatching { java.nio.file.Files.getPosixFilePermissions(target) }.getOrNull()?.let {
+                    java.nio.file.Files.setPosixFilePermissions(temp, it)
+                }
+            }
+            java.nio.file.Files.move(
+                temp,
+                target,
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE
+            )
+        }.onFailure { runCatching { java.nio.file.Files.deleteIfExists(temp) } }.isSuccess
+    }
 
     override fun remove(root: String, path: String): Boolean = file(root, path.trimEnd('/')).delete()
 

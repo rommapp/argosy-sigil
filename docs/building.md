@@ -153,7 +153,9 @@ has cffi and pytest. Shared and sanitized builds leave them out.
 
 Save tests read real save files from `tests/fixtures/saves/`. The files
 aren't committed, only their manifests, so a test skips when its
-platform's samples are absent and fails when only some of them are. [tests/fixtures/saves/README.md](../tests/fixtures/saves/README.md)
+platform's samples are absent. A test that asks for a sample it can't find
+fails; one whose samples come from more than one place skips each check
+without its own samples instead, and skips when none ran. [tests/fixtures/saves/README.md](../tests/fixtures/saves/README.md)
 explains how to add samples.
 
 ## Fuzzing
