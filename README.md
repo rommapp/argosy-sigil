@@ -134,11 +134,10 @@ conflicts), [CLI](docs/cli.md), [building and testing](docs/building.md).
 
 ## Status
 
-Pre-1.0. The API may evolve before 1.0. Every public struct has a
-`struct_version` field so new fields can be added without breaking
-existing consumers, but the function signatures and existing field
-layouts can still change. Consumers vendoring sigil should pin a
-specific commit; once 1.0 ships the C ABI freezes.
+1.0. The C ABI is stable: function signatures and existing field layouts
+don't change. New fields go at the end of a struct behind a new
+`struct_version`, so a consumer built against an older header keeps
+working. Releases are tagged (`v1.0.0`); pin a tag or a commit.
 
 ## Issues and contributing
 
