@@ -148,11 +148,17 @@ restore writes what the target writes for that save:
   closes the save; from Edge's header of Forza Horizon 2 this is byte for
   byte the header Canary wrote from it (`forza-horizon-2-xenia-canary`). A
   container comes as it is, except that under another profile its
-  `profile_id` names that profile: Canary hands `profile_id` to the game as
-  the save's XUID (`xcontent/xcontent_package.cc` `GetContentMetadata`,
-  through `xam_content_aggregate.cc`), opens content in that XUID's folder
-  when it isn't 0 (`content_manager.cc` `ResolvePackagePath`), and writes
-  the creating profile's for a save it makes (`InitializePackageHeader`).
+  `profile_id` names that profile, as Canary writes it for a save made under
+  a profile (`xcontent/xcontent_package.cc` `InitializePackageHeader`).
+  Canary hands `profile_id` to a game as the save's XUID only through its
+  aggregate enumerator (`xam_content_aggregate.cc`, with
+  `GetContentMetadata`), and a game that passes that back to
+  `XamContentCreate` has the save opened in that XUID's folder when it isn't
+  0 (`content_manager.cc` `ResolvePackagePath`). Its plain enumerator writes
+  `XCONTENT_DATA`, without the XUID (`xenumerator.cc`
+  `ContentEnumerator::WriteItems`), so a game that uses it, as Gears of War 2
+  does, opens the save in the signed-in profile's folder whatever the header
+  names.
 - **Edge** gets the header as the unit holds it, in either form: it reads
   both, and writes a header only for a save it creates (`xam_content.cc`
   `xeXamContentCreate` at `4ad875a`). It never hands a header's XUID to a
@@ -197,4 +203,5 @@ restore from the unit's, which keep it however long they're stored.
 - A profile Canary keeps as one STFS package file at `content/<XUID>/FFFE07D1/00010000/<XUID>`, as Install Content leaves a read-only package (`emulator.cc` `InstallContentPackage`, `content_manager.cc` `InstallContentPackage` and `OpenPackage` at `27d11a2`, which opens any path that isn't a folder as a package), isn't listed: sigil reads no STFS, so it can't see the `Account` inside. Its XUID passed as `profile` is used as given.
 - Upstream Xenia (`xenia-project/xenia`) has no row. It keeps a save at `content/<title id>/<type>/<save name>/`, with no XUID folder and no header (`content_manager.cc` `ResolvePackageRoot` at `95a5c3e`), so none of the rows above reads or writes its tree.
 - XenDroid's row is read from its source (`rfandango/XenDroid`); it hasn't been run.
+- No sample opens a save through Canary's aggregate enumerator, the one path where a container's `profile_id` decides which folder Canary opens, so that part of the rename for Canary is read from its source, not seen.
 - The extractor is experimental until it is validated against real-world samples.

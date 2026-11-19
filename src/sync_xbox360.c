@@ -190,13 +190,15 @@ int sigil_x360_header_to(int form, const uint8_t *h, size_t len, const char *pac
     }
     if (from == form) {
         int rc = copied(h, len, out, out_len);
-        /* Canary hands a container's profile_id to the game as the save's XUID
-         * (xcontent/xcontent_package.cc GetContentMetadata; the aggregate
-         * enumerator, xam_content_aggregate.cc), and opens content by that
-         * XUID's folder when it isn't 0 (content_manager.cc ResolvePackagePath),
-         * all at 27d11a2. For a save it makes under a profile it writes that
-         * profile's (InitializePackageHeader), so under another profile the
-         * header names that one. */
+        /* For a save it makes under a profile Canary writes that profile's
+         * (xcontent/xcontent_package.cc InitializePackageHeader), so under
+         * another profile the header names that one. Canary hands profile_id
+         * to a game as the save's XUID only through its aggregate enumerator
+         * (xam_content_aggregate.cc, with GetContentMetadata); its plain one
+         * writes XCONTENT_DATA, without it (xenumerator.cc WriteItems). A game
+         * that passes the aggregate back to XamContentCreate has the save
+         * opened in that XUID's folder when it isn't 0 (content_manager.cc
+         * ResolvePackagePath), all at 27d11a2. */
         uint64_t xuid = 0;
         if (rc == SIGIL_OK && profile && sigil_read_be64(h + CON_PROFILE) &&
             sscanf(profile, "%16" SCNx64, &xuid) == 1 && strlen(profile) == 16) {
