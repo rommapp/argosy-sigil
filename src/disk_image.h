@@ -4,8 +4,8 @@
  * (xemu-project/xemu at v0.8.136: docs/interop/qcow2.rst, with the masks,
  * flags and bounds of block/qcow2.h). Reads go through the
  * file's sigil_io. Writes are staged in memory and change nothing until the
- * caller takes them with sigil_disk_file, so a restore that fails halfway
- * leaves the file as it was.
+ * caller takes them with sigil_disk_file, so a restore that fails before
+ * then leaves the file as it was.
  *
  * Ported from CabinetOS's frontend/src/xboxhdd.cpp (MIT; the notice is in
  * licenses/cabinetos-MIT.txt). */
