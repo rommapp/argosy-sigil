@@ -165,7 +165,7 @@ static void restore_into(const sigil_sync_result *unit, const char *owner, const
         sigil_zip_members_free(m, n);
     }
     if (xb_others_changed(&before, &after, folder)) fail(where, "the drive's other files aren't as they were");
-    if (!xb_only_game_changed(&before, &after, folder)) fail(where, "the restore changed something that isn't the game's");
+    if (!xb_only_game_changed(&before, &after, folder, false)) fail(where, "the restore changed something that isn't the game's");
 
     /* The restored drive gives the same unit back. */
     make_game(&g, &root, owner);
@@ -183,11 +183,12 @@ static void restore_into(const sigil_sync_result *unit, const char *owner, const
 }
 
 /* The restore of `unit` into sample `into`, in parts, stopped after each of
- * its writes, the next one never made. What each stop leaves has every
- * qcow2 reference counted (clusters counted that nothing refers to are the
- * only waste), E:'s chains whole (clusters marked used that nothing holds
- * are the only waste there), each of the game's two folders holding all its
- * old files or all the unit's, and the drive's other files as they were. */
+ * its writes, the next one never made, then again with that write torn, only
+ * its last 4 KiB stored. What each stop leaves has every qcow2 reference
+ * counted (clusters counted that nothing refers to are the only waste), E:'s
+ * chains whole (clusters marked used that nothing holds are the only waste
+ * there), each of the game's two folders holding all its old files or all
+ * the unit's, and the drive's other files as they were. */
 static void stop_each(const sigil_sync_result *unit, const char *owner, const char *from, const char *into,
                       const char *where) {
     mem_root root = {0};
@@ -217,11 +218,13 @@ static void stop_each(const sigil_sync_result *unit, const char *owner, const ch
     xb_tree old, new;
     xb_walk(&before, &old);
     xb_walk(&done, &new);
-    for (int n = 0; n < calls; n++) {
+    for (int k = 0; k < 2 * calls; k++) {
+        int n = k % calls, torn = k >= calls;
         char at[200];
-        snprintf(at, sizeof(at), "%s, stopped after %d of %d writes", where, n, calls);
+        snprintf(at, sizeof(at), "%s, stopped after %d of %d writes%s", where, n, calls, torn ? ", the next torn" : "");
         root_put(&root, DRIVE, img, len);
         root.fail_part = n + 1;
+        root.torn = torn;
         make_game(&g, &root, owner);
         r = NULL;
         if (sigil_restore(&g.req, unit->data, unit->len, &r) != SIGIL_ERR_IO || root.parts != n + 1) {
@@ -244,7 +247,7 @@ static void stop_each(const sigil_sync_result *unit, const char *owner, const ch
             fail(at, "the game's TDATA folder is neither the old one nor the unit's");
         }
         if (xb_others_changed(&before, &after, folder)) fail(at, "the drive's other files aren't as they were");
-        if (!xb_only_game_changed(&before, &after, folder)) fail(at, "the stop changed something that isn't the game's");
+        if (!xb_only_game_changed(&before, &after, folder, true)) fail(at, "the stop changed something that isn't the game's");
         make_game(&g, &root, owner);
         r = NULL;
         if (sigil_collect(&g.req, &r) != SIGIL_OK) fail(at, "sigil can't read the drive the stop left");

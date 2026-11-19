@@ -81,6 +81,19 @@ static void xb_copy(const xb_guest *from, xb_guest *to) {
     }
 }
 
+/* `len` bytes at `off` read the same on both drives; chunks neither holds are zeros on both. */
+static bool xb_same_bytes(const xb_guest *a, const xb_guest *b, uint64_t off, size_t len) {
+    static const uint8_t zeros[XB_CHUNK];
+    while (len) {
+        size_t at = (size_t)(off % XB_CHUNK), n = XB_CHUNK - at < len ? XB_CHUNK - at : len;
+        const uint8_t *x = a->chunks[off / XB_CHUNK], *y = b->chunks[off / XB_CHUNK];
+        if ((x || y) && memcmp((x ? x : zeros) + at, (y ? y : zeros) + at, n) != 0) return false;
+        off += n;
+        len -= n;
+    }
+    return true;
+}
+
 /* The first byte at which two drives differ, or UINT64_MAX when they read the same. */
 static uint64_t xb_first_difference(const xb_guest *a, const xb_guest *b) {
     static const uint8_t zeros[XB_CHUNK];
@@ -771,17 +784,19 @@ static void xb_restore_free_slots(const xb_guest *before, xb_guest *clone, uint3
  * `id`: the clusters of its folders and files and their FAT entries, which
  * were its own or free before, its entry in UDATA and TDATA, and those two
  * folders themselves where the drive had none. Every other byte of the
- * drive, on any partition, must be the same. */
-static bool xb_only_game_changed(const xb_guest *before, const xb_guest *after, const char *id) {
+ * drive, on any partition, must be the same. A restore that `stopped` part
+ * way may also leave clusters it took marked used with nothing holding them,
+ * and bytes it wrote in clusters still free, which nothing reads. */
+static bool xb_only_game_changed(const xb_guest *before, const xb_guest *after, const char *id, bool stopped) {
     xb_tree tb, ta;
     xb_walk(before, &tb);
     xb_walk(after, &ta);
     uint8_t *was = (uint8_t *)calloc(XB_CLUSTERS, 1), *is = (uint8_t *)calloc(XB_CLUSTERS, 1);
     xb_game_clusters(before, &tb, id, was);
     xb_game_clusters(after, &ta, id, is);
-    /* A restore that stopped part way can leave clusters it took marked used and held by nothing. */
-    for (uint32_t c = 1; c < XB_CLUSTERS; c++) {
-        if (xb_fat(after, c) != 0 && !ta.used[c] && xb_fat(before, c) == 0) is[c] = 1;
+    for (uint32_t c = 1; stopped && c < XB_CLUSTERS; c++) {
+        if (xb_fat(before, c) != 0) continue;
+        if (xb_fat(after, c) != 0 ? !ta.used[c] : !xb_same_bytes(before, after, xb_cluster_off(c), XB_CLUSTER)) is[c] = 1;
     }
     static const char *const tops[] = { "UDATA", "TDATA" };
     xb_guest clone;

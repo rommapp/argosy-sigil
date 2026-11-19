@@ -32,6 +32,7 @@ typedef struct {
     int         parts;           /* writes of part of a file */
     size_t      part_bytes;      /* the bytes they carried */
     int         fail_part;       /* the part write (1-based) that reports failure; 0 for none */
+    int         torn;            /* 1 for fail_part to store its last 4 KiB first, as a disk can before a power cut */
     int         corrupt_part;    /* the part write (1-based) stored with its last byte flipped; 0 for none */
     int         in_parts;        /* part writes since the last open: together they count as one write */
     int         open_streams;    /* streams root_open gave that aren't closed yet */
@@ -134,7 +135,14 @@ static int root_write_at(void *ctx, const char *path, uint64_t offset, const uin
         if (r->writes == 1) snprintf(r->first_write, sizeof(r->first_write), "%s", path);
     }
     r->parts++;
-    if (!f || r->parts == r->fail_part || (r->exclusive && r->open_streams)) return -1;
+    if (f && r->parts == r->fail_part && r->torn) {
+        size_t keep = len < 4096 ? len : 4096;
+        offset += len - keep;
+        data += len - keep;
+        len = keep;
+    } else if (!f || r->parts == r->fail_part || (r->exclusive && r->open_streams)) {
+        return -1;
+    }
     if (offset + len > f->len) {
         f->data = (uint8_t *)realloc(f->data, (size_t)(offset + len));
         memset(f->data + f->len, 0, (size_t)(offset + len) - f->len);
@@ -143,7 +151,7 @@ static int root_write_at(void *ctx, const char *path, uint64_t offset, const uin
     memcpy(f->data + offset, data, len);
     if (r->parts == r->corrupt_part && len > 0) f->data[offset + len - 1] ^= 0xFF;
     r->part_bytes += len;
-    return 0;
+    return r->parts == r->fail_part ? -1 : 0;
 }
 
 /* A path ending in '/' is a directory: it goes when no file is left under it. */
