@@ -81,6 +81,10 @@ target_include_directories(unit_rzip PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(unit_rzip PRIVATE sigil_zstd_compress sigil_zlib)
 sigil_add_test(unit_save_unit)
 sigil_add_test(unit_utf8_paths)
+# Builds its drive images, some clusters compressed, without the library.
+sigil_add_test(unit_sync_xbox)
+target_include_directories(unit_sync_xbox PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(unit_sync_xbox PRIVATE sigil_zlib)
 
 # Checks the save samples against their manifests. It hashes the files with
 # sigil's md5 compiled in directly, so it doesn't link the library it will
@@ -100,7 +104,7 @@ foreach(t integration_card_ps1 integration_card_ps2 integration_card_gamecube
           integration_clock_gb integration_sync_ps1 integration_sync_ps2
           integration_sync_volumes integration_sync_dreamcast integration_sync_gamecube
           integration_sync_companions integration_sync_profiles integration_sync_n64 integration_sync_gb
-          integration_sync_nds integration_sync_genesis)
+          integration_sync_nds integration_sync_genesis integration_sync_xbox)
     sigil_add_test(${t})
     target_include_directories(${t} PRIVATE ${CMAKE_SOURCE_DIR}/src)
     target_compile_definitions(${t} PRIVATE
@@ -113,6 +117,7 @@ endforeach()
 # libsigil keeps those dependencies private and the tests fail to link.
 target_link_libraries(unit_zip PRIVATE sigil_zlib)
 target_link_libraries(integration_sync_volumes PRIVATE sigil_zlib)
+target_link_libraries(integration_sync_xbox PRIVATE sigil_zlib)
 target_link_libraries(unit_zar PRIVATE sigil_zstd_compress)
 target_link_libraries(unit_switch_cnmt PRIVATE sigil_aes)
 

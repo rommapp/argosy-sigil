@@ -173,6 +173,9 @@ set(SIGIL_SOURCES
     src/sync_genesis.c
     src/zip_mem.c
     src/save_names.c
+    src/disk_image.c
+    src/fatx.c
+    src/sync_xbox.c
 )
 list(REMOVE_DUPLICATES SIGIL_SOURCES)
 

@@ -388,20 +388,25 @@ static void single_unit(uint8_t *data, size_t len, const char *name, uint8_t **o
     sigil_md5_of(data, len, content);
 }
 
-/* A zip of `members` named `<stem>.zip`, its content hash over each member's
- * name and bytes. */
-static int zip_unit(const sigil_zip_member *members, size_t n, const char *stem, uint8_t **out, size_t *len, int *shape,
-                    char artifact[SIGIL_SAVE_ENTRY_MAX], char content[33]) {
-    int rc = sigil_zip_store(members, n, out, len);
-    sigil_named_md5 *parts = rc == SIGIL_OK ? (sigil_named_md5 *)calloc(n ? n : 1, sizeof(*parts)) : NULL;
-    if (rc == SIGIL_OK && !parts) rc = SIGIL_ERR_OOM;
-    if (rc != SIGIL_OK) return rc;
+int sigil_sync_members_hash(const sigil_zip_member *members, size_t n, char out[33]) {
+    sigil_named_md5 *parts = (sigil_named_md5 *)calloc(n ? n : 1, sizeof(*parts));
+    if (!parts) return SIGIL_ERR_OOM;
     for (size_t i = 0; i < n; i++) {
         snprintf(parts[i].name, sizeof(parts[i].name), "%s", members[i].name);
         sigil_md5_of(members[i].data, members[i].len, parts[i].md5);
     }
-    sigil_named_hash(parts, n, content);
+    sigil_named_hash(parts, n, out);
     free(parts);
+    return SIGIL_OK;
+}
+
+/* A zip of `members` named `<stem>.zip`, its content hash over each member's
+ * name and bytes. */
+static int zip_unit(const sigil_zip_member *members, size_t n, const char *stem, uint8_t **out, size_t *len, int *shape,
+                    char artifact[SIGIL_SAVE_ENTRY_MAX], char content[33]) {
+    int rc = sigil_sync_members_hash(members, n, content);
+    if (rc == SIGIL_OK) rc = sigil_zip_store(members, n, out, len);
+    if (rc != SIGIL_OK) return rc;
     *shape = SIGIL_SAVE_SHAPE_MULTI;
     snprintf(artifact, SIGIL_SAVE_ENTRY_MAX, "%s.zip", stem);
     return SIGIL_OK;

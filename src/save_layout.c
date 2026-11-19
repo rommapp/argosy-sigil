@@ -551,6 +551,17 @@ static const sigil_layout_profiles PSP_FOLDERS = {
 };
 static const char *const PSP_SUBDIRS[] = { "PSP/SAVEDATA" };
 
+/* xemu (xemu-project/xemu at v0.8.136) runs the console's own kernel on one
+ * hard-disk image every game shares: the file its `hdd_path` setting names
+ * (config_spec.yml sys.files.hdd_path, a string with no default; system/vl.c
+ * attaches no drive when it is empty). X1 BOX (izzy2lost/xemu at 57bc6d6,
+ * SetupWizardActivity.kt), xemu on Android, copies the image the user picks,
+ * raw or qcow2, into its files folder as hdd.img. The save root is the
+ * folder holding the image. */
+static const sigil_layout_shared XEMU_SHARED[] = { S("{xemu_hdd}") };
+static const sigil_layout_shared X1BOX_SHARED[] = { S("{x1box_hdd}") };
+#define ROW_XBOX_DRIVE(l, s) { l, "xbox", NULL, 0, s, COUNT(s), NULL, 0, NULL, NULL, true }
+
 #define ROW_PROFILES(l, p, d, pr) { l, p, NULL, 0, NULL, 0, d, COUNT(d), NULL, &pr }
 
 #define ROW(l, p, m)            { l, p, m, COUNT(m), NULL, 0, NULL, 0 }
@@ -631,6 +642,8 @@ static const sigil_layout LAYOUTS[] = {
     ROW_PROFILES("ppsspp", "psp", PSP_SUBDIRS, PSP_FOLDERS),
     ROW_PROFILES("ppsspp_standalone", "psp", PSP_SUBDIRS, PSP_FOLDERS),
     ROW_PROFILES("psp_console", "psp", PSP_SUBDIRS, PSP_FOLDERS),
+    ROW_XBOX_DRIVE("xemu", XEMU_SHARED),
+    ROW_XBOX_DRIVE("x1box", X1BOX_SHARED),
 };
 
 const char *sigil_layout_platform(const char *slug) {
@@ -715,7 +728,7 @@ static void note_variables(sigil_layout_info *info, const char *template_) {
         if (!sigil_save_variable_option(info->id, open + 1, len, key, &fallback)) continue;
         sigil_layout_option *o = option_for(info, key);
         if (!o) continue;
-        if (!o->default_value[0]) snprintf(o->default_value, sizeof(o->default_value), "%s", fallback);
+        if (!o->default_value[0] && fallback) snprintf(o->default_value, sizeof(o->default_value), "%s", fallback);
         if (len == 9 && strncmp(open + 1, "cart_size", 9) == 0) {
             const char *values[SIGIL_LAYOUT_OPTION_VALUES];
             size_t n = sigil_gpgx_cart_values(values, SIGIL_LAYOUT_OPTION_VALUES);

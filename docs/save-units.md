@@ -87,7 +87,7 @@ Each row names one core (`layout`), optionally one platform, its member
 templates, the shared files it may write, and the subfolders it writes
 into. Template variables: `{stem}`, `{romset}` (same as the stem),
 `{title_id}`, `{save_id}`, `{cart_size}`, `{nvram_version}`,
-`{left_index}`, `{right_index}`, `{pcsx2_slot1}`, `{pcsx2_slot2}`, `{dc_vmu_id}`, `{disc_id}`,
+`{left_index}`, `{right_index}`, `{pcsx2_slot1}`, `{pcsx2_slot2}`, `{xemu_hdd}`, `{x1box_hdd}`, `{dc_vmu_id}`, `{disc_id}`,
 `{pcsx_serial}`, `{gc_region}`, `{n64_header}`, `{n64_md5_8}`,
 `{n64_md5_lower}`, `{n64_md5_n64}`. A template ending in `/` names a folder
 whose whole subtree is the member. A `*` in a template stands for any run
@@ -113,6 +113,10 @@ the `beetle_psx_` keys of the same names on `mednafen_psx`.
 `{pcsx2_slot1}` and `{pcsx2_slot2}` are `Slot1_Filename` (default
 `Mcd001.ps2`) and `Slot2_Filename` (default `Mcd002.ps2`), the card names
 in PCSX2's `[MemoryCards]` section.
+`{xemu_hdd}` and `{x1box_hdd}` are the file name of `hdd_path`, the
+hard-disk image in xemu's `[sys.files]` section (no default: xemu has none),
+and the image X1 BOX keeps (default `hdd.img`); a value that is a whole
+path gives its last segment.
 `{dc_vmu_id}` is the Dreamcast product number (`title_id`) with each of
 ` /\:*?|<>` replaced by `_`, as flycast names a per-game VMU.
 `{disc_id}` is `save_id` with only its letters and digits (`SLUS-01040`

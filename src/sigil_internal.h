@@ -434,6 +434,23 @@ int sigil_zip_store(const sigil_zip_member *members, size_t count, uint8_t **out
 int sigil_zip_read_mem(const uint8_t *zip, size_t len, size_t max_member, sigil_zip_member **out, size_t *count);
 void sigil_zip_members_free(sigil_zip_member *members, size_t count);
 
+/** A zip entry's modification time and date, as zip packs them (MS-DOS: two-second steps, years from 1980). */
+typedef struct {
+    uint16_t time;
+    uint16_t date;
+} sigil_zip_stamp;
+
+/**
+ * Gives file entry `i` of `zip` the time and date `stamps[i]`, for the
+ * `count` entries of a zip sigil_zip_store made: a unit whose files carry a
+ * time the console shows (an Xbox save's). Neither RomM's hash nor the
+ * identity hash reads them.
+ */
+int sigil_zip_set_stamps(uint8_t *zip, size_t len, const sigil_zip_stamp *stamps, size_t count);
+
+/** The time and date of each file entry of `zip`, in the order sigil_zip_read_mem gives the files; `*out` is malloc'd. */
+int sigil_zip_get_stamps(const uint8_t *zip, size_t len, sigil_zip_stamp **out, size_t *count);
+
 /** The one file holding a backup RAM device for the request's game. */
 typedef struct {
     char path[SIGIL_SAVE_PATH_MAX];

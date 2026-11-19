@@ -189,9 +189,10 @@ static bool sega_cart(const sigil_sync_request *req) {
                     strcmp(cart, "gamegear") == 0);
 }
 
-/* Saves kept as plain files: a layout with profiles, or a cartridge's. */
+/* Saves kept as plain files: a layout with profiles, a cartridge's, or the
+ * folders on an Xbox drive image. */
 static bool plain_files(const sigil_sync_request *req, const sigil_layout *layout) {
-    return layout->profiles || cart_platform(req);
+    return layout->profiles || layout->xbox_drive || cart_platform(req);
 }
 
 /* The kind for the request: saves kept as plain files need nothing from a
@@ -200,7 +201,7 @@ static const sigil_sync_kind *kind_for(const sigil_sync_request *req, const sigi
                                        sigil_sync_kind *files) {
     if (!plain_files(req, layout)) return sigil_sync_kind_for(req);
     memset(files, 0, sizeof(*files));
-    files->platform = layout->profiles ? layout->platform : cart_platform(req);
+    files->platform = layout->profiles || layout->xbox_drive ? layout->platform : cart_platform(req);
     files->has_ids = true;
     return req->companion_count ? NULL : files;
 }
@@ -220,6 +221,7 @@ int sigil_collect(const sigil_sync_request *req, sigil_sync_result **out) {
     if (rc == SIGIL_OK) rc = sigil_save_alternates(&req->save, &r->alternates, &r->alternate_count);
     if (rc == SIGIL_OK) {
         rc = layout->profiles ? sigil_sync_collect_profiles(&x, layout->profiles, r)
+           : layout->xbox_drive ? sigil_sync_collect_xbox(&x, r)
            : n64_cart(req)    ? sigil_sync_collect_n64(&x, r)
            : nds_cart(req)    ? sigil_sync_collect_nds(&x, r)
            : sega_cart(req)   ? sigil_sync_collect_genesis(&x, r)
@@ -393,6 +395,7 @@ int sigil_restore(const sigil_sync_request *req, const uint8_t *unit, size_t uni
     if (r) r->hardcore_marker = marked;
     if (rc == SIGIL_OK) {
         rc = layout->profiles ? sigil_sync_restore_profiles(&x, layout->profiles, unit, saves_len, r, local_identity)
+           : layout->xbox_drive ? sigil_sync_restore_xbox(&x, unit, saves_len, r, local_identity)
            : n64_cart(req)    ? sigil_sync_restore_n64(&x, unit, saves_len, unit_len, r, local_identity)
            : nds_cart(req)    ? sigil_sync_restore_nds(&x, unit, saves_len, unit_len, r, local_identity)
            : sega_cart(req)   ? sigil_sync_restore_genesis(&x, unit, saves_len, unit_len, r, local_identity)

@@ -2,6 +2,7 @@
 #include "sigil.h"
 #include "save_layout.h"
 #include "save_unit_fixture.h"
+#include "sync_internal.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -457,6 +458,7 @@ static void test_option_values(void) {
         "pcsx-card1.mcd", "pcsx-card2.mcd",
     };
     static const char *const PS2[] = { "G.ps2", "Mcd001.ps2", "Mcd002.ps2" };
+    static const char *const XBOX[] = { "xbox_hdd.qcow2", "my drive.qcow2", "hdd.img" };
     static const char *const SATURN[] = {
         "G.srm", "G.bkr", "G.bcr", "G.smpc", "mednafen_saturn_libretro_shared.bkr",
         "mednafen_saturn_libretro_shared.smpc", "mednafen_saturn_libretro_shared.bcr",
@@ -561,6 +563,12 @@ static void test_option_values(void) {
         { "pcsx_rearmed serial from title id", "pcsx_rearmed", "psx", "G.cue", { { "pcsx_rearmed_memcard1", "serial" } },
           L(PCSX), { "SLUS-01206_1.mcd" }, { "pcsx-card2.mcd" }, "SLUS-01206", NULL },
         { "lrps2 default", "pcsx2", "ps2", "G.iso", { { 0 } }, L(PS2), { 0 }, { "Mcd001.ps2", "Mcd002.ps2" } },
+        { "xemu, the drive hdd_path names", "xemu", "xbox", "G.iso", { { "hdd_path", "/home/me/xemu/my drive.qcow2" } },
+          L(XBOX), { 0 }, { "my drive.qcow2" } },
+        { "xemu with no hdd_path names no drive", "xemu", "xbox", "G.iso", { { 0 } }, L(XBOX), { 0 }, { 0 } },
+        { "x1box", "x1box", "xbox", "G.iso", { { 0 } }, L(XBOX), { 0 }, { "hdd.img" } },
+        { "x1box, another drive", "x1box", "xbox", "G.iso", { { "hdd_path", "my drive.qcow2" } }, L(XBOX), { 0 },
+          { "my drive.qcow2" } },
         { "lrps2 per game", "pcsx2", "ps2", "G.iso", { { "pcsx2_shared_memory_cards", "disabled" } }, L(PS2), { "G.ps2" },
           { 0 } },
         { "beetle saturn default", "mednafen_saturn", "saturn", "G.cue", { { 0 } }, L(SATURN), { "G.srm", "G.bcr", "G.smpc" },
@@ -1172,6 +1180,37 @@ static void test_fds_patch(void) {
     }
 }
 
+/* The hash collect gives a zip unit, over its members, is RomM's hash of the same files. */
+static void test_members_hash(void) {
+    sigil_zip_member crystal[2];
+    memset(crystal, 0, sizeof(crystal));
+    snprintf(crystal[0].name, sizeof(crystal[0].name), "Crystal.srm");
+    crystal[0].data = (uint8_t *)"AAAA";
+    crystal[0].len = 4;
+    snprintf(crystal[1].name, sizeof(crystal[1].name), "Crystal.rtc");
+    crystal[1].data = (uint8_t *)"BBBB";
+    crystal[1].len = 4;
+    char got[33] = "";
+    if (sigil_sync_members_hash(crystal, 2, got) != SIGIL_OK) fail("members hash", "hash failed");
+    expect_str("members hash", got, MULTI_CRYSTAL_HASH, "hash");
+
+    struct { const char *label; const uint8_t *zip; size_t len; const char *hash; } zips[] = {
+        { "members hash, stored zip", STORED_ZIP, sizeof(STORED_ZIP), STORED_ZIP_HASH },
+        { "members hash, deflated zip", DEFLATED_ZIP, sizeof(DEFLATED_ZIP), DEFLATED_ZIP_HASH },
+    };
+    for (size_t i = 0; i < sizeof(zips) / sizeof(zips[0]); i++) {
+        sigil_zip_member *m = NULL;
+        size_t n = 0;
+        got[0] = '\0';
+        if (sigil_zip_read_mem(zips[i].zip, zips[i].len, 1u << 20, &m, &n) != SIGIL_OK ||
+            sigil_sync_members_hash(m, n, got) != SIGIL_OK) {
+            fail(zips[i].label, "read or hash failed");
+        }
+        expect_str(zips[i].label, got, zips[i].hash, "hash");
+        if (m) sigil_zip_members_free(m, n);
+    }
+}
+
 int main(void) {
     test_stem();
     test_default_layout();
@@ -1185,6 +1224,7 @@ int main(void) {
     test_single_file_cores();
     test_arcade();
     test_hashes();
+    test_members_hash();
     test_alternates();
     test_fds_patch();
     test_bsnes_files();
