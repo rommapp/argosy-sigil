@@ -182,6 +182,10 @@ static int qcow2_open(sigil_disk *d) {
     if (version == 3) {
         uint64_t incompatible = sigil_read_be64(h + 72);
         uint32_t header_len = sigil_read_be32(h + 100);
+        /* A version 3 header holds at least the fields through header_length,
+         * 104 bytes (qcow2.rst "header_length"; block/qcow2.c qcow2_do_open at
+         * v0.8.136 refuses less as "qcow2 header too short"). */
+        if (header_len < QCOW2_HEADER_V3) return SIGIL_ERR_DAMAGED;
         if (incompatible & QCOW2_INCOMPAT_CORRUPT) return SIGIL_ERR_DAMAGED;
         /* The compression bit only says the header names a type, which must
          * still be zlib. Every other bit is a feature outside this code. */

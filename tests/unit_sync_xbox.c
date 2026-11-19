@@ -704,6 +704,7 @@ static void external_data(mem_root *root) { patch32(root, 76, 4); }
 static void extended_l2(mem_root *root) { patch32(root, 76, 16); }
 static void wide_refcounts(mem_root *root) { patch32(root, 96, 6); }
 static void version_4(mem_root *root) { patch32(root, 4, 4); }
+static void short_header(mem_root *root) { patch32(root, 100, 72); }
 static void zstd(mem_root *root) {
     patch32(root, 76, 8);
     root_find(root, DRIVE)->data[104] = 1;
@@ -768,6 +769,7 @@ static void check_images(void) {
     check_image("qcow2 version 4", SIGIL_ERR_UNSUPPORTED_FORMAT, version_4, false);
     check_image("Zstandard compression", SIGIL_ERR_UNSUPPORTED_FORMAT, zstd, false);
     check_image("an image marked corrupt", SIGIL_ERR_DAMAGED, marked_corrupt, true);
+    check_image("a version 3 header shorter than 104 bytes", SIGIL_ERR_DAMAGED, short_header, true);
     check_image("a drive without E:", SIGIL_ERR_DAMAGED, no_e, true);
     check_image("an image cut short", SIGIL_ERR_DAMAGED, cut_short, true);
     check_image("a save with a broken chain", SIGIL_ERR_DAMAGED, broken_chain, true);
