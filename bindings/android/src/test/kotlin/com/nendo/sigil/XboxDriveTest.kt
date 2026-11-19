@@ -135,6 +135,27 @@ class XboxDriveTest {
     }
 
     @Test
+    fun callsShapedBeforeWritesPartsStillLinkAndWriteWhole() {
+        assumeTrue("Xbox drive sample missing", SAMPLE.exists())
+        val root = blankRoot()
+        val drive = File(root, "xbox_hdd.qcow2")
+        val before = identity(drive)
+        val access = JavaFileAccess()
+        JavaCalls.restore(unit(), halo, "xemu", "Halo (USA).iso", root.path, DRIVE, access)
+        assertEquals(1, access.writes)
+        assertTrue("written in place", identity(drive) != before)
+
+        /* Kotlin compiled before writesParts calls restore$default with these parameters. */
+        val bool = java.lang.Boolean.TYPE
+        Sigil::class.java.getMethod(
+            "restore\$default", Sigil::class.java, ByteArray::class.java, SigilResult::class.java, String::class.java,
+            String::class.java, String::class.java, List::class.java, Map::class.java, List::class.java,
+            ByteArray::class.java, bool, bool, List::class.java, List::class.java, bool, String::class.java,
+            SigilFileAccess::class.java, Integer.TYPE, Any::class.java
+        )
+    }
+
+    @Test
     fun aRestoreWithoutADriveImageNamesTheOneItNeeds() {
         val root = Files.createTempDirectory("sigil-xbox-empty").toFile()
         try {

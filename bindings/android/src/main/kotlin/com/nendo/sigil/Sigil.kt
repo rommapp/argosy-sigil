@@ -754,10 +754,37 @@ object Sigil {
      * GCI folder has no free name for a new save.
      * The last six name the save, member or files in [SigilException.problem].
      *
-     * Files are written whole through [SigilFileAccess.write]. With [writesParts], a file every
-     * game's saves sit in (an Xbox hard-disk image) gets only the parts that change, through
-     * [SigilPartFileAccess.writeAt], which [fileAccess] must then implement; docs/sync.md,
-     * "Writing and removing", says what a restore stopped part way leaves.
+     * Files are written whole through [SigilFileAccess.write]; the overload below that takes
+     * writesParts can write a drive image in parts instead.
+     */
+    fun restore(
+        unit: ByteArray,
+        game: SigilResult,
+        core: String,
+        contentPath: String,
+        saveRoot: String,
+        listing: List<String>? = null,
+        options: Map<String, String> = emptyMap(),
+        gameIds: List<String> = emptyList(),
+        state: ByteArray? = null,
+        unmanaged: Boolean = false,
+        overwriteLocal: Boolean = false,
+        claimed: List<String> = emptyList(),
+        companions: List<SigilCompanion> = emptyList(),
+        repair: Boolean = false,
+        profile: String? = null,
+        fileAccess: SigilFileAccess = PosixFileAccess
+    ): SigilSyncResult =
+        restore(unit, game, core, contentPath, saveRoot, listing, options, gameIds, state, unmanaged, overwriteLocal,
+            claimed, companions, repair, profile, fileAccess, writesParts = false)
+
+    /**
+     * [restore] as above. With [writesParts], a file every game's saves sit in (an Xbox
+     * hard-disk image) gets only the parts that change, through [SigilPartFileAccess.writeAt],
+     * which [fileAccess] must then implement; docs/sync.md, "Writing and removing", says what a
+     * restore stopped part way leaves. Without it, files are written whole. writesParts has no
+     * default, so a call that leaves it out takes the overload above, whose shape callers
+     * compiled before it existed still link against.
      */
     fun restore(
         unit: ByteArray,
@@ -776,7 +803,7 @@ object Sigil {
         repair: Boolean = false,
         profile: String? = null,
         fileAccess: SigilFileAccess = PosixFileAccess,
-        writesParts: Boolean = false
+        writesParts: Boolean
     ): SigilSyncResult {
         require(!writesParts || fileAccess is SigilPartFileAccess) { "writesParts needs a SigilPartFileAccess" }
         return sync(unit, game, core, contentPath, saveRoot, listing, options, gameIds, state, unmanaged,
