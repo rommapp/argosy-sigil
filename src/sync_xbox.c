@@ -89,16 +89,7 @@ static int files_sort(file_list *l) {
 /* The hash over each file's unit name and bytes: RomM's hash of the unit. "" for no files. */
 static int files_identity(const file_list *l, char out[33]) {
     out[0] = '\0';
-    if (!l->count) return SIGIL_OK;
-    sigil_named_md5 *parts = (sigil_named_md5 *)calloc(l->count, sizeof(*parts));
-    if (!parts) return SIGIL_ERR_OOM;
-    for (size_t i = 0; i < l->count; i++) {
-        snprintf(parts[i].name, sizeof(parts[i].name), "%s", l->items[i].name);
-        sigil_md5_of(l->items[i].data, l->items[i].len, parts[i].md5);
-    }
-    sigil_named_hash(parts, l->count, out);
-    free(parts);
-    return SIGIL_OK;
+    return l->count ? sigil_sync_members_hash(l->items, l->count, out) : SIGIL_OK;
 }
 
 /* FATX counts years from 2000, zip from 1980. */
@@ -329,22 +320,22 @@ static int read_unit(const uint8_t *unit, size_t len, const char *id, file_list 
     int rc = sigil_zip_read_mem(unit, len, XBOX_MAX_MEMBER, &members, &count);
     if (rc == SIGIL_OK) rc = sigil_zip_get_stamps(unit, len, &stamps, &stamp_count);
     if (rc == SIGIL_OK && stamp_count != count) rc = SIGIL_ERR_UNSUPPORTED_FORMAT;
-    sigil_named_md5 *parts = rc == SIGIL_OK ? (sigil_named_md5 *)calloc(count ? count : 1, sizeof(*parts)) : NULL;
-    if (rc == SIGIL_OK && !parts) rc = SIGIL_ERR_OOM;
+    char hash[33] = "";
+    if (rc == SIGIL_OK && count) rc = sigil_sync_members_hash(members, count, hash);
     for (size_t i = 0; rc == SIGIL_OK && i < count; i++) {
         sigil_zip_member *m = &members[i];
-        snprintf(parts[i].name, sizeof(parts[i].name), "%s", m->name);
-        sigil_md5_of(m->data, m->len, parts[i].md5);
-        for (char *c = m->name; *c; c++) {
+        char path[sizeof(m->name)];
+        snprintf(path, sizeof(path), "%s", m->name);
+        for (char *c = path; *c; c++) {
             if (*c == '\\') *c = '/';
         }
         for (size_t f = 0; rc == SIGIL_OK && f < FOLDER_COUNT; f++) {
-            const char *in_folder = after_segment(m->name, FOLDERS[f]);
+            const char *in_folder = after_segment(path, FOLDERS[f]);
             const char *rest = in_folder ? after_segment(in_folder, id) : NULL;
             if (!rest) continue;
             char name[SIGIL_SAVE_ENTRY_MAX];
             if (!path_ok(rest) || snprintf(name, sizeof(name), "%s/%s/%s", FOLDERS[f], id, rest) >= (int)sizeof(name)) {
-                snprintf(r->problem, sizeof(r->problem), "%s", parts[i].name);
+                snprintf(r->problem, sizeof(r->problem), "%s", m->name);
                 rc = SIGIL_ERR_NO_TARGET;
                 break;
             }
@@ -358,11 +349,9 @@ static int read_unit(const uint8_t *unit, size_t len, const char *id, file_list 
         }
     }
     if (rc == SIGIL_OK) {
-        content[0] = '\0';
-        if (count) sigil_named_hash(parts, count, content);
+        memcpy(content, hash, sizeof(hash));
         if (!out->count) rc = SIGIL_ERR_NOT_FOUND;
     }
-    free(parts);
     free(stamps);
     if (members) sigil_zip_members_free(members, count);
     if (rc == SIGIL_OK) rc = files_sort(out);

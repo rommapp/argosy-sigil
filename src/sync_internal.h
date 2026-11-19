@@ -274,6 +274,8 @@ int sigil_sync_identity_where(const sigil_sync_saves *l, int owner, const char *
 int sigil_sync_identity_of(const sigil_sync_saves *l, char out[33]);
 /** As sigil_sync_identity_where for `owner` (and companion `key`), or "" when there are none. */
 int sigil_sync_identity_or_empty(const sigil_sync_saves *l, int owner, const char *key, char out[33]);
+/** RomM's hash of a zip unit: sigil_named_hash over each member's name and the MD5 of its bytes. */
+int sigil_sync_members_hash(const sigil_zip_member *members, size_t n, char out[33]);
 
 /** The name each device's volume travels under in a unit; "" for none. */
 const char *sigil_sync_device_name(int device);
