@@ -55,11 +55,19 @@ profile's XUID as Xenia names its folder, 16 uppercase hex digits
 **Profiles are listed by id alone.** The profile's name, its gamertag, is
 in the `Account` file, which is encrypted with a key of the console's
 that sigil doesn't carry, so every profile's `name` is empty. A client
-asks the user which XUID is theirs, or uses the one it knows. A profile
-folder without an `Account` file is not a profile, as a user folder
-without `localusername` isn't on RPCS3. A XUID a client passes that the
-emulator doesn't list is used as given: pass it in uppercase, as Xenia
-names its folders.
+asks the user which XUID is theirs, or uses the one it knows.
+
+The list holds the profiles the emulators sign in with. `FindProfiles`
+takes each folder of `content/` named by 16 uppercase hex digits, other
+than the all-zero XUID, that holds the profile package; `LoadAccount`
+reads the `Account` in it, and `Login` signs in only a profile whose
+`Account` loaded (`profile_manager.cc` in Edge at `4ad875a`, Canary at
+`27d11a2` and XenDroid at `779680a`). So sigil lists each such folder
+holding an `Account`, and a folder without one, or named otherwise, is no
+profile. A `profile` the list doesn't hold is used as given when it has
+that form. One that doesn't (lowercase, the wrong length, not hex, or the
+all-zero XUID) names a folder no Xenia reads, and collect and restore
+refuse it with `SIGIL_ERR_INVALID_ARG`, writing nothing.
 
 ## Save formats
 

@@ -527,6 +527,10 @@ static const sigil_layout_area XENIA_AREAS[] = {
       "{profile}/{save_id}/Headers/00000001/" },
 };
 static const char *const XENIA_DROPPED[] = { "{profile}/FFFE07D1/" };
+/* A profile is a folder holding its Account: FindProfiles takes each folder
+ * holding the profile package, LoadAccount reads the Account in it, and Login
+ * signs in only a profile whose Account loaded (profile_manager.cc, the same
+ * three commits), so no save is made under a folder without one. */
 static const sigil_layout_profiles XENIA_PROFILES = {
     "content", SIGIL_PROFILES_XENIA, "content/{profile}/FFFE07D1/00010000/{profile}/Account", XENIA_AREAS,
     COUNT(XENIA_AREAS), NULL, 0, false, false, NULL, NULL, 0, NULL, XENIA_DROPPED, COUNT(XENIA_DROPPED),

@@ -291,7 +291,9 @@ static void check_older_unit(const sigil_sync_result *unit) {
 }
 
 /* A Xenia that never made a profile: an account save needs the client to
- * name one, and lands under that id. */
+ * name one, and lands under that id. An id in a form no Xenia lists (Edge and
+ * Canary's FindProfiles take [0-9A-F]{16} other than the all-zero XUID) names
+ * a folder none reads, so it is refused before anything is written. */
 static void check_no_profile(const sigil_sync_result *unit) {
     mem_root empty = {0};
     game g;
@@ -301,6 +303,16 @@ static void check_no_profile(const sigil_sync_result *unit) {
     if (!w || strncmp(w->problem, TITLE "/", strlen(TITLE "/")) != 0) fail("restore with no profile", "problem");
     if (empty.writes) fail("restore with no profile", "wrote before refusing");
     sigil_sync_result_free(w);
+
+    const char *unread[] = { "e030000043414231", "E03000004341423", "E03000004341423G", "E0300000434142310",
+                             "E03000004341423 ", ZERO_XUID };
+    for (size_t i = 0; i < sizeof(unread) / sizeof(unread[0]); i++) {
+        g.req.save.profile = unread[i];
+        w = NULL;
+        expect_rc(unread[i], restore(&g, unit->data, unit->len, &w), SIGIL_ERR_INVALID_ARG);
+        sigil_sync_result_free(w);
+    }
+    if (empty.writes) fail("restore under an id no Xenia lists", "wrote before refusing");
 
     g.req.save.profile = CABINET;
     w = NULL;
@@ -331,17 +343,27 @@ static void check_two_profiles(void) {
     expect_rc("two profiles, one named", collect(&g, &r), SIGIL_OK);
     if (!r || strcmp(r->profile, CABINET) != 0) fail("two profiles, one named", "profile");
     sigil_sync_result_free(r);
+    g.req.save.profile = "e03000000c0ffee1";
+    r = NULL;
+    expect_rc("two profiles, an unlisted lowercase id", collect(&g, &r), SIGIL_ERR_INVALID_ARG);
+    sigil_sync_result_free(r);
     root_free(&root);
 }
 
-/* The profile list is the Account files under a profile's own folder: a
- * folder naming two ids is no profile, nor is the all-zero XUID. */
+/* The profile list is the Account files under a profile's own folder, the
+ * folder named as FindProfiles matches it: a folder naming two ids is no
+ * profile, nor is the all-zero XUID, a lowercase or short folder name, or a
+ * profile folder with no Account. */
 static void check_profile_list(void) {
     mem_root root = {0};
     put_profile(&root, CABINET, true);
     put_profile(&root, CANARY, false);
     put_text(&root, "content/E030000011111111" DASHBOARD "E030000022222222/Account", "a stray copy");
     put_header(&root, DEVICE_HDR, 328, 0xDE);
+    put_profile(&root, ZERO_XUID, false);
+    put_profile(&root, "e03000000c0ffee1", false);
+    put_profile(&root, "E03000000C0FFEE", false);
+    put_text(&root, "content/E03000000C0FFEE2" DASHBOARD "E03000000C0FFEE2/FFFE07D1.gpd", "no account");
     sigil_save_request req;
     memset(&req, 0, sizeof(req));
     req.struct_version = SIGIL_SAVE_REQUEST_V1;

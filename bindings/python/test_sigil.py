@@ -893,5 +893,8 @@ def test_an_xbox_360_save_moves_between_xenias_under_each_ones_profile(tmp_path)
 
     with pytest.raises(sigil.SigilNoTargetError):
         sigil.restore(unit.data, _FH2, "xenia_edge", "Forza Horizon 2.iso", fresh)
+    with pytest.raises(sigil.SigilInvalidArgError):
+        sigil.restore(unit.data, _FH2, "xenia_edge", "Forza Horizon 2.iso", fresh, profile=_CABINET_XUID.lower())
+    assert not any(fresh.iterdir())
     sigil.restore(unit.data, _FH2, "xenia_edge", "Forza Horizon 2.iso", fresh, profile=_CABINET_XUID)
     assert (fresh / "content" / _CABINET_XUID / save).read_bytes() == b"progress"

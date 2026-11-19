@@ -506,7 +506,21 @@ static void name_from(int format, const uint8_t *data, size_t len, char out[SIGI
     }
 }
 
+/* An id the emulator itself could list. Xenia lists a folder named by 16
+ * uppercase hex digits other than the all-zero XUID (profile_manager.cc
+ * FindProfiles, its regex [0-9A-F]{16}: Edge at 4ad875a, Canary at 27d11a2,
+ * XenDroid at 779680a); any other folder is one it never reads. */
+static bool id_fits(int format, const char *id) {
+    if (format != SIGIL_PROFILES_XENIA) return true;
+    if (strlen(id) != 16 || strcmp(id, "0000000000000000") == 0) return false;
+    for (size_t i = 0; i < 16; i++) {
+        if (!(id[i] >= '0' && id[i] <= '9') && !(id[i] >= 'A' && id[i] <= 'F')) return false;
+    }
+    return true;
+}
+
 static void add_profile(sigil_profile_root *p, const char *id, const char *name) {
+    if (!id_fits(p->row->format, id)) return;
     for (size_t i = 0; i < p->profile_count; i++) {
         if (strcmp(p->profiles[i].id, id) == 0) return;
     }
@@ -982,6 +996,7 @@ int sigil_profile_root_open(const sigil_save_request *req, const sigil_layout_pr
     else if (implied[0]) pick(p, implied);
     else if (p->profile_count == 1) pick(p, p->profiles[0].id);
     else p->several = p->profile_count > 1;
+    if (p->profile[0] && !id_fits(row->format, p->profile)) return SIGIL_ERR_INVALID_ARG;
     return device_folder_name(row, p->profile) ? SIGIL_ERR_INVALID_ARG : SIGIL_OK;
 }
 
