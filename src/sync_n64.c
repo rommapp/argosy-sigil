@@ -5,7 +5,6 @@
  * .fla and four-pak .mpk, or Project64's with a .mpk per controller. */
 #include "sync_internal.h"
 #include "n64_save.h"
-#include <ctype.h>
 
 /* A .srm with a 64DD disk appended (parallel_n64) */
 #define N64_MAX_FILE (N64_BLOB_SIZE + 0x4400000u)
@@ -28,19 +27,10 @@ typedef struct {
     char     base[SIGIL_SAVE_PATH_MAX];   /* a present file's path without its extension, or "" */
 } n64_files;
 
-static bool ends_with(const char *s, const char *tail) {
-    size_t n = strlen(s), m = strlen(tail);
-    if (n < m) return false;
-    for (size_t i = 0; i < m; i++) {
-        if (tolower((unsigned char)s[n - m + i]) != tolower((unsigned char)tail[i])) return false;
-    }
-    return true;
-}
-
 /* The pak a Project64 <name>_Cont_<n>.mpk holds, or -1. */
 static int controller_of(const char *path) {
     size_t n = strlen(path);
-    if (n < 11 || !ends_with(path, ".mpk") || strncmp(path + n - 11, "_Cont_", 6) != 0) return -1;
+    if (n < 11 || !sigil_ends_with_nocase(path, ".mpk") || strncmp(path + n - 11, "_Cont_", 6) != 0) return -1;
     char c = path[n - 5];
     return c >= '1' && c <= '4' ? N64_PAK1 + (c - '1') : -1;
 }
@@ -48,10 +38,10 @@ static int controller_of(const char *path) {
 static file_kind kind_of(const char *path, int *region) {
     *region = controller_of(path);
     if (*region >= 0) return FILE_REGION;
-    if (ends_with(path, ".srm")) return FILE_BLOB;
-    if (ends_with(path, ".mpk")) return FILE_PAKS;
-    *region = ends_with(path, ".eep") ? N64_EEPROM : ends_with(path, ".sra") ? N64_SRAM
-            : ends_with(path, ".fla") ? N64_FLASH : -1;
+    if (sigil_ends_with_nocase(path, ".srm")) return FILE_BLOB;
+    if (sigil_ends_with_nocase(path, ".mpk")) return FILE_PAKS;
+    *region = sigil_ends_with_nocase(path, ".eep") ? N64_EEPROM : sigil_ends_with_nocase(path, ".sra") ? N64_SRAM
+            : sigil_ends_with_nocase(path, ".fla") ? N64_FLASH : -1;
     return *region >= 0 ? FILE_REGION : FILE_OTHER;
 }
 
@@ -146,12 +136,6 @@ static size_t neutral_members(n64_save *s, sigil_zip_member members[N64_REGION_C
     return n;
 }
 
-static void artifact_of(const sigil_sync_request *req, sigil_sync_result *r) {
-    char stem[SIGIL_SAVE_ENTRY_MAX];
-    sigil_content_stem(req->save.content_path, stem, sizeof(stem));
-    snprintf(r->artifact, sizeof(r->artifact), "%s.zip", stem);
-}
-
 int sigil_sync_collect_n64(sigil_sync_ctx *x, sigil_sync_result *r) {
     n64_files f;
     int rc = files_of(x->req, &f, r->problem);
@@ -164,7 +148,7 @@ int sigil_sync_collect_n64(sigil_sync_ctx *x, sigil_sync_result *r) {
         rc = sigil_zip_store(members, n, &r->data, &r->len);
         memcpy(r->content_hash, r->identity_hash, sizeof(r->content_hash));
         r->shape = SIGIL_SAVE_SHAPE_MULTI;
-        artifact_of(x->req, r);
+        sigil_sync_cart_artifact(x->req, ".zip", r);
     }
     free(s);
     return rc;
@@ -367,7 +351,7 @@ int sigil_sync_restore_n64(sigil_sync_ctx *x, const uint8_t *unit, size_t len, s
     if (rc == SIGIL_OK && !neutral_members(in, members, r->identity_hash)) rc = SIGIL_ERR_NOT_FOUND;
     if (rc == SIGIL_OK) {
         r->shape = len >= 4 && sigil_read_le32(unit) == 0x04034b50u ? SIGIL_SAVE_SHAPE_MULTI : SIGIL_SAVE_SHAPE_SINGLE;
-        artifact_of(x->req, r);
+        sigil_sync_cart_artifact(x->req, ".zip", r);
         rc = files_of(x->req, &f, r->problem);
     }
     if (rc == SIGIL_OK) rc = read_local(x->req, &f, local);

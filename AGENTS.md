@@ -96,7 +96,9 @@ exception and where the exception ends.
   - backup RAM volumes: `src/sync_volumes.c`;
   - profile and folder saves: `src/sync_profiles.c` and `src/save_profiles.c`,
     with Xbox 360's save headers in `src/sync_xbox360.c`;
-  - converted cartridges: `src/sync_gb.c`, `src/sync_n64.c`.
+  - converted cartridges: `src/sync_gb.c`, `src/sync_n64.c`, `src/sync_nds.c`,
+    `src/sync_genesis.c`, sharing the save file and its name through
+    `src/sync_cart.c`.
 - `bindings/`: Python (cffi; `build_sigil.py` mirrors the header), Go (cgo),
   Kotlin (JNI in `bindings/android/src/main/cpp/sigil_jni.c`).
 - `tests/`: `unit_*` (synthetic, always run), `integration_*` (real samples
