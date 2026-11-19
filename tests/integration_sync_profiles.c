@@ -1575,6 +1575,9 @@ static void check_resolve(void) {
 #define X360_EDGE     "forza-horizon-2-xenia-edge"
 #define X360_CANARY   "forza-horizon-2-xenia-canary"
 #define X360_CM       "charlie-murder-xenia-edge"
+#define X360_G2_EDGE  "gears-of-war-2-xenia-edge-new"
+#define X360_G2_CAN   "gears-of-war-2-xenia-canary-new"
+#define X360_G2       "4D53082D"
 #define X360_FH2      "4D530AA4"
 #define X360_CMID     "58410B83"
 #define X360_SAMPLE   "E030000043414231"
@@ -1798,12 +1801,44 @@ static void check_xenia_charlie_murder(void) {
     root_free(&edge);
 }
 
+/* Saves each emulator made itself from no save: Edge's header holds XUID 0,
+ * Canary's holds its maker's as the profile id. Either restores under
+ * another profile into the other emulator and its own, every byte as made,
+ * the maker's XUID in Canary's header included. */
+static void check_xenia_new_saves(void) {
+    const char *ids[] = { X360_G2_EDGE, X360_G2_CAN };
+    const char *layouts[] = { "xenia_edge", "xenia_canary" };
+    for (size_t i = 0; i < 2; i++) {
+        mem_root source = {0};
+        x360_root(&source, ids[i]);
+        game g;
+        make_game(&g, &source, layouts[i], "xbox360", X360_G2);
+        sigil_sync_result *r = NULL;
+        expect_rc(ids[i], collect(&g, &r), SIGIL_OK);
+        if (!x360_unit_is(r, ids[i])) fail(ids[i], "unit isn't the sample under its unit names");
+        for (size_t k = 0; k < 2 && r; k++) {
+            mem_root target = {0};
+            put_x360_profile(&target, X360_OTHER);
+            game t;
+            make_game(&t, &target, layouts[k], "xbox360", X360_G2);
+            sigil_sync_result *w = NULL;
+            expect_rc(ids[i], restore(&t, r, &w), SIGIL_OK);
+            if (!x360_root_is(&target, ids[i], X360_OTHER)) fail(ids[i], layouts[k]);
+            sigil_sync_result_free(w);
+            root_free(&target);
+        }
+        sigil_sync_result_free(r);
+        root_free(&source);
+    }
+}
+
 static void check_xenia(void) {
     sigil_sync_result *edge_unit = NULL;
     check_xenia_edge_to_canary(&edge_unit);
     if (edge_unit) check_xenia_console_upload(edge_unit);
     check_xenia_canary_to_edge();
     check_xenia_charlie_murder();
+    check_xenia_new_saves();
     sigil_sync_result_free(edge_unit);
 }
 
@@ -1851,7 +1886,8 @@ int main(void) {
     }
     bool odin = corpus_present(&g_switch, "switch", "eden-profile") && corpus_present(&g_wiiu, "wiiu", "cemu-account");
     bool xenia = corpus_present(&g_x360, "xbox360", X360_EDGE) && corpus_present(&g_x360, "xbox360", X360_CANARY) &&
-                 corpus_present(&g_x360, "xbox360", X360_CM);
+                 corpus_present(&g_x360, "xbox360", X360_CM) && corpus_present(&g_x360, "xbox360", X360_G2_EDGE) &&
+                 corpus_present(&g_x360, "xbox360", X360_G2_CAN);
     if (!odin && !xenia) {
         fprintf(stderr, "SKIP: profile samples missing\n");
         return TEST_SKIP;
