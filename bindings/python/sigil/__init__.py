@@ -808,6 +808,33 @@ def _open_callback(root_bytes: bytes):
     return open_member
 
 
+def _replace_file(path: bytes, data) -> None:
+    """Write ``data`` as the file at ``path``, whole.
+
+    The bytes go to a temporary file beside it, which is renamed over the
+    file, so a write that fails leaves the file as it was. The file keeps its
+    permissions.
+    """
+    directory = os.path.dirname(path)
+    os.makedirs(directory, exist_ok=True)
+    temp = os.path.join(directory, b".sigil-" + os.urandom(8).hex().encode() + b".tmp")
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o666)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        if os.path.exists(path):
+            os.chmod(temp, os.stat(path).st_mode & 0o7777)
+        os.replace(temp, path)
+    except BaseException:
+        try:
+            os.remove(temp)
+        except OSError:
+            pass
+        raise
+
+
 def locate_saves(
     game: SigilResult,
     core: str,
@@ -957,11 +984,8 @@ def _sync(
 
     @ffi.callback("int(void *, const char *, const uint8_t *, size_t)")
     def write_member(_ctx, relative_path, data, length):
-        path = os.path.join(root_bytes, ffi.string(relative_path))
         try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "wb") as f:
-                f.write(ffi.buffer(data, length))
+            _replace_file(os.path.join(root_bytes, ffi.string(relative_path)), ffi.buffer(data, length))
         except OSError:
             return -1
         return 0
