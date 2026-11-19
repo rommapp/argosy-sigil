@@ -526,11 +526,11 @@ static int check_part(void *ctx, uint64_t off, const uint8_t *data, size_t len) 
  * back through a fresh open. */
 static int write_parts(const sigil_sync_ctx *x, drive *v) {
     part_writer w = { x->req, v->path, NULL, NULL };
-    int rc = sigil_disk_runs(v->disk, write_part, &w);
+    int rc = sigil_disk_runs(v->disk, true, write_part, &w);
     if (rc != SIGIL_OK) return SIGIL_ERR_IO;
     w.io = x->req->save.open(x->req->save.open_ctx, v->path);
     w.chunk = (uint8_t *)malloc(COMPARE_CHUNK);
-    rc = w.io && w.chunk ? sigil_disk_runs(v->disk, check_part, &w) : SIGIL_ERR_IO;
+    rc = w.io && w.chunk ? sigil_disk_runs(v->disk, false, check_part, &w) : SIGIL_ERR_IO;
     free(w.chunk);
     if (w.io) sigil_io_close(w.io);
     return rc == SIGIL_OK ? SIGIL_OK : SIGIL_ERR_IO;
