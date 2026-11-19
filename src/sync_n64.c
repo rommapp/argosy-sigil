@@ -156,7 +156,8 @@ int sigil_sync_collect_n64(sigil_sync_ctx *x, sigil_sync_result *r) {
 
 /* ---- restore ------------------------------------------------------------------ */
 
-static int take_member(n64_save *s, const sigil_zip_member *m) {
+static int take_member(void *ctx, const sigil_zip_member *m) {
+    n64_save *s = (n64_save *)ctx;
     int region = n64_region_of(m->name);
     if (region >= 0) return n64_take_neutral(s, region, m->data, m->len) ? SIGIL_OK : SIGIL_ERR_UNSUPPORTED_FORMAT;
     switch (kind_of(m->name, &region)) {
@@ -184,21 +185,7 @@ static int read_unit(const uint8_t *unit, size_t len, size_t received_len, n64_s
     memset(s, 0, sizeof(*s));
     s->eeprom_len = N64_EEPROM_4K;
     if (len >= 4 && sigil_read_le32(unit) == 0x04034b50u) {
-        sigil_zip_member *members = NULL;
-        size_t count = 0;
-        int rc = sigil_zip_read_mem(unit, len, N64_MAX_FILE, &members, &count);
-        sigil_named_md5 *parts = rc == SIGIL_OK ? (sigil_named_md5 *)calloc(count ? count : 1, sizeof(*parts)) : NULL;
-        if (rc == SIGIL_OK && !parts) rc = SIGIL_ERR_OOM;
-        for (size_t i = 0; i < count && rc == SIGIL_OK; i++) {
-            snprintf(parts[i].name, sizeof(parts[i].name), "%s", members[i].name);
-            sigil_md5_of(members[i].data, members[i].len, parts[i].md5);
-            rc = take_member(s, &members[i]);
-            if (rc != SIGIL_OK) snprintf(r->problem, sizeof(r->problem), "%s", members[i].name);
-        }
-        if (rc == SIGIL_OK && count) sigil_named_hash(parts, count, r->content_hash);
-        free(parts);
-        if (members) sigil_zip_members_free(members, count);
-        return rc;
+        return sigil_sync_cart_read_zip(unit, len, N64_MAX_FILE, take_member, s, r);
     }
     sigil_md5_of(unit, received_len, r->content_hash);
     if (len >= N64_BLOB_SIZE) n64_take_blob(s, unit, len);

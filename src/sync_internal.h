@@ -200,6 +200,16 @@ int sigil_sync_cart_read(const sigil_sync_request *req, const sigil_sync_cart_fi
                          size_t *len);
 /** Names the unit `{stem}{ext}` in r->artifact, the stem the content path's. */
 void sigil_sync_cart_artifact(const sigil_sync_request *req, const char *ext, sigil_sync_result *r);
+/** Takes one member of a zipped unit into the converter's save; SIGIL_OK, or the refusal. */
+typedef int (*sigil_sync_cart_take_fn)(void *ctx, const sigil_zip_member *m);
+/**
+ * The members of a zipped unit, each up to `max_member` bytes, handed to
+ * `take` in the zip's order. Stops at the first refusal and names that
+ * member in r->problem. On success sets r->content_hash to RomM's hash over
+ * every member's name and md5. r->shape is the caller's.
+ */
+int sigil_sync_cart_read_zip(const uint8_t *unit, size_t len, size_t max_member, sigil_sync_cart_take_fn take,
+                             void *ctx, sigil_sync_result *r);
 
 /* ---- N64 cartridges (sync_n64.c) ---------------------------------------------- */
 

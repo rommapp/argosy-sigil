@@ -268,6 +268,18 @@ int sigil_sync_collect_gb(sigil_sync_ctx *x, sigil_sync_result *r) {
 
 /* ---- restore ------------------------------------------------------------------ */
 
+/* One member of a zipped unit: the RAM as save.sram or an emulator's .srm
+ * or .sav, the clock as clock.rtc or an emulator's .rtc. */
+static int take_zip_member(void *ctx, const sigil_zip_member *m) {
+    gb_save *s = (gb_save *)ctx;
+    if (strcmp(m->name, GB_SRAM_NAME) == 0 || sigil_ends_with(m->name, ".srm") || sigil_ends_with(m->name, ".sav")) {
+        return take_ram(s, m->data, m->len, SIGIL_GB_CLOCK_VBA);
+    }
+    if (strcmp(m->name, GB_CLOCK_NAME) == 0) return take_clock(s, SIGIL_GB_CLOCK_VBA, m->data, m->len);
+    if (sigil_ends_with(m->name, ".rtc")) return take_clock(s, clock_format(NULL, m->len), m->data, m->len);
+    return SIGIL_ERR_UNSUPPORTED_FORMAT;
+}
+
 /* The save a unit carries: the neutral RAM or zip, a raw .srm or .sav
  * (with its clock footer), or a zip of an emulator's .srm and .rtc. */
 static int read_unit(const uint8_t *unit, size_t len, size_t received_len, gb_save *s, sigil_sync_result *r) {
@@ -277,32 +289,9 @@ static int read_unit(const uint8_t *unit, size_t len, size_t received_len, gb_sa
         r->shape = SIGIL_SAVE_SHAPE_SINGLE;
         return len ? take_ram(s, unit, len, SIGIL_GB_CLOCK_VBA) : SIGIL_ERR_NOT_FOUND;
     }
-    sigil_zip_member *members = NULL;
-    size_t count = 0;
-    int rc = sigil_zip_read_mem(unit, len, GB_MAX_RAM + 64, &members, &count);
-    sigil_named_md5 *parts = rc == SIGIL_OK ? (sigil_named_md5 *)calloc(count ? count : 1, sizeof(*parts)) : NULL;
-    if (rc == SIGIL_OK && !parts) rc = SIGIL_ERR_OOM;
-    for (size_t i = 0; i < count && rc == SIGIL_OK; i++) {
-        const sigil_zip_member *m = &members[i];
-        snprintf(parts[i].name, sizeof(parts[i].name), "%s", m->name);
-        sigil_md5_of(m->data, m->len, parts[i].md5);
-        if (strcmp(m->name, GB_SRAM_NAME) == 0 || sigil_ends_with(m->name, ".srm") ||
-            sigil_ends_with(m->name, ".sav")) {
-            rc = take_ram(s, m->data, m->len, SIGIL_GB_CLOCK_VBA);
-        } else if (strcmp(m->name, GB_CLOCK_NAME) == 0) {
-            rc = take_clock(s, SIGIL_GB_CLOCK_VBA, m->data, m->len);
-        } else if (sigil_ends_with(m->name, ".rtc")) {
-            rc = take_clock(s, clock_format(NULL, m->len), m->data, m->len);
-        } else {
-            rc = SIGIL_ERR_UNSUPPORTED_FORMAT;
-        }
-        if (rc != SIGIL_OK) snprintf(r->problem, sizeof(r->problem), "%s", m->name);
-    }
-    if (rc == SIGIL_OK && count) sigil_named_hash(parts, count, r->content_hash);
+    int rc = sigil_sync_cart_read_zip(unit, len, GB_MAX_RAM + 64, take_zip_member, s, r);
     if (rc == SIGIL_OK && !s->ram) rc = SIGIL_ERR_NOT_FOUND;
     r->shape = SIGIL_SAVE_SHAPE_MULTI;
-    free(parts);
-    if (members) sigil_zip_members_free(members, count);
     return rc;
 }
 
