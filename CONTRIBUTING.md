@@ -21,6 +21,9 @@ sync path needs more than passing tests:
 - **A round trip.** For a conversion, the save loaded in each emulator after
   crossing, and what the game showed.
 - **A test that failed.** What you broke on purpose to see the new test fail.
+- **Tests others can run.** An integration test skips each check whose
+  sample is missing, never the whole test, so a reviewer with some of the
+  samples runs those checks.
 
 ## Smells
 

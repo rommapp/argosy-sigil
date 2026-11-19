@@ -9,11 +9,20 @@ package sigil
 #cgo LDFLAGS: -L${SRCDIR}/../../build -lsigil -lsigil_chdr -lsigil_zstd -lsigil_zlib -lsigil_lzma -lsigil_aes
 
 #include <errno.h>
+#include <fcntl.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #ifdef _WIN32
 #include <direct.h>
+#include <io.h>
+#include <process.h>
+#include <windows.h>
+#else
+#include <unistd.h>
 #endif
 #include "sigil.h"
 
@@ -55,15 +64,64 @@ static int sigil_go_make_parents(char *path) {
     return 0;
 }
 
+// Creates a new file beside path for the bytes that replace it, named in temp.
+static int sigil_go_open_temp(const char *path, char *temp, size_t cap) {
+    const char *slash = strrchr(path, '/');
+    int dir = slash ? (int)(slash - path) + 1 : 0;
+#ifdef _WIN32
+    unsigned long seed = (unsigned long)_getpid() ^ (unsigned long)time(NULL) ^ (unsigned long)(uintptr_t)temp;
+#else
+    unsigned long seed = (unsigned long)getpid() ^ (unsigned long)time(NULL) ^ (unsigned long)(uintptr_t)temp;
+#endif
+    for (unsigned long i = 0; i < 64; i++) {
+        int n = snprintf(temp, cap, "%.*s.sigil-%08lx.tmp", dir, path, (seed + i * 2654435761ul) & 0xFFFFFFFFul);
+        if (n <= 0 || (size_t)n >= cap) return -1;
+#ifdef _WIN32
+        int fd = _open(temp, _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY, _S_IREAD | _S_IWRITE);
+#else
+        int fd = open(temp, O_WRONLY | O_CREAT | O_EXCL, 0666);
+#endif
+        if (fd >= 0 || errno != EEXIST) return fd;
+    }
+    return -1;
+}
+
+// Writes data as the file at path, whole: the bytes go to a temporary file
+// beside it, which is renamed over the file, so a write that fails leaves the
+// file as it was. The file keeps its permissions.
+static int sigil_go_replace_file(const char *path, const uint8_t *data, size_t len) {
+    char temp[SIGIL_SAVE_PATH_MAX * 2 + 32];
+    int fd = sigil_go_open_temp(path, temp, sizeof(temp));
+    if (fd < 0) return -1;
+    FILE *f = fdopen(fd, "wb");
+    if (!f) {
+        close(fd);
+        remove(temp);
+        return -1;
+    }
+    int ok = fwrite(data, 1, len, f) == len && fflush(f) == 0;
+#ifdef _WIN32
+    ok = ok && _commit(_fileno(f)) == 0;
+#else
+    ok = ok && fsync(fileno(f)) == 0;
+#endif
+    ok = fclose(f) == 0 && ok;
+#ifdef _WIN32
+    ok = ok && MoveFileExA(temp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+#else
+    struct stat st;
+    if (ok && stat(path, &st) == 0) ok = chmod(temp, st.st_mode & 07777) == 0;
+    ok = ok && rename(temp, path) == 0;
+#endif
+    if (!ok) remove(temp);
+    return ok ? 0 : -1;
+}
+
 static int sigil_go_write_member(void *ctx, const char *relative_path, const uint8_t *data, size_t len) {
     char path[SIGIL_SAVE_PATH_MAX * 2];
     int n = snprintf(path, sizeof(path), "%s/%s", (const char *)ctx, relative_path);
     if (n <= 0 || (size_t)n >= sizeof(path) || sigil_go_make_parents(path) != 0) return -1;
-    FILE *f = fopen(path, "wb");
-    if (!f) return -1;
-    size_t wrote = fwrite(data, 1, len, f);
-    int closed = fclose(f);
-    return wrote == len && closed == 0 ? 0 : -1;
+    return sigil_go_replace_file(path, data, len);
 }
 
 static int sigil_go_remove_member(void *ctx, const char *relative_path) {
