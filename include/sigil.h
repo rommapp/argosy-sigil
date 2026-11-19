@@ -348,10 +348,10 @@ typedef struct {
                                                    that profile, and saves outside the root are out of reach */
     const char               *profile;          /* layouts with profiles: the profile whose saves to take, by
                                                    sigil_save_profile.id, or NULL to take the one the root path
-                                                   names, else the only one the emulator lists. An id the
+                                                   names, else the only one the emulator lists. An id names a
+                                                   listed profile ignoring case. One that names none and that the
                                                    emulator could never list (Xenia: anything but 16 uppercase
-                                                   hex digits, or the all-zero XUID) is
-                                                   SIGIL_ERR_INVALID_ARG */
+                                                   hex digits, or the all-zero XUID) is SIGIL_ERR_INVALID_ARG */
 } sigil_save_request;
 
 typedef struct {

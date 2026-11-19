@@ -506,13 +506,14 @@ static void name_from(int format, const uint8_t *data, size_t len, char out[SIGI
     }
 }
 
-/* An id the emulator itself could list. Xenia lists a folder named by 16
- * uppercase hex digits other than the all-zero XUID (profile_manager.cc
- * FindProfiles, its regex [0-9A-F]{16}: Edge at 4ad875a, Canary at 27d11a2,
- * XenDroid at 779680a); any other folder is one it never reads. */
+/* An id in the form the emulator names a profile's folder. Xenia lists a
+ * folder named by 16 uppercase hex digits (profile_manager.cc FindProfiles,
+ * its regex [0-9A-F]{16}: Edge at 4ad875a, Canary at 27d11a2, XenDroid at
+ * 779680a); any other folder is one it never reads. The all-zero XUID, which
+ * FindProfiles also skips, is the row's device folder (device_folder_name). */
 static bool id_fits(int format, const char *id) {
     if (format != SIGIL_PROFILES_XENIA) return true;
-    if (strlen(id) != 16 || strcmp(id, "0000000000000000") == 0) return false;
+    if (strlen(id) != 16) return false;
     for (size_t i = 0; i < 16; i++) {
         if (!(id[i] >= '0' && id[i] <= '9') && !(id[i] >= 'A' && id[i] <= 'F')) return false;
     }
@@ -520,7 +521,7 @@ static bool id_fits(int format, const char *id) {
 }
 
 static void add_profile(sigil_profile_root *p, const char *id, const char *name) {
-    if (!id_fits(p->row->format, id)) return;
+    if (!id_fits(p->row->format, id) || device_folder_name(p->row, id)) return;
     for (size_t i = 0; i < p->profile_count; i++) {
         if (strcmp(p->profiles[i].id, id) == 0) return;
     }

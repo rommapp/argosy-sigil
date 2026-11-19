@@ -195,9 +195,11 @@ nothing below about picking a profile applies to them.
 The profile comes from the request, else from the root path when the root
 lies inside a profile's folder, else from the emulator's list when it holds
 one profile. Folders the list doesn't name are not a profile's. A profile
-id the emulator could never list, from the request or the root path, is
-`SIGIL_ERR_INVALID_ARG`: on Xenia's rows, anything
-but 16 uppercase hex digits, or the all-zero XUID ([xbox360](platforms/xbox360.md#save-layouts)). With two or
+id names a listed profile ignoring case, and its saves go to that profile's
+folder. An id that names none, from the request or the root path, is used as
+given, unless the emulator could never list it: then it is
+`SIGIL_ERR_INVALID_ARG`. On Xenia's rows that is anything but 16 uppercase
+hex digits, or the all-zero XUID ([xbox360](platforms/xbox360.md#save-layouts)). With two or
 more profiles and none picked, collect returns `SIGIL_ERR_AMBIGUOUS` when one
 of them holds the game's saves, and restore when the unit holds an account
 save, with `problem` listing them as `id name` (the id alone where the
