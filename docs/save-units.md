@@ -208,8 +208,15 @@ profiles without a game, and the result's `profiles` holds the same list.
 Pass the answer as `profile` and store it per user.
 With the list out of the root's reach, the profile folders holding files
 stand for it. Results carry `profiles` and the `profile` chosen.
+`maker_profile` is the profile the account saves' own records name as the
+one they were made under, where the emulator keeps one (a Xenia Canary
+save's header, [xbox360](platforms/xbox360.md#sync)); a client can offer
+it when a game binds its save to the profile. Collect reads it from the
+saves on disk, restore from the unit, and it is empty when the records name
+none or name different ones.
 
-A unit never carries a profile id, so it restores under any profile. A
+A unit's member names never carry a profile id, so it restores under any
+profile. A
 yuzu-fork unit holds `<save_id>/...` for the account save and
 `device/<save_id>/...` for the device save. A Cemu unit holds
 `<low>/meta/`, `<low>/user/account/` and `<low>/user/common/`, the title
@@ -218,7 +225,10 @@ older unit naming the account folder by its id restores as the account
 save. A PSP unit holds each of the game's folders by its own name
 (`ULUS10064DATA00/...`, `ULUS10064SETTINGS/...`). An Xbox 360 unit holds
 `<title id>/00000001/...` and `<title id>/Headers/00000001/...`, and
-`device/<title id>/...` for the all-zero XUID's saves. The size file each yuzu fork keeps in a save folder
+`device/<title id>/...` for the all-zero XUID's saves, each header as its
+emulator wrote it; restore writes each header in the form the target's row
+names, and identity covers what both forms carry
+([xbox360](platforms/xbox360.md#sync)). The size file each yuzu fork keeps in a save folder
 (`.yuzu_save_size`, `.citron_save_size`, `.sudachi_save_size`,
 `.suyu_save_size`) is never collected, written or removed.
 

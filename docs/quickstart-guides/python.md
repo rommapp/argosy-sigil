@@ -311,6 +311,8 @@ SigilSyncResult(
     profile: str,               # The profile whose saves were taken or written; "" for none.
     alternates: tuple[SigilSaveAlternate, ...],  # Listed files other option values would take, as on SigilSaveUnit.
     hardcore_marker: bool,      # Restore: the unit ended in Argosy's legacy hardcore marker.
+    maker_profile: str,         # The profile the account saves' own records name as their maker
+                                #   (a Xenia Canary save's header); "" when they name none or differ.
 )
 
 SigilProfile(

@@ -32,14 +32,15 @@ A `.zar` is a ZArchive written by Xenia; see [Containers](../containers.md).
 
 | Layout | Files (role, option) | Shared | Verified |
 |---|---|---|---|
-| `xenia_canary`, `xenia_edge` | folders per profile: `content/{profile}/{save_id}/00000001/<save>/`, each save's header in `content/{profile}/{save_id}/Headers/00000001/`; the same under the all-zero XUID for a save no profile owns | | emulator source |
-| `xendroid` | as `xenia_canary`, under the `content/` folder of XenDroid's storage root | | emulator source |
+| `xenia_canary` | folders per profile: `content/{profile}/{save_id}/00000001/<save>/`, each save's header in `content/{profile}/{save_id}/Headers/00000001/` as the container header (0xA000 bytes); the same under the all-zero XUID for a save no profile owns | | emulator source, samples |
+| `xenia_edge` | as `xenia_canary`, each header as `XCONTENT_AGGREGATE_DATA` (0x148 bytes) | | emulator source, samples |
+| `xendroid` | as `xenia_edge`, under the `content/` folder of XenDroid's storage root | | emulator source |
 
 The rows list `content`, which `sigil_save_layout_subdirs()` names, and
 match `xbox360` only. Xenia Canary, Xenia Edge and XenDroid keep the same
-tree, so the three rows are one table under the names those emulators go
-by. Each keeps a game's saves per profile, and a save the game marks
-shared, or makes with no one signed in, under the all-zero XUID:
+tree and differ in the form of a save's header ([save formats](#save-formats)).
+Each keeps a game's saves per profile, and a save the game marks shared,
+or makes with no one signed in, under the all-zero XUID:
 
 | Layout | Account | Device | Profile list |
 |---|---|---|---|
@@ -73,18 +74,32 @@ refuse it with `SIGIL_ERR_INVALID_ARG`, writing nothing.
 
 Xenia keeps each save as an extracted folder,
 `content/<XUID>/<title id>/00000001/<save name>/`, with its metadata in
-`content/<XUID>/<title id>/Headers/00000001/<save name>.header`. Xenia
-Edge writes the header as `XCONTENT_AGGREGATE_DATA` alone (328 bytes);
-Xenia Canary rewrites it as the whole container header, padded to 4 KiB,
-when the game closes the save. Each reads the other's form
-(`content_manager.cc` `ReadContentHeaderFile` in Edge at `4ad875a`,
-`xcontent/xcontent_package_directory.cc` `ReadContentHeaderFile` in
-Canary at `27d11a2`), so a save and its header move between them
-unchanged. Canary doesn't list a save whose header is missing, so the
-header travels with the save. XenDroid uses Canary's tree under its own storage root's
-`content/`. Copying the folder and its header moves a save between Xenia
-installs; moving one to a console needs the STFS package rebuilt and
-re-signed.
+`content/<XUID>/<title id>/Headers/00000001/<save name>.header`, in one of
+two forms:
+
+- **Edge and XenDroid** write `XCONTENT_AGGREGATE_DATA` alone, 0x148
+  bytes: device id, content type, display name, file name, XUID and title
+  id (`content_manager.cc` `WriteContentHeaderFile`, Edge at `4ad875a`,
+  XenDroid at `779680a`; `content_manager.h`). XenDroid reads no other form
+  (`ReadContentHeaderFile` there).
+- **Canary** writes the whole container header with a file name of its
+  own, padded to 0xA000 bytes (`content_manager.cc`
+  `ExtractContentHeader` at `27d11a2`). For a save it makes, it fills it
+  from the game: execution info, title name, the title's icon as
+  thumbnail, and the signed-in XUID as `profile_id`
+  (`xcontent/xcontent_package.cc` `InitializePackageHeader`). For a save
+  whose header is Edge's, it builds one from that when the game closes the
+  save: content type, title id, the English display name and the file
+  name, every other byte zero (`xcontent/xcontent_package_directory.cc`
+  `FillHeader`).
+
+Edge reads Canary's form (`content_manager.cc` `ReadContentHeaderFile`,
+`vfs/devices/xcontent_container_device.cc` `ContentDataFromHeader`), and
+Canary reads Edge's as its older header. Canary doesn't list a save whose
+header is missing, so the header travels with the save. XenDroid uses
+Canary's tree under its own storage root's `content/`. Copying the folder
+and its header moves a save between Xenia installs; moving one to a
+console needs the STFS package rebuilt and re-signed.
 
 A profile is `content/<XUID>/FFFE07D1/00010000/<XUID>/`: the `Account`,
 the dashboard's `FFFE07D1.gpd` and one `<title id>.gpd` per game played,
@@ -108,13 +123,43 @@ sigil's own unit, under the profile the request picks, and leaves out the
 profile folders and gamer pictures such a zip holds (each
 `<XUID>/FFFE07D1/`).
 
+**Headers.** The unit carries each header as its emulator wrote it, and
+restore writes it in the form the target's row names, built the way that
+emulator builds it from the other form:
+
+- For Canary, Canary's `FillHeader`. From Edge's header of Forza Horizon 2
+  this is byte for byte the header Canary wrote from it
+  (`forza-horizon-2-xenia-canary`).
+- For Edge and XenDroid, Edge's `ContentDataFromHeader`: device id 1, the
+  content type, the English display name (else the first one there), the
+  save's file name, the title id, and XUID 0, as Edge writes for a save a
+  game makes by passing `XCONTENT_DATA`. Against the headers Edge wrote
+  itself in the samples it differs only in the padding Edge leaves unset
+  (0x134 and 0x144), which restore writes as 0.
+
+A header already in the target's form is written as it came. A unit header
+in neither form, which no Xenia reads, is `SIGIL_ERR_UNSUPPORTED_FORMAT`,
+writing nothing. `identity_hash` covers what both forms carry, the
+content type, display name, file name and title id, so a save is the same
+save in either form; `content_hash` covers the unit's bytes.
+
+**The maker.** `maker_profile` is the XUID the account saves' headers name
+as the one they were made under: for a save Canary made, its
+`profile_id`. Collect reads it from the headers on disk and restore from
+the unit's, which keep it however long they're stored. Edge's headers name
+none: it writes 0 there for a save a game makes by passing
+`XCONTENT_DATA` (`content_manager.h` `XCONTENT_AGGREGATE_DATA`,
+`content_manager.cc` `WriteContentHeaderFile` and `xam_content.cc`, the
+same at `a7c39fa`), and every Edge header in the samples holds 0. Canary
+keeps 0 too when it builds a header from Edge's. So for those saves
+`maker_profile` is empty.
+
 ## Open items
 
 - GoD containers and STFS packages are not read for identification.
-- Some games bind a save to the profile it was made under, so a unit restored under another XUID has the right files in the right place and the game still won't use it. Forza Horizon 2 says "It appears your profile has been tampered with" under any other XUID and loads the save under its own, in Edge and in Canary. Charlie Murder writes the gamertag and XUID into its `game.sav` and, under another profile, starts as if there were no save.
-- A unit doesn't say which XUID its saves were made under, so sigil reports none. The header holds it only sometimes: Edge writes 0 there for a save a game makes by passing `XCONTENT_DATA` (`content_manager.h` `XCONTENT_AGGREGATE_DATA` and `content_manager.cc` `WriteContentHeaderFile` at `4ad875a`, the same at `a7c39fa`), and every Edge header in the samples holds 0. Canary writes the signed-in XUID into the header of a save it makes (`xam_content.cc` and `xcontent/xcontent_package.cc` `InitializePackageHeader` at `27d11a2`; sample `gears-of-war-2-xenia-canary-new`), and 0 when it rewrites a header Edge made (`FillHeader`). A header naming another XUID doesn't stop the save loading: restored under another XUID, that sample's slot shows in Canary and in Edge.
+- Some games bind a save to the profile it was made under, so a unit restored under another XUID has the right files in the right place and the game still won't use it. Forza Horizon 2 says "It appears your profile has been tampered with" under any other XUID and loads the save under its own, in Edge and in Canary. Charlie Murder writes the gamertag and XUID into its `game.sav` and, under another profile, starts as if there were no save. `maker_profile` names that XUID only for a save Canary made (sample `gears-of-war-2-xenia-canary-new`); for Edge's and XenDroid's saves it is empty ([sync](#sync)). A header naming another XUID doesn't stop the save loading: restored under another XUID, that sample's slot shows in Canary and in Edge.
 - Achievements, and the settings a game keeps in its GPD rather than in a save, don't travel. A game that keeps all its progress there (Left 4 Dead 2 writes no save folder) has nothing to sync.
-- Restore writes each save's header as the source emulator wrote it: Edge's 328 bytes into a Canary folder, Canary's 40,960 into an Edge folder. Each reads the other's form; Canary rewrites an Edge header in its own form once the game saves, so until then the file isn't the one Canary would write itself. Restore doesn't build it: Canary's form holds what Edge's has no field for (the title name, thumbnails, execution info and console id of `XContentMetadata`, `xcontent/xcontent.h` at `27d11a2`), so from Edge's header it could only be what Canary's own `FillHeader` makes, and cut down to Edge's 328 bytes it would lose those on the way back. Carried as written, a round trip returns each header unchanged.
+- A header restored in the other form keeps what both forms carry and loses the rest. From Canary's to Edge's or XenDroid's it loses every field of `XContentMetadata` but the content type, title id and one display name (`xcontent/xcontent.h` at `27d11a2`): the other display names and the descriptions, publisher and title name, the thumbnail and title thumbnail, the rest of the execution info, the console id, `profile_id` (so `maker_profile` is empty once the save is in Edge's form), the content size, the volume descriptor, the data file count and size, the online creator and category, and the container's licenses, signature and content id. From Edge's to Canary's it loses the device id and the XUID, which `FillHeader` keeps neither of, and any display name past 127 units. A save Canary made that goes to Edge and back comes back with the header `FillHeader` builds, the way Canary itself rebuilds an Edge header.
 - Upstream Xenia (`xenia-project/xenia`) has no row. It keeps a save at `content/<title id>/<type>/<save name>/`, with no XUID folder and no header (`content_manager.cc` `ResolvePackageRoot` at `95a5c3e`), so none of the rows above reads or writes its tree.
 - XenDroid's row is read from its source (`rfandango/XenDroid`); it hasn't been run.
 - The extractor is experimental until it is validated against real-world samples.

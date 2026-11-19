@@ -117,6 +117,7 @@ _SYNC_FIELDS = {
     "restore again": ("restoreAgain", "restore_again", "RestoreAgain"),
     "hardcore marker": ("hardcoreMarker", "hardcore_marker", "HardcoreMarker"),
     "unowned changed": ("unownedChanged", "unowned_changed", "UnownedChanged"),
+    "maker profile": ("makerProfile", "maker_profile", "MakerProfile"),
     "state": ("state", "state", "State"),
     "conflict": ("CONFLICT = -9", "SigilConflictError", "ErrConflict "),
     "companions": ("companions", "companions", "Companions"),

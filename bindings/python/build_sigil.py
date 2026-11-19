@@ -345,6 +345,7 @@ void sigil_card_repair_report_free(sigil_card_repair_report *report);
 
 #define SIGIL_SYNC_REQUEST_V1 ...
 #define SIGIL_SYNC_RESULT_V1 ...
+#define SIGIL_SYNC_RESULT_V2 ...
 
 typedef int (*sigil_save_write_fn)(void *ctx, const char *relative_path, const uint8_t *data, size_t len);
 typedef int (*sigil_save_remove_fn)(void *ctx, const char *relative_path);
@@ -417,6 +418,7 @@ typedef struct {
     size_t    alternate_count;
     int       hardcore_marker;
     size_t    unowned_changed;
+    char      maker_profile[...];
 } sigil_sync_result;
 
 int  sigil_collect(const sigil_sync_request *req, sigil_sync_result **out);

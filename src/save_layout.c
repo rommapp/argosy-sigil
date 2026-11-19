@@ -515,26 +515,38 @@ static const char *const RPCS3_SUBDIRS[] = { "dev_hdd0/home" };
  * come first so the all-zero XUID of such a unit is never taken for a profile.
  * Upstream Xenia keeps content/<title>/<type>/<save>/ with no XUID and no
  * header (xenia-project/xenia content_manager.cc ResolvePackageRoot at
- * 95a5c3e), so none of these rows is its. */
-static const sigil_layout_area XENIA_AREAS[] = {
-    { "content/0000000000000000/{save_id}/00000001/", "device/{save_id}/00000001/", SIGIL_SAVE_AREA_DEVICE, false,
-      "0000000000000000/{save_id}/00000001/" },
-    { "content/0000000000000000/{save_id}/Headers/00000001/", "device/{save_id}/Headers/00000001/",
-      SIGIL_SAVE_AREA_DEVICE, false, "0000000000000000/{save_id}/Headers/00000001/" },
-    { "content/{profile}/{save_id}/00000001/", "{save_id}/00000001/", SIGIL_SAVE_AREA_ACCOUNT, false,
-      "{profile}/{save_id}/00000001/" },
-    { "content/{profile}/{save_id}/Headers/00000001/", "{save_id}/Headers/00000001/", SIGIL_SAVE_AREA_ACCOUNT, false,
-      "{profile}/{save_id}/Headers/00000001/" },
-};
+ * 95a5c3e), so none of these rows is its.
+ *
+ * The headers' form differs by emulator (sync_xbox360.c): Canary writes the
+ * whole container header (content_manager.cc ExtractContentHeader at
+ * 27d11a2); Edge and XenDroid write XCONTENT_AGGREGATE_DATA alone, and
+ * XenDroid reads no other form (content_manager.cc WriteContentHeaderFile and
+ * ReadContentHeaderFile, Edge at 4ad875a, XenDroid at 779680a). */
+#define XENIA_AREAS(form)                                                                                          \
+    {                                                                                                              \
+        { "content/0000000000000000/{save_id}/00000001/", "device/{save_id}/00000001/", SIGIL_SAVE_AREA_DEVICE,    \
+          false, "0000000000000000/{save_id}/00000001/", false, SIGIL_HEADER_NONE },                             \
+        { "content/0000000000000000/{save_id}/Headers/00000001/", "device/{save_id}/Headers/00000001/",          \
+          SIGIL_SAVE_AREA_DEVICE, false, "0000000000000000/{save_id}/Headers/00000001/", false, (form) },        \
+        { "content/{profile}/{save_id}/00000001/", "{save_id}/00000001/", SIGIL_SAVE_AREA_ACCOUNT, false,         \
+          "{profile}/{save_id}/00000001/", false, SIGIL_HEADER_NONE },                                            \
+        { "content/{profile}/{save_id}/Headers/00000001/", "{save_id}/Headers/00000001/", SIGIL_SAVE_AREA_ACCOUNT, \
+          false, "{profile}/{save_id}/Headers/00000001/", false, (form) },                                        \
+    }
+static const sigil_layout_area XENIA_CONTAINER_AREAS[] = XENIA_AREAS(SIGIL_HEADER_XCONTENT_CONTAINER);
+static const sigil_layout_area XENIA_AGGREGATE_AREAS[] = XENIA_AREAS(SIGIL_HEADER_XCONTENT_AGGREGATE);
 static const char *const XENIA_DROPPED[] = { "{profile}/FFFE07D1/" };
 /* A profile is a folder holding its Account: FindProfiles takes each folder
  * holding the profile package, LoadAccount reads the Account in it, and Login
  * signs in only a profile whose Account loaded (profile_manager.cc, the same
  * three commits), so no save is made under a folder without one. */
-static const sigil_layout_profiles XENIA_PROFILES = {
-    "content", SIGIL_PROFILES_XENIA, "content/{profile}/FFFE07D1/00010000/{profile}/Account", XENIA_AREAS,
-    COUNT(XENIA_AREAS), NULL, 0, false, false, NULL, NULL, 0, NULL, XENIA_DROPPED, COUNT(XENIA_DROPPED),
-};
+#define XENIA_PROFILES(areas)                                                                                \
+    {                                                                                                        \
+        "content", SIGIL_PROFILES_XENIA, "content/{profile}/FFFE07D1/00010000/{profile}/Account", (areas),   \
+            COUNT(areas), NULL, 0, false, false, NULL, NULL, 0, NULL, XENIA_DROPPED, COUNT(XENIA_DROPPED),   \
+    }
+static const sigil_layout_profiles XENIA_CANARY_PROFILES = XENIA_PROFILES(XENIA_CONTAINER_AREAS);
+static const sigil_layout_profiles XENIA_EDGE_PROFILES = XENIA_PROFILES(XENIA_AGGREGATE_AREAS);
 static const char *const XENIA_SUBDIRS[] = { "content" };
 
 /* mupen64plus 2.6+, RMG and simple64 (mupen64plus-core src/main/main.c
@@ -667,9 +679,9 @@ static const sigil_layout LAYOUTS[] = {
     /* aPS3e (aenu1/aps3e) and ARMSX3 keep RPCS3's tree under their config/ folder, user 00000001. */
     ROW_PROFILES("aps3e", "ps3", RPCS3_SUBDIRS, RPCS3_PROFILES),
     ROW_PROFILES("armsx3", "ps3", RPCS3_SUBDIRS, RPCS3_PROFILES),
-    ROW_PROFILES("xenia_canary", "xbox360", XENIA_SUBDIRS, XENIA_PROFILES),
-    ROW_PROFILES("xenia_edge", "xbox360", XENIA_SUBDIRS, XENIA_PROFILES),
-    ROW_PROFILES("xendroid", "xbox360", XENIA_SUBDIRS, XENIA_PROFILES),
+    ROW_PROFILES("xenia_canary", "xbox360", XENIA_SUBDIRS, XENIA_CANARY_PROFILES),
+    ROW_PROFILES("xenia_edge", "xbox360", XENIA_SUBDIRS, XENIA_EDGE_PROFILES),
+    ROW_PROFILES("xendroid", "xbox360", XENIA_SUBDIRS, XENIA_EDGE_PROFILES),
     ROW_PROFILES("ppsspp", "psp", PSP_SUBDIRS, PSP_FOLDERS),
     ROW_PROFILES("ppsspp_standalone", "psp", PSP_SUBDIRS, PSP_FOLDERS),
     ROW_PROFILES("psp_console", "psp", PSP_SUBDIRS, PSP_FOLDERS),

@@ -169,6 +169,7 @@ set(SIGIL_SOURCES
     src/sync_n64.c
     src/sync_gb.c
     src/sync_nds.c
+    src/sync_xbox360.c
     src/zip_mem.c
     src/save_names.c
 )

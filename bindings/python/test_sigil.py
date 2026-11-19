@@ -890,6 +890,34 @@ _CABINET_XUID = "E030000043414231"
 _CANARY_XUID = "E03000004B4F4E41"
 
 
+def _edge_header() -> bytes:
+    """Forza Horizon 2's header as Xenia Edge writes it: XCONTENT_AGGREGATE_DATA, 0x148 bytes
+    (content_manager.cc WriteContentHeaderFile at 4ad875a)."""
+    h = bytearray(0x148)
+    h[0x000:0x004] = (1).to_bytes(4, "big")
+    h[0x004:0x008] = (1).to_bytes(4, "big")
+    h[0x008 : 0x008 + 16] = "MMagTech".encode("utf-16-be")
+    h[0x108 : 0x108 + 12] = b"ForzaProfile"
+    h[0x140:0x144] = bytes.fromhex("4D530AA4")
+    return bytes(h)
+
+
+def _canary_header(xuid: str) -> bytes:
+    """Forza Horizon 2's header as Xenia Canary writes one for a save it makes: the container header
+    padded to 0xA000, the maker's XUID as profile_id at 0x371 (xcontent/xcontent_package.cc
+    InitializePackageHeader at 27d11a2)."""
+    h = bytearray(0xA000)
+    h[0x000:0x004] = b"CON "
+    h[0x340:0x344] = (0x971A).to_bytes(4, "big")
+    h[0x344:0x348] = (1).to_bytes(4, "big")
+    h[0x348:0x34C] = (2).to_bytes(4, "big")
+    h[0x360:0x364] = bytes.fromhex("4D530AA4")
+    h[0x371:0x379] = bytes.fromhex(xuid)
+    h[0x411 : 0x411 + 16] = "MMagTech".encode("utf-16-be")
+    h[0x971A : 0x971A + 12] = b"ForzaProfile"
+    return bytes(h)
+
+
 def _xenia(base: Path, xuid: str, save: bytes | None) -> None:
     """A Xenia content folder with one profile, holding Forza Horizon 2's save when `save` is given."""
     profile = base / "content" / xuid / "FFFE07D1/00010000" / xuid
@@ -902,7 +930,7 @@ def _xenia(base: Path, xuid: str, save: bytes | None) -> None:
         (folder / "PlayerDatabase").write_bytes(save)
         headers = base / "content" / xuid / "4D530AA4/Headers/00000001"
         headers.mkdir(parents=True)
-        (headers / "ForzaProfile.header").write_bytes(b"\xed" * 328)
+        (headers / "ForzaProfile.header").write_bytes(_edge_header())
 
 
 def test_an_xbox_360_save_moves_between_xenias_under_each_ones_profile(tmp_path):
@@ -922,7 +950,10 @@ def test_an_xbox_360_save_moves_between_xenias_under_each_ones_profile(tmp_path)
     save = Path("4D530AA4/00000001/ForzaProfile/PlayerDatabase")
     header = Path("4D530AA4/Headers/00000001/ForzaProfile.header")
     assert (canary / "content" / _CANARY_XUID / save).read_bytes() == b"progress"
-    assert (canary / "content" / _CANARY_XUID / header).read_bytes() == b"\xed" * 328
+    restored = (canary / "content" / _CANARY_XUID / header).read_bytes()
+    assert len(restored) == 0xA000 and restored[:4] == b"CON "
+    assert restored[0x411 : 0x411 + 18] == "MMagTech".encode("utf-16-be") + bytes(2)
+    assert restored[0x971A : 0x971A + 13] == b"ForzaProfile\0"
     assert not (canary / "content" / _CABINET_XUID).exists()
     assert not (canary / "content" / _CANARY_XUID / "FFFE07D1/00010000" / _CANARY_XUID / "4D530AA4.gpd").exists()
 
@@ -933,3 +964,19 @@ def test_an_xbox_360_save_moves_between_xenias_under_each_ones_profile(tmp_path)
     assert not any(fresh.iterdir())
     sigil.restore(unit.data, _FH2, "xenia_edge", "Forza Horizon 2.iso", fresh, profile=_CABINET_XUID)
     assert (fresh / "content" / _CABINET_XUID / save).read_bytes() == b"progress"
+
+
+def test_an_xbox_360_header_names_the_profile_its_save_was_made_under(tmp_path):
+    canary, edge = tmp_path / "canary", tmp_path / "edge"
+    _xenia(canary, _CABINET_XUID, b"progress")
+    header = Path("4D530AA4/Headers/00000001/ForzaProfile.header")
+    (canary / "content" / _CABINET_XUID / header).write_bytes(_canary_header(_CABINET_XUID))
+    unit = sigil.collect(_FH2, "xenia_canary", "Forza Horizon 2.iso", canary)
+    assert unit.maker_profile == _CABINET_XUID
+
+    _xenia(edge, _CANARY_XUID, None)
+    written = sigil.restore(unit.data, _FH2, "xenia_edge", "Forza Horizon 2.iso", edge)
+    assert written.maker_profile == _CABINET_XUID
+    restored = (edge / "content" / _CANARY_XUID / header).read_bytes()
+    assert len(restored) == 0x148 and restored[0x138:0x140] == bytes(8)
+    assert sigil.collect(_FH2, "xenia_edge", "Forza Horizon 2.iso", edge).maker_profile == ""

@@ -94,7 +94,8 @@ exception and where the exception ends.
 - `src/sync.c`: collect and restore, dispatching by platform and layout.
   - memory cards: `src/sync_cards.c` with `src/sync_kind_*.c` and `src/card_*.c`;
   - backup RAM volumes: `src/sync_volumes.c`;
-  - profile and folder saves: `src/sync_profiles.c` and `src/save_profiles.c`;
+  - profile and folder saves: `src/sync_profiles.c` and `src/save_profiles.c`,
+    with Xbox 360's save headers in `src/sync_xbox360.c`;
   - converted cartridges: `src/sync_gb.c`, `src/sync_n64.c`.
 - `bindings/`: Python (cffi; `build_sigil.py` mirrors the header), Go (cgo),
   Kotlin (JNI in `bindings/android/src/main/cpp/sigil_jni.c`).

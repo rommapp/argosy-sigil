@@ -896,9 +896,9 @@ static void load_sync_result_class(JNIEnv *env) {
     if (!g_sync_result_class || !g_companion_result_class || !g_array_list_class) return;
     /* SigilSyncResult(artifact, shapeCode, data, contentHash, identityHash, changed, state,
      *                 holding, unowned, restoreAgain, companions, profiles, profile, alternates, hardcoreMarker,
-     *                 unownedChanged) */
+     *                 unownedChanged, makerProfile) */
     g_sync_result_ctor = find_method(env, g_sync_result_class, "<init>",
-        "(Ljava/lang/String;I[BLjava/lang/String;Ljava/lang/String;Z[B[BLjava/util/List;ZLjava/util/List;Ljava/util/List;Ljava/lang/String;Ljava/util/List;ZI)V");
+        "(Ljava/lang/String;I[BLjava/lang/String;Ljava/lang/String;Z[B[BLjava/util/List;ZLjava/util/List;Ljava/util/List;Ljava/lang/String;Ljava/util/List;ZILjava/lang/String;)V");
     /* SigilCompanionResult(data, contentHash, identityHash, changed) */
     g_companion_result_ctor = find_method(env, g_companion_result_class, "<init>",
         "([BLjava/lang/String;Ljava/lang/String;Z)V");
@@ -1137,13 +1137,15 @@ Java_com_nendo_sigil_Sigil_nativeSync(JNIEnv *env, jclass clazz,
             jstring jprofile_id = jprofiles ? jni_string(env,r->profile) : NULL;
             binding_broken = jcompanions && !jprofiles && !(*env)->ExceptionCheck(env);
             jobject jalternates = jprofile_id ? alternate_list(env, r->alternates, r->alternate_count) : NULL;
-            if (jalternates) {
+            jstring jmaker = jalternates ? jni_string(env, r->maker_profile) : NULL;
+            if (jmaker) {
                 out = (*env)->NewObject(env, g_sync_result_class, g_sync_result_ctor,
                                         jartifact, (jint)r->shape, jdata, jhash, jidentity,
                                         r->changed ? JNI_TRUE : JNI_FALSE, jnew,
                                         jheld, junowned, r->restore_again ? JNI_TRUE : JNI_FALSE, jcompanions,
                                         jprofiles, jprofile_id, jalternates,
-                                        r->hardcore_marker ? JNI_TRUE : JNI_FALSE, (jint)r->unowned_changed);
+                                        r->hardcore_marker ? JNI_TRUE : JNI_FALSE, (jint)r->unowned_changed,
+                                        jmaker);
             }
         }
     }

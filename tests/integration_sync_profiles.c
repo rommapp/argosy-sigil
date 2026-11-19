@@ -4,6 +4,7 @@
  * Canary and Edge against real Xbox 360 saves. */
 #include "save_corpus.h"
 #include "legacy_units.h"
+#include "x360_headers.h"
 #include <inttypes.h>
 #include <stdbool.h>
 
@@ -1644,9 +1645,19 @@ static bool x360_unit_is(const sigil_sync_result *r, const char *id) {
     return same && unit_names(r, names, 160) == rows;
 }
 
-/* `root` holds every file of sample `id` under profile `xuid`, byte for
- * byte, and no other save file: only the profile folders besides. */
-static bool x360_root_is(mem_root *root, const char *id, const char *xuid) {
+/* The save folder a header file is for: its name without ".header". */
+static void x360_package(const char *path, char out[SIGIL_SAVE_ENTRY_MAX]) {
+    const char *base = strrchr(path, '/');
+    base = base ? base + 1 : path;
+    snprintf(out, SIGIL_SAVE_ENTRY_MAX, "%.*s", (int)(strlen(base) - strlen(".header")), base);
+}
+
+/* `root` holds every file of sample `id` under profile `xuid` and no other
+ * save file, only the profile folders besides. A save's files are the
+ * sample's bytes; a header is too when the sample's is already in the
+ * target's form (Canary's 0xA000 bytes when `canary`, else Edge's 0x148), and
+ * otherwise what that emulator writes for it (x360_headers.h). */
+static bool x360_root_is(mem_root *root, const char *id, const char *xuid, bool canary) {
     size_t rows = 0, saves = 0;
     bool same = true;
     for (size_t i = 0; i < g_x360.nrows; i++) {
@@ -1654,10 +1665,18 @@ static bool x360_root_is(mem_root *root, const char *id, const char *xuid) {
         const char *path = corpus_get(&g_x360, i, "path");
         size_t len = 0;
         uint8_t *data = corpus_sample(&g_x360, "xbox360", id, path, &len);
-        char at[SIGIL_SAVE_PATH_MAX];
+        char at[SIGIL_SAVE_PATH_MAX], package[SIGIL_SAVE_ENTRY_MAX];
         x360_target(path, xuid, at);
         mem_file *f = root_find(root, at);
-        same = same && data && f && f->len == len && memcmp(f->data, data, len) == 0;
+        size_t ends = strlen(path) > 7 ? strlen(path) - 7 : 0;
+        bool header = strcmp(path + ends, ".header") == 0;
+        bool in_form = len == (canary ? X360_CANARY_SIZE : X360_EDGE_SIZE);
+        if (!data || !f) same = false;
+        else if (!header || in_form) same = same && f->len == len && memcmp(f->data, data, len) == 0;
+        else {
+            x360_package(path, package);
+            same = same && x360_converted(f->data, f->len, data, len, package, canary);
+        }
         free(data);
         rows++;
     }
@@ -1700,6 +1719,7 @@ static void check_xenia_edge_to_canary(sigil_sync_result **edge_unit) {
     expect_rc("xenia edge collect", collect(&g, &r), SIGIL_OK);
     if (!r || strcmp(r->profile, X360_SAMPLE) != 0) fail("xenia edge collect", "profile");
     if (!x360_unit_is(r, X360_EDGE)) fail("xenia edge collect", "unit isn't the sample under its unit names");
+    if (!r || r->maker_profile[0]) fail("xenia edge collect", "maker");
 
     mem_root canary = {0};
     put_x360_profile(&canary, X360_OTHER);
@@ -1708,7 +1728,19 @@ static void check_xenia_edge_to_canary(sigil_sync_result **edge_unit) {
     sigil_sync_result *w = NULL;
     expect_rc("xenia edge to canary", restore(&c, r, &w), SIGIL_OK);
     if (!w || strcmp(w->profile, X360_OTHER) != 0) fail("xenia edge to canary", "profile");
-    if (!x360_root_is(&canary, X360_EDGE, X360_OTHER)) fail("xenia edge to canary", "files");
+    if (!x360_root_is(&canary, X360_EDGE, X360_OTHER, true)) fail("xenia edge to canary", "files");
+    /* Canary itself rewrote this save's header from Edge's, in
+     * forza-horizon-2-xenia-canary: restore writes those bytes exactly. */
+    if (x360_have("xenia edge to canary, Canary's own header", X360_CANARY, NULL)) {
+        size_t len = 0;
+        const char *header = X360_SAMPLE "/" X360_FH2 "/Headers/00000001/ForzaProfile.header";
+        uint8_t *theirs = corpus_sample(&g_x360, "xbox360", X360_CANARY, header, &len);
+        mem_file *ours = root_find(&canary, "content/" X360_OTHER "/" X360_FH2 "/Headers/00000001/ForzaProfile.header");
+        if (!theirs || !ours || ours->len != len || memcmp(ours->data, theirs, len) != 0) {
+            fail("xenia edge to canary", "the header isn't the one Canary wrote from Edge's");
+        }
+        free(theirs);
+    }
     sigil_sync_result_free(w);
     *edge_unit = r;
     root_free(&canary);
@@ -1728,6 +1760,8 @@ static void check_xenia_canary_to_edge(void) {
     sigil_sync_result *unit = NULL;
     expect_rc("xenia canary collect", collect(&c, &unit), SIGIL_OK);
     if (!x360_unit_is(unit, X360_CANARY)) fail("xenia canary collect", "unit isn't the sample under its unit names");
+    /* Canary rewrote these headers from Edge's (FillHeader), which names no XUID. */
+    if (!unit || unit->maker_profile[0]) fail("xenia canary collect", "maker");
 
     mem_root edge = {0};
     x360_root(&edge, X360_EDGE);
@@ -1737,7 +1771,7 @@ static void check_xenia_canary_to_edge(void) {
     expect_rc("xenia edge before", collect(&e, &before), SIGIL_OK);
     if (before) keep_state(&e, before);
     expect_rc("xenia canary to edge", unit ? restore(&e, unit, &w) : SIGIL_ERR_INVALID_ARG, SIGIL_OK);
-    if (!x360_root_is(&edge, X360_CANARY, X360_SAMPLE)) fail("xenia canary to edge", "files");
+    if (!x360_root_is(&edge, X360_CANARY, X360_SAMPLE, false)) fail("xenia canary to edge", "files");
     expect_rc("xenia edge after", collect(&e, &after), SIGIL_OK);
     if (!after || !unit || strcmp(after->identity_hash, unit->identity_hash) != 0) {
         fail("xenia canary to edge", "Edge doesn't collect what Canary sent");
@@ -1781,7 +1815,7 @@ static void check_xenia_console_upload(const sigil_sync_result *edge_unit) {
     sigil_sync_result *w = NULL, *v = NULL;
     expect_rc("xenia console upload", restore(&a, &upload, &w), SIGIL_OK);
     expect_rc("xenia own unit", restore(&b, edge_unit, &v), SIGIL_OK);
-    if (!roots_same(&older, &own) || !x360_root_is(&older, X360_EDGE, X360_OTHER)) {
+    if (!roots_same(&older, &own) || !x360_root_is(&older, X360_EDGE, X360_OTHER, true)) {
         fail("xenia console upload", "doesn't restore to what sigil's own unit restores to");
     }
     if (root_find(&older, "content/" X360_SAMPLE X360_PROFILE X360_SAMPLE "/Account")) {
@@ -1811,7 +1845,7 @@ static void check_xenia_charlie_murder(void) {
     game c;
     make_game(&c, &canary, "xenia_canary", "xbox360", X360_CMID);
     expect_rc("charlie murder restore", r ? restore(&c, r, &w) : SIGIL_ERR_INVALID_ARG, SIGIL_OK);
-    if (!x360_root_is(&canary, X360_CM, X360_OTHER)) fail("charlie murder restore", "files");
+    if (!x360_root_is(&canary, X360_CM, X360_OTHER, true)) fail("charlie murder restore", "files");
     sigil_sync_result_free(w);
     sigil_sync_result_free(r);
     root_free(&canary);
@@ -1824,6 +1858,7 @@ static void check_xenia_charlie_murder(void) {
  * the maker's XUID in Canary's header included. */
 static void check_xenia_new_saves(void) {
     const char *ids[] = { X360_G2_EDGE, X360_G2_CAN };
+    const char *makers[] = { "", X360_SAMPLE };
     const char *layouts[] = { "xenia_edge", "xenia_canary" };
     for (size_t i = 0; i < 2; i++) {
         if (!x360_have(ids[i], ids[i], NULL)) continue;
@@ -1834,6 +1869,7 @@ static void check_xenia_new_saves(void) {
         sigil_sync_result *r = NULL;
         expect_rc(ids[i], collect(&g, &r), SIGIL_OK);
         if (!x360_unit_is(r, ids[i])) fail(ids[i], "unit isn't the sample under its unit names");
+        if (!r || strcmp(r->maker_profile, makers[i]) != 0) fail(ids[i], "maker");
         for (size_t k = 0; k < 2 && r; k++) {
             mem_root target = {0};
             put_x360_profile(&target, X360_OTHER);
@@ -1841,7 +1877,7 @@ static void check_xenia_new_saves(void) {
             make_game(&t, &target, layouts[k], "xbox360", X360_G2);
             sigil_sync_result *w = NULL;
             expect_rc(ids[i], restore(&t, r, &w), SIGIL_OK);
-            if (!x360_root_is(&target, ids[i], X360_OTHER)) fail(ids[i], layouts[k]);
+            if (!x360_root_is(&target, ids[i], X360_OTHER, k == 1)) fail(ids[i], layouts[k]);
             sigil_sync_result_free(w);
             root_free(&target);
         }

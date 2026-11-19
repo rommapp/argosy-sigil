@@ -76,6 +76,14 @@ typedef enum {
                                   carry, so a profile is its id alone */
 } sigil_profiles_format;
 
+/* The form of the content headers a folder holds, Xbox 360's
+ * (sync_xbox360.c). */
+typedef enum {
+    SIGIL_HEADER_NONE = 0,
+    SIGIL_HEADER_XCONTENT_AGGREGATE,   /* XCONTENT_AGGREGATE_DATA alone: Xenia Edge, XenDroid */
+    SIGIL_HEADER_XCONTENT_CONTAINER    /* the whole container header padded to 0xA000: Xenia Canary */
+} sigil_header_form;
+
 /* One folder of a game's saves on a layout with profiles. Templates are
  * relative to the emulator's base folder and end in '/'; {profile} and
  * {save_id} each stand for one whole path segment. */
@@ -87,6 +95,8 @@ typedef struct {
                                 the root's reach instead of refusing */
     const char *legacy;      /* an older unit's name for the folder, {profile} standing for any id, or NULL */
     bool        optional;    /* a unit may leave the folder out: restore then keeps what is there (3DS extdata) */
+    int         header;      /* sigil_header_form of the files: restore writes each in it, and identity covers
+                                what both forms carry; SIGIL_HEADER_NONE for files copied as they are */
 } sigil_layout_area;
 
 /* A layout whose saves are folders, kept per user profile when it has an

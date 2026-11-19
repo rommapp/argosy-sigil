@@ -481,6 +481,7 @@ class SigilSyncResult:
     alternates: tuple[SigilSaveAlternate, ...] = ()  # files other option values would take
     hardcore_marker: bool = False  # restore: the unit ended in Argosy's legacy hardcore marker, left out of the saves
     unowned_changed: int = 0  # collect: the first this many of `unowned` are new or rewritten since the last collect
+    maker_profile: str = ""  # the profile the account saves' own records name as their maker (Xenia), or ""
 
 
 def _raise_error(code: int) -> None:
@@ -1044,6 +1045,7 @@ def _sync(
             alternates=_alternates(r),
             hardcore_marker=bool(r.hardcore_marker),
             unowned_changed=int(r.unowned_changed),
+            maker_profile=_text(r.maker_profile),
         )
     finally:
         lib.sigil_sync_result_free(r)

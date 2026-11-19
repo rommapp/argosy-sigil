@@ -1304,3 +1304,45 @@ func TestTwoProfilesAndNonePickedIsAmbiguousListingThem(t *testing.T) {
 		t.Fatalf("ListProfiles without profiles = %v", err)
 	}
 }
+
+// canaryHeader is Forza Horizon 2's header as Xenia Canary writes one for a
+// save it makes: the container header padded to 0xA000, the maker's XUID as
+// profile_id at 0x371 (xcontent/xcontent_package.cc InitializePackageHeader at
+// 27d11a2).
+func canaryHeader(xuid uint64) []byte {
+	h := make([]byte, 0xA000)
+	copy(h, "CON ")
+	binary.BigEndian.PutUint32(h[0x340:], 0x971A)
+	binary.BigEndian.PutUint32(h[0x344:], 1)
+	binary.BigEndian.PutUint32(h[0x348:], 2)
+	binary.BigEndian.PutUint32(h[0x360:], 0x4D530AA4)
+	binary.BigEndian.PutUint64(h[0x371:], xuid)
+	copy(h[0x971A:], "ForzaProfile")
+	return h
+}
+
+func TestXeniaReportsTheProfileAHeaderNames(t *testing.T) {
+	root := t.TempDir()
+	xuid := "E030000043414231"
+	files := map[string][]byte{
+		"content/" + xuid + "/FFFE07D1/00010000/" + xuid + "/Account":        bytes.Repeat([]byte{0xA5}, 404),
+		"content/" + xuid + "/4D530AA4/00000001/ForzaProfile/PlayerDatabase": []byte("progress"),
+		"content/" + xuid + "/4D530AA4/Headers/00000001/ForzaProfile.header": canaryHeader(0xE030000043414231),
+	}
+	for name, data := range files {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unit, err := Collect(PersistedResult("xbox360", "4D530AA4", "4D530AA4", 0), "xenia_canary", "Forza Horizon 2.iso", root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unit.MakerProfile != xuid {
+		t.Fatalf("MakerProfile %q, want %q", unit.MakerProfile, xuid)
+	}
+}

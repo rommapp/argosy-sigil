@@ -205,6 +205,23 @@ int sigil_sync_collect_gb(sigil_sync_ctx *x, sigil_sync_result *r);
 int sigil_sync_restore_gb(sigil_sync_ctx *x, const uint8_t *unit, size_t len, size_t received_len,
                           sigil_sync_result *r, char local_identity[33]);
 
+/* ---- Xbox 360 content headers (sync_xbox360.c) -------------------------------- */
+
+/** The sigil_header_form `h` is in, read from its content; SIGIL_HEADER_NONE for one neither Xenia reads. */
+int  sigil_x360_header_form(const uint8_t *h, size_t len);
+/**
+ * `h` in `form`, malloc'd into `*out`: as it is when it already is, else
+ * built the way the emulator of that form builds it from the other.
+ * `package` is the save folder's name. SIGIL_ERR_UNSUPPORTED_FORMAT for a
+ * header in neither form.
+ */
+int  sigil_x360_header_to(int form, const uint8_t *h, size_t len, const char *package, uint8_t **out,
+                          size_t *out_len);
+/** The MD5 over what both forms carry; false for a header in neither form. */
+bool sigil_x360_header_md5(const uint8_t *h, size_t len, const char *package, char md5[33]);
+/** The XUID the header names as the one it was made under, or "". */
+void sigil_x360_header_maker(const uint8_t *h, size_t len, char out[SIGIL_PROFILE_ID_MAX]);
+
 /* ---- Nintendo DS cartridges (sync_nds.c) -------------------------------------- */
 
 /** Collect on DS: the save chip's raw bytes, from a raw file or a DeSmuME .dsv. */
