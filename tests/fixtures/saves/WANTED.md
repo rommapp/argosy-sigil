@@ -26,7 +26,7 @@ Cases no sample covers yet. The saves already gathered came from a RomM store an
 
 - A standalone `.sav` with a 48-byte clock footer (mGBA, VBA-M, SameBoy or Gearboy).
 - Clocks from gambatte (8-byte `.rtc`), SameBoy libretro (32-byte `.rtc`), Gearboy libretro, Mesen2 (13-byte `.rtc`) and TGB Dual.
-- A vba_next GBA save with its 64 KiB padding.
+- A VBA-M libretro or standalone GBA save.
 
 ## Other Nintendo cartridge platforms (`nes`, `snes`, `n64`, `nds`)
 

@@ -203,6 +203,16 @@ int sigil_sync_cart_read(const sigil_sync_request *req, const sigil_sync_cart_fi
                          size_t *len);
 /** Names the unit `{stem}{ext}` in r->artifact, the stem the content path's. */
 void sigil_sync_cart_artifact(const sigil_sync_request *req, const char *ext, sigil_sync_result *r);
+/** Takes one member of a zipped unit into the converter's save; SIGIL_OK, or the refusal. */
+typedef int (*sigil_sync_cart_take_fn)(void *ctx, const sigil_zip_member *m);
+/**
+ * The members of a zipped unit, each up to `max_member` bytes, handed to
+ * `take` in the zip's order. Stops at the first refusal and names that
+ * member in r->problem. On success sets r->content_hash to RomM's hash over
+ * every member's name and md5. r->shape is the caller's.
+ */
+int sigil_sync_cart_read_zip(const uint8_t *unit, size_t len, size_t max_member, sigil_sync_cart_take_fn take,
+                             void *ctx, sigil_sync_result *r);
 
 /* ---- N64 cartridges (sync_n64.c) ---------------------------------------------- */
 
@@ -267,6 +277,17 @@ int sigil_sync_collect_genesis(sigil_sync_ctx *x, sigil_sync_result *r);
  */
 int sigil_sync_restore_genesis(sigil_sync_ctx *x, const uint8_t *unit, size_t len, size_t received_len,
                                sigil_sync_result *r, char local_identity[33]);
+
+/* ---- Game Boy Advance cartridges (sync_gba.c) --------------------------------- */
+
+/** Collect on GBA: the save chip's bytes at the chip's size, from any emulator's file. */
+int sigil_sync_collect_gba(sigil_sync_ctx *x, sigil_sync_result *r);
+/**
+ * Restore on GBA: sigil's unit, or any emulator's file as clients uploaded
+ * it before sigil, written in the form the request's emulator keeps.
+ */
+int sigil_sync_restore_gba(sigil_sync_ctx *x, const uint8_t *unit, size_t len, size_t received_len,
+                           sigil_sync_result *r, char local_identity[33]);
 
 /* ---- the original Xbox's hard drive (sync_xbox.c) ------------------------------ */
 

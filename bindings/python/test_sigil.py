@@ -792,6 +792,59 @@ def test_missing_rtc_is_expected_only_when_the_cart_has_a_clock():
     assert [m.path for m in clocked.expected] == ["game.rtc"]
 
 
+def _gba_rom(*ids: bytes) -> bytes:
+    rom = bytearray(0x40000)
+    rom[0xA0:0xB2] = b"POKEMON EMERBPEE01"
+    rom[0xB2] = 0x96
+    rom[0xBD] = (-sum(rom[0xA0:0xBD]) - 0x19) & 0xFF
+    at = 0x1000
+    for library_id in ids:
+        rom[at:at + len(library_id)] = library_id
+        at += len(library_id) + 1
+    return bytes(rom)
+
+
+def test_extract_reads_a_gba_carts_save_chip_and_clock(tmp_path):
+    rom = tmp_path / "Pokemon - Emerald Version (USA, Europe).gba"
+    rom.write_bytes(_gba_rom(b"FLASH1M_V103", b"SIIRTC_V001"))
+
+    result = sigil.extract(rom)
+
+    assert result.platform == "gba"
+    assert result.features == sigil.FEATURE_GBA_FLASH1M | sigil.FEATURE_RTC
+    assert result.title_id == ""
+
+
+def test_a_gba_clock_cart_expects_no_rtc_file():
+    emerald = sigil.SigilResult.persisted("gba", "", "", sigil.FEATURE_GBA_FLASH1M | sigil.FEATURE_RTC)
+    located = sigil.locate_saves(emerald, "mgba", "game.gba", listing=["game.srm"])
+
+    assert [m.path for m in located.members] == ["game.srm"]
+    assert located.expected == ()
+
+
+def test_a_gba_eeprom_save_crosses_between_gpsp_vba_next_and_mgba(tmp_path):
+    game = sigil.SigilResult.persisted("gba", "", "", sigil.FEATURE_GBA_EEPROM)
+    gpsp, vba_next, mgba = tmp_path / "gpsp", tmp_path / "vba_next", tmp_path / "mgba"
+    for folder in (gpsp, vba_next, mgba):
+        folder.mkdir()
+    eeprom = bytes(range(256)) * 2
+    (gpsp / "Game.srm").write_bytes(eeprom + b"\xff" * (0x20000 - 512))
+
+    unit = sigil.collect(game, "gpsp", "Game.gba", gpsp)
+    assert (unit.data, unit.artifact, unit.shape) == (eeprom, "Game.srm", "single")
+
+    sigil.restore(unit.data, game, "vba_next", "Game.gba", vba_next)
+    file = (vba_next / "Game.srm").read_bytes()
+    assert len(file) == 0x22000 and file[0x20000:0x20200] == eeprom
+    assert file[:0x20000] == b"\xff" * 0x20000 and file[0x20200:] == b"\xff" * (0x2000 - 512)
+
+    again = sigil.collect(game, "vba_next", "Game.gba", vba_next)
+    assert again.identity_hash == unit.identity_hash
+    sigil.restore(again.data, game, "mgba", "Game.gba", mgba)
+    assert (mgba / "Game.srm").read_bytes() == eeprom
+
+
 def test_hash_of_a_missing_member_is_an_io_error(tmp_path):
     located = sigil.locate_saves(GB, "gambatte", "game.gbc", listing=["game.srm"])
     with pytest.raises(sigil.SigilIOError):

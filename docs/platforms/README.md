@@ -23,7 +23,7 @@ save folder; sigil never searches the drive.
 | PS Vita | [psvita](psvita.md) | `psvita` | yes | synced |
 | PlayStation 3 | [ps3](ps3.md) | `ps3` | yes | synced |
 | Game Boy, Game Boy Color | [gb](gb.md) | `gb`, `gbc` | header facts | synced |
-| Game Boy Advance | [gba](gba.md) | | no | located |
+| Game Boy Advance | [gba](gba.md) | `gba` | header facts | synced |
 | Super Nintendo | [snes](snes.md) | `snes` | header facts | located |
 | NES, Famicom Disk System | [fds](fds.md) | `fds` (layout rows) | no | located |
 | Nintendo DS | [nds](nds.md) | `nds` (layout rows) | no | synced |
@@ -183,9 +183,10 @@ value, and the default is the first listed.
 
 | Layout | Writes by default | Options that change it | From nothing |
 |---|---|---|---|
-| `libretro`, and any core with no row | `{stem}.srm`; `{stem}.rtc` on a clock cart (GB, GBC, N64). Mega Drive, 32X, Master System and Game Gear: `genesis_plus_gx` without trailing 0xFF, `picodrive` padded with 0xFF to its size where sigil knows it ([genesis](genesis.md#sync)) | | yes |
-| `vba_next`, `gpsp` | `{stem}.srm` (GBA) | | located only |
-| `mgba_standalone`, `vbam_standalone`, `sameboy_standalone`, `gearboy_standalone` | `{stem}.sav`: the RAM, the clock appended on a clock cart | | yes |
+| `libretro`, and any core with no row | `{stem}.srm`; `{stem}.rtc` on a clock cart (GB, GBC, N64). Mega Drive, 32X, Master System and Game Gear: `genesis_plus_gx` without trailing 0xFF, `picodrive` padded with 0xFF to its size where sigil knows it ([genesis](genesis.md#sync)). GBA: the save chip's bytes (0xFF to 128 KiB over a file already that long, with mGBA's clock inside when the ROM names the chip and the clock and the chip isn't 128 KiB flash) and no `.rtc` | | yes |
+| `vba_next` | `{stem}.srm`, 136 KiB: SRAM or flash at 0, an EEPROM at 128 KiB (GBA) | | yes |
+| `gpsp` | `{stem}.srm`, 128 KiB: the save chip's bytes, then 0xFF (GBA) | | yes |
+| `mgba_standalone`, `vbam_standalone`, `sameboy_standalone`, `gearboy_standalone` | `{stem}.sav`: the RAM, the clock appended on a clock cart. GBA on `mgba_standalone`: the save at its own size, then mGBA's 16-byte clock on a clock cart, at 8 KiB for an EEPROM | | yes |
 | `bsnes` | `{stem}.srm`, `{stem}.rtc`, `{stem}.psr` | | located only |
 | `genesis_plus_gx` | Sega CD: `scd_U.brm`, `scd_E.brm` or `scd_J.brm` by the disc's region, and `{cart_size}_cart.brm` | `genesis_plus_gx_system_bram=per game`: `{stem}.brm`; `genesis_plus_gx_cart_bram=per game`: `{stem}_{cart_size}_cart.brm`; `genesis_plus_gx_region_detect` picks the region file | send the container; yes per game |
 | `mednafen_psx_hw`, `mednafen_psx` | `{stem}.srm` | `*_use_mednafen_memcard0_method=mednafen`: `{stem}.{left_index}.mcr`, and `{stem}.{right_index}.mcr` with `*_enable_memcard1=enabled`; `*_shared_memory_cards=enabled`: `mednafen_psx_libretro_shared.{index}.mcr` (shared). `*` is `beetle_psx_hw` or `beetle_psx` | yes; send the container when shared |

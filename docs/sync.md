@@ -21,6 +21,7 @@ and passes back. The calls and their fields are on each language's page
 | Wii | a zip of the title's `data/` folder, under its code | [wii](platforms/wii.md#sync) |
 | 3DS | a zip of the title's save folder, its metadata and its extdata | [3ds](platforms/3ds.md#sync) |
 | GB, GBC | the cart RAM; on a cart with a clock, a zip of `save.sram` and `clock.rtc` | [gb](platforms/gb.md#sync) |
+| GBA | the save chip's bytes at the chip's size; on a cart with a clock, a zip of `save.sram` and `clock.rtc` | [gba](platforms/gba.md#sync) |
 | N64 | a zip of the save types the game uses (`eeprom`, `pak1` to `pak4`, `sram`, `flash`), whichever emulator wrote them | [n64](platforms/n64.md#sync) |
 | DS | the raw save, without DeSmuME's footer | [nds](platforms/nds.md#sync) |
 | Mega Drive, 32X, Master System, Game Gear | the cart's save RAM as the emulator's file holds it | [genesis](platforms/genesis.md#sync) |
@@ -51,6 +52,7 @@ next collect then gives the save in sigil's form; upload that.
 | 3DS | a zip rooted at `data/` and `extdata/` |
 | Xbox 360 | Xenia's `content/` folder zipped as it is (`<XUID>/<title id>/00000001/...`, `<XUID>/<title id>/Headers/00000001/...`, `0000000000000000/<title id>/...`); each profile folder and the gamer pictures (`<XUID>/FFFE07D1/`) are left out |
 | GB, GBC | a raw `.srm`, a `.sav` with its clock appended, or a zip of an emulator's `.srm` and `.rtc` |
+| GBA | any emulator's file (gpSP's 128 KiB, mGBA's 128 KiB with its clock inside when the ROM names the chip and the clock and the chip isn't 128 KiB flash, VBA Next's 136 KiB, a standalone mGBA `.sav` with its clock), a zip of one, or a zip of `save.sram` and a `clock.rtc` of any size (one that isn't mGBA's 16 bytes is left out) |
 | N64 | a libretro `.srm`, a lone `.eep`, or a zip of an emulator's files (`.srm`, `.eep`, `.sra`, `.fla`, `.mpk`, `_Cont_<n>.mpk`) |
 | DS | a raw save, or a DeSmuME `.dsv` with its footer |
 | Mega Drive, 32X, Master System, Game Gear | a raw `.srm` from genesis_plus_gx or picodrive, or a zip of the one save as `save.sram`, `.srm` or `.sav` |

@@ -67,6 +67,11 @@ __all__ = [
 PLATFORM_AUTO: int = lib.SIGIL_PLATFORM_AUTO
 FEATURE_RTC: int = lib.SIGIL_FEATURE_RTC
 FEATURE_MBC2: int = lib.SIGIL_FEATURE_MBC2
+# The GBA save chip the ROM's Nintendo library id names; at most one is set.
+FEATURE_GBA_SRAM: int = lib.SIGIL_FEATURE_GBA_SRAM
+FEATURE_GBA_FLASH: int = lib.SIGIL_FEATURE_GBA_FLASH
+FEATURE_GBA_FLASH1M: int = lib.SIGIL_FEATURE_GBA_FLASH1M
+FEATURE_GBA_EEPROM: int = lib.SIGIL_FEATURE_GBA_EEPROM
 
 
 class SigilError(Exception):

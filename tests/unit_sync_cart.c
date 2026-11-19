@@ -2,9 +2,11 @@
 /* What the cartridge converters share (sync_cart.c and the suffix tests in
  * sigil_util.h), through collect and restore: each converter names its unit
  * for the content with its own extension, the file is the row's primary
- * member, an empty file holds no save, and N64 takes an emulator file's
- * extension in either case. */
+ * member, an empty file holds no save, N64 takes an emulator file's
+ * extension in either case, and a zipped unit's members reach the converter
+ * in order, hashed as RomM hashes a zip. */
 #include "legacy_units.h"
+#include "sync_internal.h"
 #include <stdio.h>
 
 static int g_fails = 0;
@@ -181,12 +183,75 @@ static void check_suffixes(void) {
     }
 }
 
+/* What a converter's take saw of a zipped unit's members. */
+typedef struct {
+    size_t calls;
+    char   names[4][32];
+    size_t lens[4];
+    size_t refuse_at;   /* the call that refuses, from 0; 4 for none */
+} taker;
+
+static int take(void *ctx, const sigil_zip_member *m) {
+    taker *t = (taker *)ctx;
+    size_t i = t->calls++;
+    if (i < 4) {
+        snprintf(t->names[i], sizeof(t->names[i]), "%s", m->name);
+        t->lens[i] = m->len;
+    }
+    return i == t->refuse_at ? SIGIL_ERR_UNSUPPORTED_FORMAT : SIGIL_OK;
+}
+
+/* GB, N64 and GBA read a zipped unit through sigil_sync_cart_read_zip: each
+ * member reaches the converter in the zip's order; a refusal stops the read
+ * and names its member in problem; on success the content hash is RomM's
+ * over every member (RomM's rule, computed with Python's hashlib: the MD5 of
+ * "clock.rtc:d41d8cd98f00b204e9800998ecf8427e\nsave.sram:900150983cd24fb0d6963f7d28e17f72");
+ * the shape stays the caller's. */
+static void check_read_zip(void) {
+    static const char *const NAMES[] = { "save.sram", "clock.rtc", "notes.txt" };
+    uint8_t *data[3] = { (uint8_t *)"abc", (uint8_t *)"", (uint8_t *)"x" };
+    size_t lens[3] = { 3, 0, 1 };
+    size_t zip_len = 0;
+    uint8_t *zip = legacy_zip(NAMES, data, lens, 2, &zip_len);
+    sigil_sync_result r;
+    memset(&r, 0, sizeof(r));
+    r.shape = 77;
+    taker t = { 0, { { 0 } }, { 0 }, 4 };
+    int rc = zip ? sigil_sync_cart_read_zip(zip, zip_len, 64, take, &t, &r) : SIGIL_ERR_OOM;
+    if (rc != SIGIL_OK || t.calls != 2 || strcmp(t.names[0], "save.sram") || strcmp(t.names[1], "clock.rtc") ||
+        t.lens[0] != 3 || t.lens[1] != 0) {
+        fail("zipped unit", "every member reaches the converter in order");
+    }
+    if (strcmp(r.content_hash, "6d731c07bd8148601064e4434951f803") != 0 || r.problem[0] || r.shape != 77) {
+        fail("zipped unit", "RomM's content hash over every member, no problem, the caller's shape");
+    }
+    free(zip);
+
+    zip = legacy_zip(NAMES, data, lens, 3, &zip_len);
+    memset(&r, 0, sizeof(r));
+    taker refused = { 0, { { 0 } }, { 0 }, 1 };
+    rc = zip ? sigil_sync_cart_read_zip(zip, zip_len, 64, take, &refused, &r) : SIGIL_ERR_OOM;
+    if (rc != SIGIL_ERR_UNSUPPORTED_FORMAT || refused.calls != 2 || strcmp(r.problem, "clock.rtc") != 0 ||
+        r.content_hash[0]) {
+        fail("zipped unit, a member refused", "the read stops there and names it in problem");
+    }
+    free(zip);
+
+    static const uint8_t NOT_A_ZIP[] = { 'P', 'K', 3, 4, 0, 0, 0, 0 };
+    memset(&r, 0, sizeof(r));
+    taker none = { 0, { { 0 } }, { 0 }, 4 };
+    if (sigil_sync_cart_read_zip(NOT_A_ZIP, sizeof(NOT_A_ZIP), 64, take, &none, &r) == SIGIL_OK || none.calls) {
+        fail("a broken zip", "refused before any member reaches the converter");
+    }
+}
+
 int main(void) {
     check_names();
     check_empty();
     check_n64_case();
     check_primary_member();
     check_suffixes();
+    check_read_zip();
     printf("cart sync: %d failures\n", g_fails);
     return g_fails ? 1 : 0;
 }

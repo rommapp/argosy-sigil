@@ -200,6 +200,7 @@ const (
 	PlatformGBC       Platform = C.SIGIL_PLATFORM_GBC
 	PlatformSNES      Platform = C.SIGIL_PLATFORM_SNES
 	PlatformN64       Platform = C.SIGIL_PLATFORM_N64
+	PlatformGBA       Platform = C.SIGIL_PLATFORM_GBA
 )
 
 // FeatureRTC marks a cart with a real-time clock; a libretro frontend
@@ -209,6 +210,16 @@ const FeatureRTC uint32 = C.SIGIL_FEATURE_RTC
 // FeatureMBC2 marks a Game Boy cart whose RAM is MBC2's 512 four-bit cells;
 // collect and restore convert between the forms emulators store it in.
 const FeatureMBC2 uint32 = C.SIGIL_FEATURE_MBC2
+
+// The GBA save chip the ROM's Nintendo library id names; at most one is set.
+// Collect and restore take a save's size from it when the emulator padded
+// the file.
+const (
+	FeatureGBASRAM    uint32 = C.SIGIL_FEATURE_GBA_SRAM
+	FeatureGBAFlash   uint32 = C.SIGIL_FEATURE_GBA_FLASH
+	FeatureGBAFlash1M uint32 = C.SIGIL_FEATURE_GBA_FLASH1M
+	FeatureGBAEEPROM  uint32 = C.SIGIL_FEATURE_GBA_EEPROM
+)
 
 // Slug returns the canonical string slug for this platform.
 func (p Platform) Slug() string {

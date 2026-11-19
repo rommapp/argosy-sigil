@@ -34,7 +34,7 @@ units.
 | `key` | the stem for file layouts, `save_id` for folder layouts |
 | `shape` | `SINGLE` one member travels raw; `MULTI` two or more travel as a flat zip with every member at the root; `FOLDER` a zip of the `save_id` folder. `NONE` when nothing is present. |
 | `members` | present members in archive order, each with its root-relative path, archive entry name, role and area (`ACCOUNT` or `DEVICE` on layouts with profiles, `NONE` elsewhere) |
-| `expected` | absent members the layout says this game should have: every applicable primary, plus the rtc member when `features` has `SIGIL_FEATURE_RTC` |
+| `expected` | absent members the layout says this game should have: every applicable primary, plus the rtc member when `features` has `SIGIL_FEATURE_RTC` (never on GBA, whose cores keep no clock file) |
 | `unkeyed` | shared files seen in the root that belong to every game at once; reported, never bundled |
 | `artifact` | the file name the unit travels under: the member's own name for `SINGLE`, the first member's name plus `.zip` for `MULTI`, `<key>.zip` for `FOLDER` |
 | `content_hash` | RomM `content_hash` of the artifact |
@@ -74,12 +74,15 @@ absent. With one non-rtc member left it is that member's raw hash.
 ## Features
 
 `sigil_result.features` (struct version 3) is a bitfield read from the
-cart header. `SIGIL_FEATURE_RTC` says the cart carries a real-time clock,
-so a libretro core exposes `RETRO_MEMORY_RTC` and RetroArch persists it
-beside the save as `<stem>.rtc`. `SIGIL_FEATURE_MBC2` says a Game Boy
-cart's RAM is MBC2's 512 four-bit cells, which emulators store in three
-different forms. The header rules that set them are on the
-[Game Boy](platforms/gb.md) and [SNES](platforms/snes.md) pages.
+cart header. `SIGIL_FEATURE_RTC` says the cart carries a real-time clock;
+on Game Boy and SNES a libretro core exposes it as `RETRO_MEMORY_RTC` and
+RetroArch persists it beside the save as `<stem>.rtc`. `SIGIL_FEATURE_MBC2`
+says a Game Boy cart's RAM is MBC2's 512 four-bit cells, which emulators
+store in three different forms. `SIGIL_FEATURE_GBA_SRAM`, `_FLASH`,
+`_FLASH1M` and `_EEPROM` name a GBA cart's save chip, which sizes a save
+an emulator padded. The rules that set them are on the
+[Game Boy](platforms/gb.md), [SNES](platforms/snes.md) and
+[Game Boy Advance](platforms/gba.md#features) pages.
 
 ## Layout rows
 

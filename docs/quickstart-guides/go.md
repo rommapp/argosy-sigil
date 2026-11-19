@@ -31,9 +31,9 @@ type Options struct {
 
 ```go
 type Result struct {
-    TitleID           string             // "" on gb, gbc, snes. A Switch update or DLC gives its game's id.
+    TitleID           string             // "" on gb, gbc, gba, snes. A Switch update or DLC gives its game's id.
     RawSerial         string             // As found in the binary; a Switch update's or DLC's own id.
-    SaveID            string             // On-disk name the emulator keys the save by. "" on gb, gbc, snes.
+    SaveID            string             // On-disk name the emulator keys the save by. "" on gb, gbc, gba, snes.
     Platform          Platform
     PlatformSlug      string
     Source            Source             // SourceBinary, SourceFilename.
@@ -43,7 +43,7 @@ type Result struct {
     Experimental      bool
     SwitchContentType SwitchContentType  // SwitchContentUnknown, Application, Patch, Addon.
     TitleVersion      uint32             // Switch only.
-    Features          uint32             // Bit set. FeatureRTC: cart has a clock. HasRTC() reads it.
+    Features          uint32             // Bit set. FeatureRTC: cart has a clock. HasRTC() reads it. FeatureGBA*: a GBA cart's save chip.
     N64Header         string             // N64 only. The cart's name; "" when not plain ASCII.
     N64MD5            string             // N64 only. The ROM's MD5 in .z64 byte order, uppercase.
     N64MD5N64         string             // N64 only. The same in .n64 byte order, as Project64 hashes it.

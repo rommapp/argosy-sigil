@@ -136,6 +136,7 @@ set(SIGIL_SOURCES
     src/gb.c
     src/snes.c
     src/n64.c
+    src/gba.c
     src/md5.c
     src/sha1.c
     src/sha256.c
@@ -171,6 +172,7 @@ set(SIGIL_SOURCES
     src/sync_gb.c
     src/sync_nds.c
     src/sync_genesis.c
+    src/sync_gba.c
     src/sync_xbox360.c
     src/zip_mem.c
     src/save_names.c

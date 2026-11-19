@@ -81,6 +81,7 @@ func TestPlatformSlugRoundtrip(t *testing.T) {
 		{PlatformGB, "gb"},
 		{PlatformGBC, "gbc"},
 		{PlatformSNES, "snes"},
+		{PlatformGBA, "gba"},
 	}
 	for _, c := range cases {
 		if got := c.p.Slug(); got != c.slug {

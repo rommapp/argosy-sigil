@@ -26,9 +26,9 @@ Sigil.extract(
 
 ```kotlin
 SigilResult(
-    titleId: String,                      // "" on gb, gbc, snes. A Switch update or DLC gives its game's id.
+    titleId: String,                      // "" on gb, gbc, gba, snes. A Switch update or DLC gives its game's id.
     rawSerial: String,                    // As found in the binary; a Switch update's or DLC's own id.
-    saveId: String,                       // On-disk name the emulator keys the save by. "" on gb, gbc, snes.
+    saveId: String,                       // On-disk name the emulator keys the save by. "" on gb, gbc, gba, snes.
     platformSlug: String,
     source: Source,                       // Binary, Filename.
     usage: Usage,                         // FolderExact, FolderPrefix, FileExact, FilePrefix, FolderSplit.
@@ -36,7 +36,7 @@ SigilResult(
     experimental: Boolean,
     switchContentType: SwitchContentType, // Unknown, Application, Patch, Addon.
     titleVersion: Long,                   // Switch only.
-    features: Int,                        // Bit set. FEATURE_RTC: cart has a clock. hasRtc reads it.
+    features: Int,                        // Bit set. FEATURE_RTC: cart has a clock. hasRtc reads it. FEATURE_GBA_*: a GBA cart's save chip.
     n64Header: String,                    // N64 only. The cart's name; "" when not plain ASCII.
     n64Md5: String,                       // N64 only. The ROM's MD5 in .z64 byte order, uppercase.
     n64Md5N64: String,                    // N64 only. The same in .n64 byte order, as Project64 hashes it.

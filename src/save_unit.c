@@ -653,6 +653,12 @@ int sigil_save_resolve(const sigil_save_request *req, sigil_save_unit **out) {
 
     uint32_t features = req->features;
     if (req->result && req->result->struct_version >= SIGIL_RESULT_V3) features |= req->result->features;
+    /* No libretro GBA core keeps the cart's clock in a file of its own:
+     * mGBA's libretro core exposes RETRO_MEMORY_RTC for GB carts alone and
+     * keeps a GBA cart's clock inside its save RAM (libretro/mgba at
+     * e31759b2: src/gba/savedata.c GBASavedataRTCWrite). A GBA clock is no
+     * reason to expect a `.rtc`. */
+    if (req->platform && strcmp(sigil_layout_platform(req->platform), "gba") == 0) features &= ~SIGIL_FEATURE_RTC;
 
     const sigil_layout *layout = sigil_layout_find(req->layout, req->platform);
     if (layout->profiles) return resolve_profiles(req, layout->profiles, out);
