@@ -153,7 +153,7 @@ static void restore_into(const sigil_sync_result *unit, const char *owner, const
     xb_walk(&after, &tree);
     if (is.faults) fail(where, "the qcow2 reference counts or tables are wrong");
     if (is.leaks > was.leaks) fail(where, "the restore left clusters counted that nothing refers to");
-    if (tree.faults) fail(where, "E:'s FAT chains are wrong");
+    if (tree.faults || tree.lost) fail(where, "E:'s FAT chains are wrong");
     char folder[32];
     lower(owner, folder);
     sigil_zip_member *m = NULL;
@@ -180,6 +180,85 @@ static void restore_into(const sigil_sync_result *unit, const char *owner, const
     xb_free(&before);
     xb_free(&after);
     root_free(&root);
+}
+
+/* The restore of `unit` into sample `into`, in parts, stopped after each of
+ * its writes, the next one never made. What each stop leaves has every
+ * qcow2 reference counted (clusters counted that nothing refers to are the
+ * only waste), E:'s chains whole (clusters marked used that nothing holds
+ * are the only waste there), each of the game's two folders holding all its
+ * old files or all the unit's, and the drive's other files as they were. */
+static void stop_each(const sigil_sync_result *unit, const char *owner, const char *from, const char *into,
+                      const char *where) {
+    mem_root root = {0};
+    if (!have(from, into) || !unit || !unit->data || !load_sample(&root, into)) {
+        root_free(&root);
+        return;
+    }
+    g_parts = 1;
+    mem_file *f = root_find(&root, DRIVE);
+    size_t len = f->len;
+    uint8_t *img = (uint8_t *)malloc(len);
+    memcpy(img, f->data, len);
+    xb_guest before, done;
+    xb_check check;
+    xb_read_image(img, len, &before, &check);
+    game g;
+    make_game(&g, &root, owner);
+    sigil_sync_result *r = NULL;
+    if (sigil_restore(&g.req, unit->data, unit->len, &r) != SIGIL_OK) fail(where, "restore failed");
+    sigil_sync_result_free(r);
+    int calls = root.parts;
+    f = root_find(&root, DRIVE);
+    xb_read_image(f->data, f->len, &done, &check);
+    root_free(&root);
+    char folder[32];
+    lower(owner, folder);
+    xb_tree old, new;
+    xb_walk(&before, &old);
+    xb_walk(&done, &new);
+    for (int n = 0; n < calls; n++) {
+        char at[200];
+        snprintf(at, sizeof(at), "%s, stopped after %d of %d writes", where, n, calls);
+        root_put(&root, DRIVE, img, len);
+        root.fail_part = n + 1;
+        make_game(&g, &root, owner);
+        r = NULL;
+        if (sigil_restore(&g.req, unit->data, unit->len, &r) != SIGIL_ERR_IO || root.parts != n + 1) {
+            fail(at, "the restore didn't stop where its write failed");
+        }
+        sigil_sync_result_free(r);
+        xb_guest after;
+        xb_tree now;
+        f = root_find(&root, DRIVE);
+        xb_read_image(f->data, f->len, &after, &check);
+        xb_walk(&after, &now);
+        if (check.faults) fail(at, "a cluster is referenced more often than it is counted, or a table is wrong");
+        if (now.faults) fail(at, "E:'s FAT chains are wrong");
+        if (!xb_folder_same(&after, &now, &before, &old, "UDATA", folder) &&
+            !xb_folder_same(&after, &now, &done, &new, "UDATA", folder)) {
+            fail(at, "the game's UDATA folder is neither the old one nor the unit's");
+        }
+        if (!xb_folder_same(&after, &now, &before, &old, "TDATA", folder) &&
+            !xb_folder_same(&after, &now, &done, &new, "TDATA", folder)) {
+            fail(at, "the game's TDATA folder is neither the old one nor the unit's");
+        }
+        if (xb_others_changed(&before, &after, folder)) fail(at, "the drive's other files aren't as they were");
+        if (!xb_only_game_changed(&before, &after, folder)) fail(at, "the stop changed something that isn't the game's");
+        make_game(&g, &root, owner);
+        r = NULL;
+        if (sigil_collect(&g.req, &r) != SIGIL_OK) fail(at, "sigil can't read the drive the stop left");
+        sigil_sync_result_free(r);
+        xb_tree_free(&now);
+        xb_free(&after);
+        root_free(&root);
+    }
+    g_parts = 0;
+    xb_tree_free(&old);
+    xb_tree_free(&new);
+    xb_free(&before);
+    xb_free(&done);
+    free(img);
 }
 
 int main(void) {
@@ -214,6 +293,10 @@ int main(void) {
         restore_into(orta, "53450007", "orta-xemu", "xemu-blank", "Orta into the blank image");
     }
     g_parts = 0;
+    stop_each(flatout, "454D0009", "flatout-cabinetos", "orta-xemu", "FlatOut into Orta's drive");
+    stop_each(flatout, "454D0009", "flatout-cabinetos", "xemu-blank", "FlatOut into the blank image");
+    stop_each(orta, "53450007", "orta-xemu", "flatout-cabinetos", "Orta into FlatOut's drive");
+    stop_each(orta, "53450007", "orta-xemu", "xemu-blank", "Orta into the blank image");
 
     sigil_sync_result_free(flatout);
     sigil_sync_result_free(orta);

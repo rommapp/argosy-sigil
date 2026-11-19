@@ -291,6 +291,7 @@ typedef struct {
     size_t   count;
     size_t   cap;
     int      faults;
+    uint32_t lost;   /* clusters the FAT marks used that no file or folder holds: wasted, not harmful */
     uint8_t *used;   /* one flag per cluster a file or folder holds */
 } xb_tree;
 
@@ -365,7 +366,8 @@ static void xb_walk_dir(xb_tree *t, const xb_guest *g, uint32_t dir, const char 
 
 /* Every file and folder on E:, and what is wrong with its chains: `faults`
  * counts a cluster two files hold, a chain into a free cluster, a file
- * whose chain isn't its size, and a used cluster nothing holds. */
+ * whose chain isn't its size, and a cluster a file holds that the FAT marks
+ * free; `lost` counts the clusters marked used that nothing holds. */
 static void xb_walk(const xb_guest *g, xb_tree *t) {
     memset(t, 0, sizeof(*t));
     t->used = (uint8_t *)calloc(XB_CLUSTERS, 1);
@@ -379,9 +381,9 @@ static void xb_walk(const xb_guest *g, xb_tree *t) {
     xb_claim(t, g, 1, UINT32_MAX, "(root)");
     xb_walk_dir(t, g, 1, "", 0);
     for (uint32_t c = 1; c < XB_CLUSTERS; c++) {
-        if ((xb_fat(g, c) != 0) != (t->used[c] != 0)) {
-            fprintf(stderr, "FATX: cluster %u is %s and %s\n", c, xb_fat(g, c) ? "marked used" : "marked free",
-                    t->used[c] ? "held by a file" : "held by nothing");
+        if (xb_fat(g, c) != 0 && !t->used[c]) t->lost++;
+        if (xb_fat(g, c) == 0 && t->used[c]) {
+            fprintf(stderr, "FATX: cluster %u is marked free and held by a file\n", c);
             t->faults++;
             return;
         }
@@ -414,6 +416,44 @@ static bool xb_file_is(const xb_guest *g, const xb_tree *t, const char *path, co
     bool same = memcmp(have, data, len) == 0;
     free(have);
     return same;
+}
+
+/* `path` is folder `top`/`id` or lies in it, compared without case as FATX compares names. */
+static bool xb_in_folder(const char *path, const char *top, const char *id) {
+    size_t nt = strlen(top), ni = strlen(id);
+    for (size_t i = 0; i < nt + 1 + ni; i++) {
+        char x = path[i], y = i < nt ? top[i] : i == nt ? '/' : id[i - nt - 1];
+        if (x >= 'a' && x <= 'z') x = (char)(x - 32);
+        if (y >= 'a' && y <= 'z') y = (char)(y - 32);
+        if (x != y || !x) return false;
+    }
+    return path[nt + 1 + ni] == '\0' || path[nt + 1 + ni] == '/';
+}
+
+/* Folder `top`/`id` holds the same on `a` as on `b`: its own entry's times,
+ * and every file and folder below it with its name, size, bytes and times. */
+static bool xb_folder_same(const xb_guest *a, const xb_tree *ta, const xb_guest *b, const xb_tree *tb, const char *top,
+                           const char *id) {
+    size_t skip = strlen(top) + 1 + strlen(id), na = 0, nb = 0;
+    for (size_t k = 0; k < tb->count; k++) nb += xb_in_folder(tb->items[k].path, top, id);
+    for (size_t i = 0; i < ta->count; i++) {
+        const xb_node *n = &ta->items[i], *m = NULL;
+        if (!xb_in_folder(n->path, top, id)) continue;
+        na++;
+        for (size_t k = 0; k < tb->count && !m; k++) {
+            const xb_node *o = &tb->items[k];
+            if (xb_in_folder(o->path, top, id) && strcmp(o->path + skip, n->path + skip) == 0) m = o;
+        }
+        if (!m || m->attr != n->attr || m->size != n->size || m->time != n->time || m->date != n->date) return false;
+        if (!(n->attr & XB_DIR) && n->size) {
+            uint8_t *x = xb_file_bytes(a, n), *y = xb_file_bytes(b, m);
+            bool same = memcmp(x, y, n->size) == 0;
+            free(x);
+            free(y);
+            if (!same) return false;
+        }
+    }
+    return na == nb;
 }
 
 /* ---- qcow2, written ------------------------------------------------------------- */
@@ -739,6 +779,10 @@ static bool xb_only_game_changed(const xb_guest *before, const xb_guest *after, 
     uint8_t *was = (uint8_t *)calloc(XB_CLUSTERS, 1), *is = (uint8_t *)calloc(XB_CLUSTERS, 1);
     xb_game_clusters(before, &tb, id, was);
     xb_game_clusters(after, &ta, id, is);
+    /* A restore that stopped part way can leave clusters it took marked used and held by nothing. */
+    for (uint32_t c = 1; c < XB_CLUSTERS; c++) {
+        if (xb_fat(after, c) != 0 && !ta.used[c] && xb_fat(before, c) == 0) is[c] = 1;
+    }
     static const char *const tops[] = { "UDATA", "TDATA" };
     xb_guest clone;
     xb_copy(after, &clone);
