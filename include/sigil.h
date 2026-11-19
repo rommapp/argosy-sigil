@@ -621,10 +621,11 @@ typedef struct {
                                                restore writes only the parts of it that change, in place, and reads
                                                them back. NULL, or a V1 request, has restore hand the whole file to
                                                `write` instead. A restore that stops between two of these writes (the
-                                               process ends, the power goes, or a write fails) leaves an image the
-                                               emulator reads, each of the game's save folders on it either as it was
-                                               or as the unit has it; space nothing refers to is all it can leave
-                                               behind (docs/platforms/xbox.md, "Writing in parts") */
+                                               process ends, the power goes, or a write fails) leaves every reference
+                                               in the image counted and every chain on the drive whole, each of the
+                                               game's save folders on it either as it was or as the unit has it; space
+                                               nothing refers to is all it can leave behind (docs/platforms/xbox.md,
+                                               "Writing in parts") */
 } sigil_sync_request;
 
 typedef struct {

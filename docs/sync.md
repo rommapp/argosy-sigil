@@ -189,14 +189,15 @@ the caller asks for parts: `writes_parts=True`, `WritesParts`, or
 `writesParts = true` with a `SigilPartFileAccess`.
 
 The parts go out in an order that keeps the image whole after each of
-them ([xbox.md](platforms/xbox.md#writing-in-parts)). A restore through
-`write_at` that stops part way, because the process ends, the power goes
-or a write fails (`SIGIL_ERR_IO`), leaves an image the emulator reads,
-with each of the game's two save folders either as it was or as the unit
-has it. What it can leave behind is space nothing uses, never a broken
-save: clusters the image counts that nothing refers to, which
-`qemu-img check` reports as leaked and `qemu-img check -r leaks` frees,
-and clusters E:'s FAT marks used that no file holds. Restoring again
+them ([xbox.md](platforms/xbox.md#writing-in-parts), which also says how
+that was checked). A restore through `write_at` that stops part way,
+because the process ends, the power goes or a write fails
+(`SIGIL_ERR_IO`), leaves every reference in the image counted and every
+chain on the drive whole, with each of the game's two save folders either
+as it was or as the unit has it. What it can leave behind is space nothing
+uses, never a broken save: clusters the image counts that nothing refers
+to, which `qemu-img check` reports as leaked and `qemu-img check -r leaks`
+frees, and clusters E:'s FAT marks used that no file holds. Restoring again
 finishes the job and leaves that space as it is. A power cut keeps the
 order only when each `write_at` is stored before it returns, as the
 bindings' are.

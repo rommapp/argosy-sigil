@@ -126,9 +126,10 @@ file doesn't read back as written: restore fails, and the file holds what
 `write` stored. A restore through `write_at` that stops part way leaves
 the drive as [Writing in parts](#writing-in-parts) says.
 
-Until the restore ends, E: holds the unit's files beside the ones they
-replace: the new files go only into clusters that were free when restore
-opened the drive, and the old ones are freed last.
+Until a restore in parts ends, E: holds the unit's files beside the ones
+they replace: the new files go only into clusters that were free when
+restore opened the drive, and the old ones are freed last. Written back
+whole, in one write, the new files may take the old ones' clusters.
 
 Restore also reads a zip of `UDATA/` and `TDATA/` as a client took them
 off a drive before it used sigil's units, in any case and with the saves
@@ -144,7 +145,7 @@ it as the game saves.
 | `SIGIL_ERR_NO_TARGET` | restore: a file's name can't be a FATX name (over 42 characters, or a character FATX refuses) | the unit member |
 | `SIGIL_ERR_UNSUPPORTED_FORMAT` | restore: two members go to one file, or one folder is spelled two ways. Either call: a qcow2 image using a feature sigil doesn't write (below) | |
 | `SIGIL_ERR_DAMAGED` | the file isn't a drive image with a FATX partition E:, its qcow2 tables don't hold together, or a chain of the game's files on E: is broken | the image |
-| `SIGIL_ERR_NO_SPACE` | restore: E: hasn't room for the unit's files beside the ones they replace; `blocks_short` counts 16 KiB clusters | the file that didn't fit |
+| `SIGIL_ERR_NO_SPACE` | restore: E: is too full; written in parts, the unit's files need room beside the ones they replace. `blocks_short` counts 16 KiB clusters | the file that didn't fit |
 | `SIGIL_ERR_IO` | restore: what sigil staged doesn't read back as the unit, so nothing is written; `write` failed, which leaves the drive as it was; `write_at` failed, which leaves it as [Writing in parts](#writing-in-parts) says; or the file reported written doesn't read back as written (its bytes, or the game's saves on it), and holds what was stored | |
 | `SIGIL_ERR_OOM` | restore without `write_at`: the image is over 2 GiB, which sigil won't hold in memory to write back as one file. A raw image is the whole 8 GB drive, so it restores only through `write_at` | |
 
@@ -212,37 +213,50 @@ order, each step in calls of its own, so the image is whole after any
 call:
 
 1. What the file gains past its end: new clusters, which nothing in the
-   image refers to yet.
+   image refers to yet, each page as the step that makes the cluster
+   leaves it.
 2. The reference counts the new clusters gain.
 3. E:'s new files and folders, in clusters that were free when restore
    opened the drive, with their FAT entries; then the L1 and L2 entries
    that map them.
-4. The entries that put the new folders in `UDATA`, `TDATA` or the root,
+4. `0xE5` on each of the game's old entries no new entry takes the slot
+   of: another spelling of a folder, or a folder the unit doesn't have;
+   then the L1 and L2 entries that map them.
+5. The entries that put the new folders in `UDATA`, `TDATA` or the root,
    each in the slot of the entry it replaces when there is one, so the two
-   never show together; `0xE5` on the game's other old entries; the FAT
-   entry that adds a cluster to a folder that was there; then the L1 and
+   never show together; the FAT entry that adds a cluster to a folder that
+   was there; then the L1 and L2 entries that map them.
+6. The FAT entries of the old folders' clusters, freed; then the L1 and
    L2 entries that map them.
-5. The FAT entries of the old folders' clusters, freed; then the L1 and
-   L2 entries that map them.
-6. The reference counts the replaced clusters lose.
+7. The reference counts the replaced clusters lose.
 
 The qcow2 half is qemu's own order (qemu at `v9.2.0`:
 `block/qcow2-cluster.c` `perform_cow`, `block/qcow2-refcount.c`
 `qcow2_alloc_bytes` and `update_refcount`), with each step stored before
 the next where qemu flushes the file (`block/qcow2-cache.c`
-`qcow2_cache_flush`). The FATX half is sigil's own: no source orders it
-(libfatx `v0.0.8` `fatx_unlink` frees a chain before it marks the entry
-deleted), so nothing on E: is pointed at before it is whole, and nothing
-is freed while anything points at it. A page that two steps change is
-written once for each, as that step leaves it.
+`qcow2_cache_flush`). The FATX half is sigil's: no source gives one
+(libfatx `v0.0.8` `fatx_unlink` frees a chain and then marks its entry
+deleted), and in this one nothing on E: is pointed at before it is whole,
+and nothing is freed while anything points at it. A page that two steps
+change is written once for each, as that step leaves it.
 
-A stop after any call leaves an image `qemu-img check` finds no error in,
-with nothing but leaked clusters, and a drive whose chains are whole, with
-nothing but clusters marked used that no file holds; sigil and the
-emulator read it. Each of the game's two folders switches with one 64-byte
-entry, so it is either as it was or as the unit has it, and a stop between
-the two leaves one of each. Restoring again finishes; neither it nor the
-console frees the space a stop leaves.
+A stop after any call leaves every reference in the image counted and every
+chain on E: whole. What it can leave behind is clusters the image counts
+that nothing refers to, which `qemu-img check` reports as leaked, and
+clusters E:'s FAT marks used that no file holds. A folder the unit
+replaces switches with the 64-byte entry written into its slot, a folder
+the unit adds appears with its entry, and a folder the unit doesn't have
+goes with a 1-byte `0xE5`; so each of the game's two folders is either as
+it was or as the unit has it, and a stop between the two leaves one of
+each. Restoring again finishes; neither it nor the console frees the space
+a stop leaves.
+
+That is what the tests check after every stop, clean or torn, of a restore
+in parts into each kind of drive they build and into the sample drives.
+`qemu-img check` (11.0.3) found no error on any stop of such restores into
+the sample drives, the drives xemu ran games on and the forms `qemu-img`
+writes, and xemu 0.8.136 loaded drives stopped just before and just after
+a folder's switch, each showing that game's old or new save.
 
 ## Open items
 
