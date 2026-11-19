@@ -1951,6 +1951,73 @@ static void check_xenia_new_saves(void) {
     }
 }
 
+/* Headers each emulator wrote itself for the same save: Edge's, and the one
+ * Canary rewrote from it with FillHeader when the game closed the save. Built
+ * for Canary from Edge's, a header is Canary's byte for byte; built for
+ * XenDroid from Canary's, it is Edge's but for the padding Edge leaves unset
+ * (0x134 and 0x144, 4 bytes each), which restore writes as 0. */
+static const struct {
+    const char *edge, *canary, *title, *header;
+} X360_PAIRS[] = {
+    { X360_EDGE, X360_CANARY, X360_FH2, "ForzaProfile.header" },
+    { "gears-of-war-2-xenia-edge", "gears-of-war-2-xenia-canary-rewrite", X360_G2, "Gears2Checkpoint.header" },
+    { X360_G2_EDGE, "gears-of-war-2-xenia-canary-rewrite-new", X360_G2, "Gears2Checkpoint.header" },
+};
+
+/* The header restore writes for `layout` from sample `id`'s, into `out`. */
+static bool x360_restored_header(const char *id, const char *from, const char *layout, const char *title,
+                                 const char *name, uint8_t **out, size_t *len) {
+    mem_root source = {0}, target = {0};
+    x360_root(&source, id);
+    put_x360_profile(&target, X360_SAMPLE);
+    game g, t;
+    make_game(&g, &source, from, "xbox360", title);
+    make_game(&t, &target, layout, "xbox360", title);
+    sigil_sync_result *r = NULL, *w = NULL;
+    bool ok = collect(&g, &r) == SIGIL_OK && restore(&t, r, &w) == SIGIL_OK;
+    char at[SIGIL_SAVE_PATH_MAX];
+    snprintf(at, sizeof(at), "content/" X360_SAMPLE "/%s/Headers/00000001/%s", title, name);
+    mem_file *f = ok ? root_find(&target, at) : NULL;
+    *out = f ? (uint8_t *)malloc(f->len) : NULL;
+    if (*out) memcpy(*out, f->data, f->len);
+    *len = f ? f->len : 0;
+    sigil_sync_result_free(w);
+    sigil_sync_result_free(r);
+    root_free(&target);
+    root_free(&source);
+    return *out != NULL;
+}
+
+static void check_xenia_references(void) {
+    for (size_t i = 0; i < sizeof(X360_PAIRS) / sizeof(X360_PAIRS[0]); i++) {
+        if (!x360_have(X360_PAIRS[i].canary, X360_PAIRS[i].edge, X360_PAIRS[i].canary)) continue;
+        char path[SIGIL_SAVE_PATH_MAX];
+        snprintf(path, sizeof(path), X360_SAMPLE "/%s/Headers/00000001/%s", X360_PAIRS[i].title, X360_PAIRS[i].header);
+        size_t edge_len = 0, canary_len = 0, built_len = 0;
+        uint8_t *edge = corpus_sample(&g_x360, "xbox360", X360_PAIRS[i].edge, path, &edge_len);
+        uint8_t *canary = corpus_sample(&g_x360, "xbox360", X360_PAIRS[i].canary, path, &canary_len);
+        uint8_t *built = NULL;
+        if (!x360_restored_header(X360_PAIRS[i].edge, "xenia_edge", "xenia_canary", X360_PAIRS[i].title,
+                                  X360_PAIRS[i].header, &built, &built_len) ||
+            !canary || built_len != canary_len || memcmp(built, canary, canary_len) != 0) {
+            fail(X360_PAIRS[i].canary, "built for Canary, not the header Canary wrote");
+        }
+        free(built);
+        built = NULL;
+        bool same = x360_restored_header(X360_PAIRS[i].canary, "xenia_canary", "xendroid", X360_PAIRS[i].title,
+                                         X360_PAIRS[i].header, &built, &built_len) &&
+                    edge && built_len == edge_len;
+        for (size_t k = 0; same && k < edge_len; k++) {
+            bool unset = (k >= 0x134 && k < 0x138) || (k >= 0x144 && k < 0x148);
+            same = unset ? built[k] == 0 : built[k] == edge[k];
+        }
+        if (!same) fail(X360_PAIRS[i].edge, "built for XenDroid, not the header Edge wrote");
+        free(built);
+        free(edge);
+        free(canary);
+    }
+}
+
 static void check_xenia(void) {
     sigil_sync_result *edge_unit = NULL;
     check_xenia_edge_to_canary(&edge_unit);
@@ -1959,6 +2026,7 @@ static void check_xenia(void) {
     check_xenia_canary_to_edge();
     check_xenia_charlie_murder();
     check_xenia_new_saves();
+    check_xenia_references();
     sigil_sync_result_free(edge_unit);
 }
 
