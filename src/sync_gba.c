@@ -170,39 +170,18 @@ static int take_save(uint32_t features, const uint8_t *data, size_t len, gba_sav
     return SIGIL_OK;
 }
 
-/* The game's save file the layout names, there or expected. GBA cores keep
- * no clock file: mGBA's libretro core exposes RETRO_MEMORY_RTC for GB carts
- * alone and keeps a GBA cart's clock in its save RAM (clock_in_buffer). */
-typedef struct {
-    char path[SIGIL_SAVE_PATH_MAX];
-    bool present;
-} gba_file;
-
-static int file_of(const sigil_sync_request *req, gba_file *f) {
-    memset(f, 0, sizeof(*f));
-    sigil_save_unit *unit = NULL;
-    int rc = sigil_save_resolve(&req->save, &unit);
-    if (rc != SIGIL_OK) return rc;
-    for (size_t i = 0; i < unit->member_count + unit->expected_count && !f->path[0]; i++) {
-        bool present = i < unit->member_count;
-        const sigil_save_member *m = present ? &unit->members[i] : &unit->expected[i - unit->member_count];
-        if (m->role != SIGIL_SAVE_ROLE_PRIMARY) continue;
-        snprintf(f->path, sizeof(f->path), "%s", m->path);
-        f->present = present;
-    }
-    sigil_save_unit_free(unit);
-    return SIGIL_OK;
-}
-
-static int read_local(const sigil_sync_request *req, const gba_file *f, gba_save *s) {
+/* The save in the game's save file, the row's primary member. GBA cores
+ * keep no clock file: mGBA's libretro core exposes RETRO_MEMORY_RTC for GB
+ * carts alone and keeps a GBA cart's clock in its save RAM
+ * (clock_in_buffer). */
+static int read_local(const sigil_sync_request *req, const sigil_sync_cart_file *f, gba_save *s) {
     memset(s, 0, sizeof(*s));
-    if (!f->present) return SIGIL_OK;
     uint8_t *data = NULL;
     size_t len = 0;
-    int rc = sigil_sync_read_file(req, f->path, VBA_NEXT_FILE + GBA_CLOCK_LEN, &data, &len);
-    if (rc == SIGIL_OK) rc = take_save(features_of(req), data, len, s);
+    int rc = sigil_sync_cart_read(req, f, VBA_NEXT_FILE + GBA_CLOCK_LEN, &data, &len);
+    if (rc == SIGIL_OK && data) rc = take_save(features_of(req), data, len, s);
     free(data);
-    return rc == SIGIL_ERR_NOT_FOUND ? SIGIL_ERR_IO : rc;
+    return rc;
 }
 
 /* A cart with a clock: the ROM says so, or an emulator kept one. */
@@ -221,17 +200,11 @@ static void identity_of(bool clocked, const gba_save *s, char out[33]) {
     else memcpy(out, part.md5, 33);
 }
 
-static void artifact_of(const sigil_sync_request *req, bool zip, sigil_sync_result *r) {
-    char stem[SIGIL_SAVE_ENTRY_MAX];
-    sigil_content_stem(req->save.content_path, stem, sizeof(stem));
-    snprintf(r->artifact, sizeof(r->artifact), "%s%s", stem, zip ? ".zip" : ".srm");
-}
-
 int sigil_sync_collect_gba(sigil_sync_ctx *x, sigil_sync_result *r) {
-    gba_file f;
+    sigil_sync_cart_file f;
     gba_save s;
     memset(&s, 0, sizeof(s));
-    int rc = file_of(x->req, &f);
+    int rc = sigil_sync_cart_file_of(x->req, &f);
     if (rc == SIGIL_OK) rc = read_local(x->req, &f, &s);
     if (rc == SIGIL_OK && s.chip) {
         bool clocked = clock_cart(x->req, &s, NULL);
@@ -255,7 +228,7 @@ int sigil_sync_collect_gba(sigil_sync_ctx *x, sigil_sync_result *r) {
             rc = sigil_zip_store(members, n, &r->data, &r->len);
             r->shape = SIGIL_SAVE_SHAPE_MULTI;
         }
-        artifact_of(x->req, r->shape == SIGIL_SAVE_SHAPE_MULTI, r);
+        sigil_sync_cart_artifact(x->req, r->shape == SIGIL_SAVE_SHAPE_MULTI ? ".zip" : ".srm", r);
     }
     gba_free(&s);
     return rc;
@@ -263,9 +236,30 @@ int sigil_sync_collect_gba(sigil_sync_ctx *x, sigil_sync_result *r) {
 
 /* ---- restore ------------------------------------------------------------------ */
 
-static bool ends_with(const char *s, const char *tail) {
-    size_t n = strlen(s), m = strlen(tail);
-    return n >= m && strcmp(s + n - m, tail) == 0;
+/* A zipped unit's save so far, and the clock its clock.rtc carries. */
+typedef struct {
+    uint32_t  features;
+    gba_save *save;
+    bool      has_clock;
+    uint8_t   clock[GBA_CLOCK_LEN];
+} gba_zip;
+
+/* One member of a zipped unit: the save as save.sram or an emulator's .srm
+ * or .sav, the last one read winning; the clock as clock.rtc. A clock.rtc
+ * of another length isn't mGBA's clock: it is left out, and the save
+ * restores without it. */
+static int take_zip_member(void *ctx, const sigil_zip_member *m) {
+    gba_zip *z = (gba_zip *)ctx;
+    if (strcmp(m->name, GBA_SRAM_NAME) == 0 || sigil_ends_with(m->name, ".srm") || sigil_ends_with(m->name, ".sav")) {
+        gba_free(z->save);
+        return take_save(z->features, m->data, m->len, z->save);
+    }
+    if (strcmp(m->name, GBA_CLOCK_NAME) != 0) return SIGIL_ERR_UNSUPPORTED_FORMAT;
+    if (m->len == GBA_CLOCK_LEN) {
+        memcpy(z->clock, m->data, GBA_CLOCK_LEN);
+        z->has_clock = true;
+    }
+    return SIGIL_OK;
 }
 
 /* The save a unit carries: sigil's own, any emulator's file as clients
@@ -278,37 +272,14 @@ static int read_unit(uint32_t features, const uint8_t *unit, size_t len, size_t 
         r->shape = SIGIL_SAVE_SHAPE_SINGLE;
         return len ? take_save(features, unit, len, s) : SIGIL_ERR_NOT_FOUND;
     }
-    sigil_zip_member *members = NULL;
-    size_t count = 0;
-    int rc = sigil_zip_read_mem(unit, len, VBA_NEXT_FILE + GBA_CLOCK_LEN, &members, &count);
-    sigil_named_md5 *parts = rc == SIGIL_OK ? (sigil_named_md5 *)calloc(count ? count : 1, sizeof(*parts)) : NULL;
-    if (rc == SIGIL_OK && !parts) rc = SIGIL_ERR_OOM;
-    const sigil_zip_member *clock = NULL;
-    for (size_t i = 0; i < count && rc == SIGIL_OK; i++) {
-        const sigil_zip_member *m = &members[i];
-        snprintf(parts[i].name, sizeof(parts[i].name), "%s", m->name);
-        sigil_md5_of(m->data, m->len, parts[i].md5);
-        if (strcmp(m->name, GBA_SRAM_NAME) == 0 || ends_with(m->name, ".srm") || ends_with(m->name, ".sav")) {
-            gba_free(s);
-            rc = take_save(features, m->data, m->len, s);
-        } else if (strcmp(m->name, GBA_CLOCK_NAME) == 0) {
-            /* A clock.rtc of another length isn't mGBA's clock: it is left
-             * out, and the save restores without it. */
-            if (m->len == GBA_CLOCK_LEN) clock = m;
-        } else {
-            rc = SIGIL_ERR_UNSUPPORTED_FORMAT;
-        }
-        if (rc != SIGIL_OK) snprintf(r->problem, sizeof(r->problem), "%s", m->name);
-    }
-    if (rc == SIGIL_OK && clock) {
-        memcpy(s->clock, clock->data, GBA_CLOCK_LEN);
+    gba_zip z = { features, s, false, { 0 } };
+    int rc = sigil_sync_cart_read_zip(unit, len, VBA_NEXT_FILE + GBA_CLOCK_LEN, take_zip_member, &z, r);
+    if (rc == SIGIL_OK && z.has_clock) {
+        memcpy(s->clock, z.clock, GBA_CLOCK_LEN);
         s->has_clock = true;
     }
-    if (rc == SIGIL_OK && count) sigil_named_hash(parts, count, r->content_hash);
     if (rc == SIGIL_OK && !s->chip) rc = SIGIL_ERR_NOT_FOUND;
     r->shape = SIGIL_SAVE_SHAPE_MULTI;
-    free(parts);
-    if (members) sigil_zip_members_free(members, count);
     return rc;
 }
 
@@ -352,12 +323,13 @@ static int save_file(const sigil_sync_request *req, const gba_save *in, const gb
 int sigil_sync_restore_gba(sigil_sync_ctx *x, const uint8_t *unit, size_t len, size_t received_len,
                            sigil_sync_result *r, char local_identity[33]) {
     gba_save in, local;
-    gba_file f;
+    sigil_sync_cart_file f;
     memset(&local, 0, sizeof(local));
+    memset(&f, 0, sizeof(f));
     int rc = read_unit(features_of(x->req), unit, len, received_len, &in, r);
     if (rc == SIGIL_OK) {
-        artifact_of(x->req, r->shape == SIGIL_SAVE_SHAPE_MULTI, r);
-        rc = file_of(x->req, &f);
+        sigil_sync_cart_artifact(x->req, r->shape == SIGIL_SAVE_SHAPE_MULTI ? ".zip" : ".srm", r);
+        rc = sigil_sync_cart_file_of(x->req, &f);
     }
     if (rc == SIGIL_OK) rc = read_local(x->req, &f, &local);
     /* Both sides take the same rule, so one save gives one identity. */
