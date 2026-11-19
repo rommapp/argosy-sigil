@@ -79,9 +79,9 @@ Xenia Canary rewrites it as the whole container header, padded to 4 KiB,
 when the game closes the save. Each reads the other's form
 (`content_manager.cc` `ReadContentHeaderFile` in Edge at `4ad875a`,
 `xcontent/xcontent_package_directory.cc` `ReadContentHeaderFile` in
-Canary at `27d11a2`), so a save and its header move between them unchanged. Canary
-doesn't list a save whose header is missing, so the header travels with
-the save. XenDroid uses Canary's tree under its own storage root's
+Canary at `27d11a2`), so a save and its header move between them
+unchanged. Canary doesn't list a save whose header is missing, so the
+header travels with the save. XenDroid uses Canary's tree under its own storage root's
 `content/`. Copying the folder and its header moves a save between Xenia
 installs; moving one to a console needs the STFS package rebuilt and
 re-signed.
@@ -114,7 +114,7 @@ profile folders and gamer pictures such a zip holds (each
 - Some games bind a save to the profile it was made under, so a unit restored under another XUID has the right files in the right place and the game still won't use it. Forza Horizon 2 says "It appears your profile has been tampered with" under any other XUID and loads the save under its own, in Edge and in Canary. Charlie Murder writes the gamertag and XUID into its `game.sav` and, under another profile, starts as if there were no save.
 - A unit doesn't say which XUID its saves were made under, so sigil reports none. The header holds it only sometimes: Edge writes 0 there for a save a game makes by passing `XCONTENT_DATA` (`content_manager.h` `XCONTENT_AGGREGATE_DATA` and `content_manager.cc` `WriteContentHeaderFile` at `4ad875a`, the same at `a7c39fa`), and every Edge header in the samples holds 0. Canary writes the signed-in XUID into the header of a save it makes (`xam_content.cc` and `xcontent/xcontent_package.cc` `InitializePackageHeader` at `27d11a2`), and 0 when it rewrites a header Edge made (`FillHeader`).
 - Achievements, and the settings a game keeps in its GPD rather than in a save, don't travel. A game that keeps all its progress there (Left 4 Dead 2 writes no save folder) has nothing to sync.
-- Restore writes each save's header as the source emulator wrote it: Edge's 328 bytes into a Canary folder, Canary's 40,960 into an Edge folder. Each reads the other's form; Canary rewrites an Edge header in its own form once the game saves, so until then the file isn't the one Canary would write itself.
+- Restore writes each save's header as the source emulator wrote it: Edge's 328 bytes into a Canary folder, Canary's 40,960 into an Edge folder. Each reads the other's form; Canary rewrites an Edge header in its own form once the game saves, so until then the file isn't the one Canary would write itself. Restore doesn't build it: Canary's form holds what Edge's has no field for (the title name, thumbnails, execution info and console id of `XContentMetadata`, `xcontent/xcontent.h` at `27d11a2`), so from Edge's header it could only be what Canary's own `FillHeader` makes, and cut down to Edge's 328 bytes it would lose those on the way back. Carried as written, a round trip returns each header unchanged.
 - Upstream Xenia (`xenia-project/xenia`) has no row. It keeps a save at `content/<title id>/<type>/<save name>/`, with no XUID folder and no header (`content_manager.cc` `ResolvePackageRoot` at `95a5c3e`), so none of the rows above reads or writes its tree.
 - XenDroid's row is read from its source (`rfandango/XenDroid`); it hasn't been run.
 - The extractor is experimental until it is validated against real-world samples.
