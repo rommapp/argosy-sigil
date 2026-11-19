@@ -925,6 +925,7 @@ def _sync(
     companions: Iterable[SigilCompanion],
     repair: bool,
     profile: str | None,
+    writes_parts: bool = False,
 ) -> SigilSyncResult:
     keepalive: list[object] = []
     root, profile = _rooted(core, save_root, profile)
@@ -987,12 +988,14 @@ def _sync(
 
     @ffi.callback("int(void *, const char *, uint64_t, const uint8_t *, size_t)")
     def write_member_at(_ctx, relative_path, offset, data, length):
-        # Part of a file that is there: an Xbox drive image gets only what changed.
+        # Part of a file that is there, stored before it returns: an Xbox drive image gets only what changed.
         path = os.path.join(root_bytes, ffi.string(relative_path))
         try:
             with open(path, "r+b") as f:
                 f.seek(offset)
                 f.write(ffi.buffer(data, length))
+                f.flush()
+                os.fsync(f.fileno())
         except OSError:
             return -1
         return 0
@@ -1011,7 +1014,8 @@ def _sync(
 
     req.save.open = open_member
     req.write = write_member
-    req.write_at = write_member_at
+    if writes_parts:
+        req.write_at = write_member_at
     req.remove = remove_member
 
     out = ffi.new("sigil_sync_result **")
@@ -1122,8 +1126,14 @@ def restore(
     companions: Iterable[SigilCompanion] = (),
     repair: bool = False,
     profile: str | None = None,
+    writes_parts: bool = False,
 ) -> SigilSyncResult:
     """Puts `unit`, and each companion's unit given, back under `save_root` and reads them back.
+
+    Files are written whole, each through a temporary file renamed over it. With `writes_parts`,
+    a file every game's saves sit in (an Xbox drive image) gets only the parts that change,
+    written in place; see docs/sync.md, "Writing and removing", for what a restore stopped part
+    way leaves.
 
     Each of these writes nothing: SigilConflictError when the saves there changed since the last
     sync and `overwrite_local` is False; SigilUncollectedError when a shared Saturn or Sega CD
@@ -1137,7 +1147,7 @@ def restore(
     new save. The last six name the save, member or files in `problem`.
     """
     return _sync(unit, game, core, content_path, save_root, listing, options, game_ids, state, mode, overwrite_local,
-                 claimed, companions, repair, profile)
+                 claimed, companions, repair, profile, writes_parts)
 
 
 def _card_entries(entries, count: int) -> tuple[SigilCardEntry, ...]:

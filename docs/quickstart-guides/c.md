@@ -359,10 +359,11 @@ typedef struct {
     int repair;                       /* Rebuild the damaged structures SIGIL_ERR_DAMAGED named instead of
                                          refusing. */
     sigil_save_write_at_fn write_at;  /* restore, optional, with SIGIL_SYNC_REQUEST_V2: writes part of one file
-                                         of the save root at a byte offset (called with write_ctx), growing
-                                         it when the range ends past its end. An Xbox drive image then gets
-                                         only the parts that change instead of going to `write` whole; see
-                                         docs/sync.md, "Writing and removing". */
+                                         of the save root that is there at a byte offset (called with
+                                         write_ctx), growing it when the range ends past its end, and returns
+                                         once the bytes are stored. An Xbox drive image then gets only the
+                                         parts that change, in place, instead of going to `write` whole; see
+                                         docs/sync.md, "Writing and removing", for what a stop leaves. */
 } sigil_sync_request;
 
 typedef struct {

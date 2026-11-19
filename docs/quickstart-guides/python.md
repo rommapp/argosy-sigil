@@ -276,7 +276,9 @@ sigil.collect(
     profile: str | None = None,             # Layouts with profiles: the profile whose saves to take.
 ) -> SigilSyncResult
 
-sigil.restore(unit: bytes, ..., overwrite_local: bool = False) -> SigilSyncResult
+sigil.restore(unit: bytes, ..., overwrite_local: bool = False,
+              writes_parts: bool = False) -> SigilSyncResult   # writes_parts: an Xbox drive image's changed
+                                                               #   parts alone, in place (sync.md).
 
 SigilCompanion(
     game_ids: tuple[str, ...],  # The companion's ids, as for game_ids.

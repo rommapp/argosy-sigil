@@ -324,6 +324,7 @@ type SyncOptions struct {
     Claimed        []string          // Saturn, Sega CD, Dreamcast: names from Unowned the user gave this game.
     Companions     []Companion       // Games whose saves this game reads, in the order they go on.
     Profile        string            // Layouts with profiles: the profile whose saves to take.
+    WritesParts    bool              // Restore: an Xbox drive image's changed parts alone, in place (sync.md).
 }
 
 type SyncResult struct {

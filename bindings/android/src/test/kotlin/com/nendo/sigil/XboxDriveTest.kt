@@ -11,13 +11,16 @@ import org.junit.Test
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.file.Files
+import java.nio.file.attribute.BasicFileAttributes
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 /**
- * An Xbox save restored into xemu's drive image through JNI: an access that can write part of a
- * file gets only the parts that changed, one that can't gets the whole file, and both leave the
- * same image. Skips without the host library, as [FileAccessTest] does, and without the sample.
+ * An Xbox save restored into xemu's drive image through JNI. The drive is written whole unless the
+ * restore asks for parts, which an access that writes them then gets alone; both leave the same
+ * image. An access that implements [SigilFileAccess] alone, as one written in Java does, is asked
+ * for nothing more. Skips without the host library, as [FileAccessTest] does, and without the
+ * sample.
  */
 class XboxDriveTest {
     companion object {
@@ -49,13 +52,10 @@ class XboxDriveTest {
         return out.toByteArray()
     }
 
-    /** java.io.File access that counts its writes and can be told it can't write part of a file. */
-    private class Counting(private val parts: Boolean) : SigilFileAccess by PosixFileAccess {
+    /** java.io.File access that counts its writes. */
+    private class Counting : SigilPartFileAccess by PosixFileAccess {
         var wholeWrites = 0
         var partWrites = 0
-        var partBytes = 0L
-
-        override val writesParts: Boolean get() = parts
 
         override fun write(root: String, path: String, data: ByteArray): Boolean {
             wholeWrites++
@@ -64,45 +64,74 @@ class XboxDriveTest {
 
         override fun writeAt(root: String, path: String, offset: Long, data: ByteArray): Boolean {
             partWrites++
-            partBytes += data.size
             return PosixFileAccess.writeAt(root, path, offset, data)
         }
     }
 
-    private fun restoreWith(access: Counting): File {
+    /** A save root holding a copy of xemu's blank image. */
+    private fun blankRoot(): File {
         val root = Files.createTempDirectory("sigil-xbox").toFile()
-        val drive = File(root, "xbox_hdd.qcow2")
-        SAMPLE.copyTo(drive)
-        val restored = Sigil.restore(unit(), halo, "xemu", "Halo (USA).iso", root.path, options = DRIVE, fileAccess = access)
+        SAMPLE.copyTo(File(root, "xbox_hdd.qcow2"))
+        return root
+    }
+
+    private fun identity(drive: File): Any? =
+        Files.readAttributes(drive.toPath(), BasicFileAttributes::class.java).fileKey()
+
+    private fun restoreWith(access: SigilFileAccess, writesParts: Boolean): File {
+        val root = blankRoot()
+        val restored = Sigil.restore(unit(), halo, "xemu", "Halo (USA).iso", root.path, options = DRIVE,
+            fileAccess = access, writesParts = writesParts)
         val back = Sigil.collect(halo, "xemu", "Halo (USA).iso", root.path, options = DRIVE, fileAccess = access)
         assertEquals(restored.identityHash, back.identityHash)
-        return drive
+        return File(root, "xbox_hdd.qcow2")
     }
 
     @Test
-    fun aDriveImageIsWrittenInPartsOrWholeAndComesOutTheSame() {
+    fun aDriveIsWrittenWholeUnlessTheRestoreAsksForParts() {
         assumeTrue("Xbox drive sample missing", SAMPLE.exists())
-        val inParts = Counting(true)
-        val whole = Counting(false)
-        val first = restoreWith(inParts)
-        val second = restoreWith(whole)
+        val whole = Counting()
+        val inParts = Counting()
+        val first = restoreWith(whole, false)
+        val second = restoreWith(inParts, true)
 
-        assertEquals(0, inParts.wholeWrites)
-        assertTrue(inParts.partWrites > 0)
         assertEquals(1, whole.wholeWrites)
         assertEquals(0, whole.partWrites)
-        assertArrayEquals(second.readBytes(), first.readBytes())
+        assertEquals(0, inParts.wholeWrites)
+        assertTrue(inParts.partWrites > 0)
+        assertArrayEquals(first.readBytes(), second.readBytes())
     }
 
     @Test
-    fun theAccessEveryCallUsesWritesParts() {
+    fun theAccessEveryCallUsesReplacesTheDriveOrWritesItInPlace() {
         assumeTrue("Xbox drive sample missing", SAMPLE.exists())
-        assertTrue(PosixFileAccess.writesParts)
-        val root = Files.createTempDirectory("sigil-xbox").toFile()
-        val drive = File(root, "xbox_hdd.qcow2")
-        SAMPLE.copyTo(drive)
-        Sigil.restore(unit(), halo, "xemu", "Halo (USA).iso", root.path, options = DRIVE)
-        assertArrayEquals(restoreWith(Counting(false)).readBytes(), drive.readBytes())
+        val drives = listOf(false, true).map { writesParts ->
+            val root = blankRoot()
+            val drive = File(root, "xbox_hdd.qcow2")
+            val before = identity(drive)
+            Sigil.restore(unit(), halo, "xemu", "Halo (USA).iso", root.path, options = DRIVE, writesParts = writesParts)
+            assertEquals("written in place", writesParts, identity(drive) == before)
+            drive.readBytes()
+        }
+        assertArrayEquals(drives[0], drives[1])
+    }
+
+    @Test
+    fun anAccessWrittenInJavaRestoresTheDriveWhole() {
+        assumeTrue("Xbox drive sample missing", SAMPLE.exists())
+        val access = JavaFileAccess()
+        val drive = restoreWith(access, false)
+        assertEquals(1, access.writes)
+        assertArrayEquals(restoreWith(Counting(), false).readBytes(), drive.readBytes())
+
+        val root = blankRoot()
+        try {
+            Sigil.restore(unit(), halo, "xemu", "Halo (USA).iso", root.path, options = DRIVE, fileAccess = access,
+                writesParts = true)
+            fail("parts were asked of an access that can't write them")
+        } catch (e: IllegalArgumentException) {
+            assertArrayEquals(SAMPLE.readBytes(), File(root, "xbox_hdd.qcow2").readBytes())
+        }
     }
 
     @Test
