@@ -131,7 +131,8 @@ typedef struct {
 } sigil_layout;
 
 /* The slug layout rows use for `slug`: "scd" and "mega_cd" give "segacd",
- * "ps1" gives "psx". Other slugs come back as given. */
+ * "ps1" gives "psx", "sega32" "32x", "mastersystem" "sms", "gg" "gamegear".
+ * Other slugs come back as given. */
 const char *sigil_layout_platform(const char *slug);
 
 /* The row for a layout id and platform, else the libretro default row. */

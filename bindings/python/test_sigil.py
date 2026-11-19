@@ -751,6 +751,39 @@ def test_a_ds_save_crosses_between_melonds_and_desmumes_dsv(tmp_path):
     assert (back / "Game.sav").read_bytes() == save
 
 
+MEGA_DRIVE = sigil.SigilResult.persisted("genesis", "", "", 0)
+GAME_GEAR = sigil.SigilResult.persisted("gamegear", "", "", 0)
+
+
+def test_a_mega_drive_save_crosses_between_genesis_plus_gx_and_picodrive(tmp_path):
+    gpgx, pico, back = tmp_path / "gpgx", tmp_path / "pico", tmp_path / "back"
+    for folder in (gpgx, pico, back):
+        folder.mkdir()
+    window = bytearray(b"\xff" * 0x4000)
+    window[1:0x400:2] = bytes(i % 255 + 1 for i in range(0x200))
+    save = bytes(window).rstrip(b"\xff")
+    (gpgx / "Game.srm").write_bytes(save)
+    (pico / "Game.srm").write_bytes(b"\x00" * 0x4000)
+
+    unit = sigil.collect(MEGA_DRIVE, "genesis_plus_gx", "Game.md", gpgx)
+    assert (unit.data, unit.artifact, unit.shape) == (save, "Game.srm", "single")
+
+    sigil.restore(unit.data, MEGA_DRIVE, "picodrive", "Game.md", pico, overwrite_local=True)
+    assert (pico / "Game.srm").read_bytes() == bytes(window)
+
+    again = sigil.collect(MEGA_DRIVE, "picodrive", "Game.md", pico)
+    assert again.identity_hash == unit.identity_hash
+    sigil.restore(again.data, MEGA_DRIVE, "genesis_plus_gx", "Game.md", back)
+    assert (back / "Game.srm").read_bytes() == save
+
+
+def test_a_game_gear_save_restores_for_picodrive_at_its_32_kib(tmp_path):
+    save = b"\x00" * 0x2000 + b"\x01"
+    unit = sigil.restore(save, GAME_GEAR, "picodrive", "Game.gg", tmp_path)
+    assert (tmp_path / "Game.srm").read_bytes() == save + b"\xff" * (0x8000 - len(save))
+    assert unit.artifact == "Game.srm"
+
+
 def test_missing_rtc_is_expected_only_when_the_cart_has_a_clock():
     plain = sigil.locate_saves(GB, "gambatte", "game.gbc", listing=["game.srm"])
     clocked = sigil.locate_saves(GB_RTC, "gambatte", "game.gbc", listing=["game.srm"])
