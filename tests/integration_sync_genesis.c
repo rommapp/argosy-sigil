@@ -4,7 +4,8 @@
  * to the same identity, the file restore writes for Genesis Plus GX is the one
  * Genesis Plus GX itself wrote after loading it, a newer save next to an older,
  * shorter file reaches PicoDrive whole, and a 32X save comes back to PicoDrive
- * as it was. */
+ * as it was. Each check runs when its own samples are present (have), and the
+ * test skips when none ran. */
 #include "save_corpus.h"
 #include "legacy_units.h"
 
@@ -18,6 +19,20 @@ static void fail(const char *where, const char *what) {
 }
 
 static corpus_table g_genesis;
+static int g_ran = 0;
+
+/* True, counting one more check that ran, when each sample named (b and c
+ * may be NULL) is on disk. The samples come from more than one place (the
+ * manifest's source column), so each check runs on its own samples and
+ * skips without them. */
+static bool have(const char *a, const char *b, const char *c) {
+    const char *ids[] = { a, b, c };
+    for (size_t i = 0; i < 3; i++) {
+        if (ids[i] && !corpus_present(&g_genesis, "genesis", ids[i])) return false;
+    }
+    g_ran++;
+    return true;
+}
 
 typedef struct {
     sigil_sync_request req;
@@ -79,6 +94,7 @@ static size_t without_ff(const uint8_t *b, size_t len) {
  * Plus GX wrote after loading it, which collects to PicoDrive's identity. */
 static void check_crossing(const char *platform, const char *gpgx_id, const char *pico_id, const char *back_id,
                            const char *content, const char *srm, size_t pico_size) {
+    if (!have(gpgx_id, pico_id, back_id)) return;
     size_t gpgx_len = 0, pico_len = 0, back_len = 0;
     uint8_t *gpgx = corpus_sample(&g_genesis, "genesis", gpgx_id, NULL, &gpgx_len);
     uint8_t *pico = corpus_sample(&g_genesis, "genesis", pico_id, NULL, &pico_len);
@@ -137,6 +153,7 @@ static void check_crossing(const char *platform, const char *gpgx_id, const char
  * Mega Drive, and without one on Master System and Game Gear. */
 static void check_round_trip(const char *platform, const char *gpgx_id, const char *pico_id, const char *content,
                              const char *srm, bool pico_file_there) {
+    if (!have(gpgx_id, pico_id, NULL)) return;
     size_t gpgx_len = 0, pico_len = 0;
     uint8_t *gpgx = corpus_sample(&g_genesis, "genesis", gpgx_id, NULL, &gpgx_len);
     uint8_t *pico = corpus_sample(&g_genesis, "genesis", pico_id, NULL, &pico_len);
@@ -180,6 +197,7 @@ static void check_round_trip(const char *platform, const char *gpgx_id, const ch
  * the whole save, the same file restore writes into an empty folder. */
 static void check_stale_file(const char *platform, const char *stale_id, const char *save_id, const char *content,
                              const char *srm) {
+    if (!have(stale_id, save_id, NULL)) return;
     size_t stale_len = 0, save_len = 0;
     uint8_t *stale = corpus_sample(&g_genesis, "genesis", stale_id, NULL, &stale_len);
     uint8_t *save = corpus_sample(&g_genesis, "genesis", save_id, NULL, &save_len);
@@ -207,6 +225,7 @@ static void check_stale_file(const char *platform, const char *stale_id, const c
 
 /* A 32X save, which only PicoDrive keeps, comes back to PicoDrive byte for byte. */
 static void check_picodrive_alone(const char *id, const char *content, const char *srm) {
+    if (!have(id, NULL, NULL)) return;
     size_t len = 0;
     uint8_t *own = corpus_sample(&g_genesis, "genesis", id, NULL, &len);
     if (!own) return;
@@ -226,6 +245,7 @@ static void check_picodrive_alone(const char *id, const char *content, const cha
 
 /* PicoDrive's own save from no save keeps its 0x00 fill through a crossing. */
 static void check_picodrive_fill(const char *id, const char *content, const char *srm) {
+    if (!have(id, NULL, NULL)) return;
     size_t len = 0;
     uint8_t *own = corpus_sample(&g_genesis, "genesis", id, NULL, &len);
     if (!own) return;
@@ -252,11 +272,6 @@ int main(void) {
     char path[1024];
     if (corpus_platform_path("genesis", "manifest.tsv", path, sizeof(path)) != 0 || corpus_load(path, &g_genesis) != 0) {
         fprintf(stderr, "SKIP: no genesis manifest\n");
-        return TEST_SKIP;
-    }
-    if (!corpus_present(&g_genesis, "genesis", "cave-story-md-gpgx")) {
-        fprintf(stderr, "SKIP: genesis sync samples missing\n");
-        corpus_free(&g_genesis);
         return TEST_SKIP;
     }
     check_crossing("genesis", "cave-story-md-gpgx", "cave-story-md-picodrive", "cave-story-md-gpgx-back",
@@ -292,6 +307,10 @@ int main(void) {
                           "Golf Magazine Presents - 36 Great Holes Starring Fred Couples (Europe).32x",
                           "Golf Magazine Presents - 36 Great Holes Starring Fred Couples (Europe).srm");
     corpus_free(&g_genesis);
-    printf("genesis sync: %d failures\n", g_fails);
+    if (!g_ran) {
+        fprintf(stderr, "SKIP: no genesis samples present\n");
+        return TEST_SKIP;
+    }
+    printf("genesis sync: %d checks ran, %d failures\n", g_ran, g_fails);
     return corpus_exit(g_fails);
 }
