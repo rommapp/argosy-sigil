@@ -179,6 +179,31 @@ saves the unit lacks through `remove`; it refuses with
 `remove` is `NULL`. A path ending in `/` is a directory sigil emptied (a
 dropped PCSX2 save folder, which PCSX2 would still show): remove it.
 
+`write` takes a whole file. Where every game's saves sit inside one large
+file, an Xbox hard-disk image, a request may also give `write_at`
+(`SIGIL_SYNC_REQUEST_V2`), which writes part of a file that is there at a
+byte offset and returns once the bytes are stored. Restore then writes
+only the parts of the image that change, in place, each run at most
+1 MiB, and reads them back. Without `write_at`, restore holds the image in
+memory and hands it to `write` whole, which it refuses to do for an image
+over 2 GiB. The Python, Go and Kotlin bindings write whole files unless
+the caller asks for parts: `writes_parts=True`, `WritesParts`, or
+`writesParts = true` with a `SigilPartFileAccess`.
+
+The parts go out in an order that keeps the image whole after each of
+them ([xbox.md](platforms/xbox.md#writing-in-parts), which also says how
+that was checked). A restore through `write_at` that stops part way,
+because the process ends, the power goes or a write fails
+(`SIGIL_ERR_IO`), leaves every reference in the image counted and every
+chain on the drive whole, with each of the game's two save folders either
+as it was or as the unit has it. What it can leave behind is space nothing
+uses, never a broken save: clusters the image counts that nothing refers
+to, which `qemu-img check` reports as leaked and `qemu-img check -r leaks`
+frees, and clusters E:'s FAT marks used that no file holds. Restoring again
+finishes the job and leaves that space as it is. A power cut keeps the
+order only when each `write_at` is stored before it returns, as the
+bindings' are.
+
 ## Companions
 
 A game that reads an earlier title's save, as a sequel reads its prequel's,

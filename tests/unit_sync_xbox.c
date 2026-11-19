@@ -5,13 +5,18 @@
  * nothing else on it. Drives are built and read back by xbox_drive.h, which
  * shares no code with the library. */
 #include "sync_internal.h"
+#include "disk_image.h"
 #include "mem_root.h"
 #include "xbox_drive.h"
 
 static int g_fails = 0;
 
+/* Every check runs twice: with the drive written back as one file, and with
+ * a request that can write part of a file, which gets only what changed. */
+static int g_parts = 0;
+
 static void fail(const char *where, const char *what) {
-    fprintf(stderr, "FAIL %s: %s\n", where, what);
+    fprintf(stderr, "FAIL %s%s: %s\n", where, g_parts ? " (written in parts)" : "", what);
     g_fails++;
 }
 
@@ -52,6 +57,12 @@ static void make_game(game *g, mem_root *root, const char *layout, const char *s
         g->option.value = DRIVE;
         g->req.save.options = &g->option;
         g->req.save.option_count = 1;
+    }
+    /* The drive must be closed before it is written: a client may replace the file. */
+    root->exclusive = 1;
+    if (g_parts) {
+        g->req.struct_version = SIGIL_SYNC_REQUEST_V2;
+        g->req.write_at = root_write_at;
     }
 }
 
@@ -134,13 +145,14 @@ static bool load_drive(mem_root *root, const char *name, xb_guest *g, xb_tree *t
     CHECK(check.faults == 0, where, "the qcow2 reference counts or tables are wrong");
     CHECK(check.leaks == 0, where, "the qcow2 file counts clusters nothing refers to");
     CHECK(t->faults == 0, where, "E:'s FAT chains are wrong");
+    CHECK(t->lost == 0, where, "E:'s FAT marks clusters used that nothing holds");
     return check.faults == 0 && t->faults == 0;
 }
 
 /* ---- what a restore may change -------------------------------------------------- */
 
 static void only_game_changed(const xb_guest *before, const xb_guest *after, const char *id, const char *where) {
-    if (!xb_only_game_changed(before, after, id)) fail(where, "the restore changed something that isn't the game's");
+    if (!xb_only_game_changed(before, after, id, false)) fail(where, "the restore changed something that isn't the game's");
 }
 
 static void others_intact(const xb_guest *before, const xb_guest *after, const char *id, const char *where) {
@@ -792,8 +804,10 @@ static void check_write_failures(void) {
         if (corrupt) {
             root.corrupt_write = 1;
             root.corrupt_at = 70000;
+            root.corrupt_part = 1;
         } else {
             root.fail_write = 1;
+            root.fail_part = 2;
         }
         game game;
         make_game(&game, &root, "xemu", HALO);
@@ -922,6 +936,24 @@ static int raw_write(void *ctx, const char *path, const uint8_t *data, size_t le
     g_raw_writes++;
     return -1;
 }
+static size_t g_raw_part_bytes = 0;
+static int g_raw_stop = 0, g_raw_calls = 0;   /* the part write that fails, 1-based, or 0; the writes made */
+static int g_raw_torn = 0;                     /* how it tears, as mem_root's torn */
+static int raw_write_at(void *ctx, const char *path, uint64_t offset, const uint8_t *data, size_t len) {
+    bool stop = ++g_raw_calls == g_raw_stop;
+    if ((stop && !g_raw_torn) || strcmp(path, "hdd.img") != 0 || offset + len > g_raw_size) return -1;
+    if (stop) {
+        size_t keep = len < (g_raw_torn == 1 ? 4096u : 512u) ? len : (g_raw_torn == 1 ? 4096u : 512u);
+        if (g_raw_torn == 1) {
+            offset += len - keep;
+            data += len - keep;
+        }
+        len = keep;
+    }
+    xb_set((xb_guest *)ctx, offset, data, len);
+    g_raw_part_bytes += len;
+    return stop ? -1 : 0;
+}
 
 static void check_raw(uint64_t size, const char *where) {
     g_raw_size = size;
@@ -947,13 +979,598 @@ static void check_raw(uint64_t size, const char *where) {
     sigil_sync_result_free(r);
     r = NULL;
 
-    /* Written back as one file, a raw drive is all of it held in memory: refused, nothing written. */
     sigil_sync_result *other = collect_halo(2, 16, 2, where);
-    CHECK(other && sigil_restore(&game.req, other->data, other->len, &r) == SIGIL_ERR_OOM && g_raw_writes == 0, where,
-          "a rewrite of the whole drive wasn't refused");
+    if (!g_parts) {
+        /* Written back as one file, a raw drive is all of it held in memory: refused, nothing written. */
+        CHECK(other && sigil_restore(&game.req, other->data, other->len, &r) == SIGIL_ERR_OOM && g_raw_writes == 0, where,
+              "a rewrite of the whole drive wasn't refused");
+    } else {
+        /* Written in parts, only what changed goes to the file. */
+        xb_guest before;
+        xb_copy(&g, &before);
+        game.req.write_ctx = &g;
+        game.req.write_at = raw_write_at;
+        g_raw_part_bytes = 0;
+        CHECK(other && sigil_restore(&game.req, other->data, other->len, &r) == SIGIL_OK && g_raw_writes == 0, where,
+              "restore into a raw image failed");
+        CHECK(g_raw_part_bytes > 0 && g_raw_part_bytes < 512u * 1024u, where, "more than the save's own clusters were written");
+        xb_tree tree;
+        xb_walk(&g, &tree);
+        CHECK(tree.faults == 0 && tree.lost == 0, where, "E:'s FAT chains are wrong");
+        if (other) unit_on_drive(other->data, other->len, &g, &tree, where);
+        others_intact(&before, &g, "4d530004", where);
+        only_game_changed(&before, &g, "4d530004", where);
+        xb_tree_free(&tree);
+        xb_free(&before);
+    }
     sigil_sync_result_free(r);
     sigil_sync_result_free(other);
     sigil_sync_result_free(qcow);
+    xb_free(&g);
+}
+
+/* Both ways of writing leave the same saves, and the parts are a small share
+ * of the file. Where the drive holds none of the game's saves, they leave the
+ * same file too; where it does, written whole the new saves may take the old
+ * ones' clusters, and written in parts they may not. */
+static void check_parts_match_whole(unsigned bits, unsigned compress_every, bool old_saves, const char *where) {
+    sigil_sync_result *unit = collect_halo(1, 16, 2, where);
+    xb_guest g;
+    if (old_saves) {
+        second_drive(&g);
+    } else {
+        blank_drive(&g);
+        put_others(&g);
+    }
+    mem_root whole = {0}, parts = {0};
+    put_drive(&whole, DRIVE, &g, bits, compress_every, 3);
+    put_drive(&parts, DRIVE, &g, bits, compress_every, 3);
+    game game;
+    sigil_sync_result *r1 = NULL, *r2 = NULL;
+    g_parts = 0;
+    make_game(&game, &whole, "xemu", HALO);
+    game.req.overwrite_local = 1;
+    CHECK(unit && sigil_restore(&game.req, unit->data, unit->len, &r1) == SIGIL_OK && whole.parts == 0, where,
+          "the whole-file restore failed");
+    g_parts = 1;
+    make_game(&game, &parts, "xemu", HALO);
+    game.req.overwrite_local = 1;
+    size_t before = root_find(&parts, DRIVE)->len;
+    CHECK(unit && sigil_restore(&game.req, unit->data, unit->len, &r2) == SIGIL_OK && parts.parts > 0 && parts.writes == 1,
+          where, "the restore in parts failed");
+    mem_file *a = root_find(&whole, DRIVE), *b = root_find(&parts, DRIVE);
+    if (!old_saves) {
+        CHECK(a && b && a->len == b->len && memcmp(a->data, b->data, a->len) == 0, where,
+              "the two ways of writing left different files");
+    }
+    mem_root *roots[2] = { &whole, &parts };
+    for (int k = 0; unit && k < 2; k++) {
+        xb_guest after;
+        xb_tree tree;
+        if (load_drive(roots[k], DRIVE, &after, &tree, where)) {
+            unit_on_drive(unit->data, unit->len, &after, &tree, where);
+            others_intact(&g, &after, "4d530004", where);
+            only_game_changed(&g, &after, "4d530004", where);
+        }
+        xb_tree_free(&tree);
+        xb_free(&after);
+    }
+    /* A compressed cluster is written anew, whole, so only an image with plain clusters shows the saving. */
+    CHECK(bits < 16 || compress_every == 1 || parts.part_bytes < before / 2, where, "the parts were most of the file");
+
+    /* A request from before write_at existed has no such field to read. */
+    mem_root old = {0};
+    put_drive(&old, DRIVE, &g, bits, compress_every, 3);
+    make_game(&game, &old, "xemu", HALO);
+    game.req.struct_version = SIGIL_SYNC_REQUEST_V1;
+    game.req.overwrite_local = 1;
+    sigil_sync_result *r3 = NULL;
+    CHECK(unit && sigil_restore(&game.req, unit->data, unit->len, &r3) == SIGIL_OK && old.parts == 0 && old.writes == 1,
+          where, "a V1 request was written in parts");
+    g_parts = 0;
+    sigil_sync_result_free(r3);
+    sigil_sync_result_free(r2);
+    sigil_sync_result_free(r1);
+    sigil_sync_result_free(unit);
+    root_free(&old);
+    root_free(&whole);
+    root_free(&parts);
+    xb_free(&g);
+}
+
+/* E: with room for the unit only once the game's old saves are gone.
+ * Written whole, the new saves take the old ones' clusters and fit. Written
+ * in parts, the old saves keep theirs until the new ones are in place, so
+ * the restore is refused as no space, writing nothing. */
+static void check_nearly_full(void) {
+    const char *where = "a nearly full E:";
+    sigil_sync_result *unit = collect_halo(1, 16, 2, where);
+    xb_guest g, done;
+    second_drive(&g);
+    /* How many clusters the game's saves hold before and after a restore with room. */
+    mem_root roomy = {0};
+    put_drive(&roomy, DRIVE, &g, 16, 2, 3);
+    game game;
+    make_game(&game, &roomy, "xemu", HALO);
+    game.req.overwrite_local = 1;
+    sigil_sync_result *r = NULL;
+    CHECK(unit && sigil_restore(&game.req, unit->data, unit->len, &r) == SIGIL_OK, where, "restore with room failed");
+    sigil_sync_result_free(r);
+    xb_tree tree;
+    load_drive(&roomy, DRIVE, &done, &tree, where);
+    xb_tree_free(&tree);
+    uint8_t *was = (uint8_t *)calloc(XB_CLUSTERS, 1), *is = (uint8_t *)calloc(XB_CLUSTERS, 1);
+    xb_walk(&g, &tree);
+    xb_game_clusters(&g, &tree, "4d530004", was);
+    xb_tree_free(&tree);
+    xb_walk(&done, &tree);
+    xb_game_clusters(&done, &tree, "4d530004", is);
+    xb_tree_free(&tree);
+    uint32_t old_n = 0, new_n = 0;
+    for (uint32_t c = 1; c < XB_CLUSTERS; c++) {
+        old_n += was[c];
+        new_n += is[c];
+    }
+    free(was);
+    free(is);
+    CHECK(old_n >= 2 && new_n > old_n, where, "the test drive doesn't hold what this check needs");
+    xb_fill(&g, new_n - 1);
+    for (int parts = 0; unit && parts < 2; parts++) {
+        g_parts = parts;
+        mem_root root = {0};
+        put_drive(&root, DRIVE, &g, 16, 2, 3);
+        make_game(&game, &root, "xemu", HALO);
+        game.req.overwrite_local = 1;
+        r = NULL;
+        int rc = sigil_restore(&game.req, unit->data, unit->len, &r);
+        if (!parts) {
+            CHECK(rc == SIGIL_OK && root.writes == 1, where, "written whole, the restore didn't take the old saves' room");
+            xb_guest after;
+            xb_check check;
+            mem_file *f = root_find(&root, DRIVE);
+            xb_read_image(f->data, f->len, &after, &check);
+            xb_walk(&after, &tree);
+            CHECK(check.faults == 0 && check.leaks == 0 && tree.faults == 0, where, "the drive written whole isn't whole");
+            unit_on_drive(unit->data, unit->len, &after, &tree, where);
+            others_intact(&g, &after, "4d530004", where);
+            xb_tree_free(&tree);
+            xb_free(&after);
+        } else {
+            CHECK(rc == SIGIL_ERR_NO_SPACE && r && r->problem[0] && r->blocks_short > 0 && root.writes == 0 && root.parts == 0,
+                  where, "written in parts, a restore with no room beside the old saves wasn't refused");
+        }
+        sigil_sync_result_free(r);
+        root_free(&root);
+    }
+    g_parts = 0;
+    root_free(&roomy);
+    xb_free(&done);
+    xb_free(&g);
+    sigil_sync_result_free(unit);
+}
+
+/* An old save whose chain runs past its size into a cluster free at open:
+ * the restore takes that cluster for the new saves, and freeing the old
+ * chain stops there instead of freeing it under them. */
+static void check_broken_old_chain(void) {
+    const char *where = "an old chain into a free cluster";
+    sigil_sync_result *unit = collect_halo(1, 16, 2, where);
+    xb_guest g;
+    second_drive(&g);
+    uint64_t slot = 0;
+    uint32_t dir = xb_lookup(&g, xb_lookup(&g, xb_lookup(&g, 1, "UDATA", NULL), "4d530004", NULL), "111111111111", NULL);
+    uint32_t last = xb_lookup(&g, dir, "old.sav", &slot);
+    while (xb_fat(&g, last) < 0xFFFFFFF0u) last = xb_fat(&g, last);
+    uint32_t lowest = 2;
+    while (xb_fat(&g, lowest) != 0) lowest++;
+    xb_set_fat(&g, last, lowest);
+    mem_root root = {0};
+    put_drive(&root, DRIVE, &g, 16, 2, 3);
+    game game;
+    make_game(&game, &root, "xemu", HALO);
+    game.req.overwrite_local = 1;
+    sigil_sync_result *r = NULL;
+    CHECK(unit && sigil_restore(&game.req, unit->data, unit->len, &r) == SIGIL_OK, where, "restore failed");
+    xb_guest after;
+    xb_tree tree;
+    if (load_drive(&root, DRIVE, &after, &tree, where) && unit) unit_on_drive(unit->data, unit->len, &after, &tree, where);
+    xb_tree_free(&tree);
+    xb_free(&after);
+    sigil_sync_result_free(r);
+    sigil_sync_result_free(unit);
+    root_free(&root);
+    xb_free(&g);
+}
+
+/* ---- the drive image's own order ------------------------------------------------- */
+
+/* One staged write: `len` bytes of `byte` at `off` on the drive, in `phase`. */
+typedef struct {
+    unsigned phase;
+    uint64_t off;
+    size_t   len;
+    uint8_t  byte;
+} disk_change;
+
+typedef struct {
+    uint64_t off;
+    uint8_t *data;
+    size_t   len;
+} disk_run;
+
+typedef struct {
+    disk_run *runs;
+    size_t    count;
+} disk_runs;
+
+static int keep_run(void *ctx, uint64_t off, const uint8_t *data, size_t len) {
+    disk_runs *r = (disk_runs *)ctx;
+    r->runs = (disk_run *)realloc(r->runs, (r->count + 1) * sizeof(*r->runs));
+    disk_run *k = &r->runs[r->count++];
+    k->off = off;
+    k->len = len;
+    k->data = (uint8_t *)malloc(len);
+    memcpy(k->data, data, len);
+    return SIGIL_OK;
+}
+
+static void put_run(uint8_t **img, size_t *len, uint64_t off, const uint8_t *data, size_t n) {
+    if (off + n > *len) {
+        *img = (uint8_t *)realloc(*img, (size_t)(off + n));
+        memset(*img + *len, 0, (size_t)(off + n) - *len);
+        *len = (size_t)(off + n);
+    }
+    memcpy(*img + off, data, n);
+}
+
+/* The writes `changes` staged on a drive image in their phases and written
+ * in parts, stopped after each part, and again with that part torn (its last
+ * 4 KiB, or its first 512 bytes, stored): every reference stays counted, and
+ * no write of a phase shows until every write of the phases before it does. */
+static void check_disk_phases(unsigned bits, unsigned compress_every, const disk_change *changes, size_t n,
+                              const char *where) {
+    xb_guest g;
+    blank_drive(&g);
+    uint8_t *img = NULL;
+    size_t len = 0;
+    xb_qcow2(&g, bits, compress_every, 3, &img, &len);
+    xb_free(&g);
+    sigil_io *io = mem_root_io(img, len);
+    sigil_disk *d = NULL;
+    disk_runs runs = { NULL, 0 };
+    CHECK(sigil_disk_open(io, &d) == SIGIL_OK, where, "the image doesn't open");
+    for (size_t i = 0; d && i < n; i++) {
+        uint8_t *buf = (uint8_t *)malloc(changes[i].len);
+        memset(buf, changes[i].byte, changes[i].len);
+        CHECK(sigil_disk_set_phase(d, changes[i].phase) == SIGIL_OK &&
+                  sigil_disk_write(d, changes[i].off, buf, changes[i].len) == SIGIL_OK,
+              where, "a write wasn't staged");
+        free(buf);
+    }
+    if (d) CHECK(sigil_disk_runs(d, true, keep_run, &runs) == SIGIL_OK, where, "the parts weren't given");
+    sigil_disk_close(d);
+    sigil_io_close(io);
+    for (size_t k = 0; k < 3 * runs.count + 1; k++) {
+        size_t stop = k % (runs.count + 1);
+        int torn = (int)(k / (runs.count + 1));
+        if (torn && stop == runs.count) continue;
+        char at[200];
+        snprintf(at, sizeof(at), "%s, stopped after %zu of %zu writes%s", where, stop, runs.count,
+                 torn == 1 ? ", the next with only its last 4 KiB" : torn == 2 ? ", the next with only its first 512 bytes" : "");
+        uint8_t *file = (uint8_t *)malloc(len);
+        size_t file_len = len;
+        memcpy(file, img, len);
+        for (size_t i = 0; i < stop; i++) put_run(&file, &file_len, runs.runs[i].off, runs.runs[i].data, runs.runs[i].len);
+        if (torn) {
+            const disk_run *t = &runs.runs[stop];
+            size_t keep = t->len < (torn == 1 ? 4096u : 512u) ? t->len : (torn == 1 ? 4096u : 512u);
+            put_run(&file, &file_len, torn == 1 ? t->off + t->len - keep : t->off, torn == 1 ? t->data + t->len - keep : t->data,
+                    keep);
+        }
+        xb_guest after;
+        xb_check check;
+        xb_read_image(file, file_len, &after, &check);
+        CHECK(check.faults == 0, at, "a cluster is referenced more often than it is counted, or a table is wrong");
+        unsigned shown_all = 0;   /* the phases before this one all show */
+        for (unsigned phase = 0; phase < SIGIL_DISK_PHASES; phase++) {
+            bool any = false, all = true;
+            for (size_t i = 0; i < n; i++) {
+                if (changes[i].phase != phase) continue;
+                uint8_t *got = (uint8_t *)malloc(changes[i].len);
+                xb_get(&after, changes[i].off, got, changes[i].len);
+                bool shows = true;
+                for (size_t b = 0; b < changes[i].len; b++) shows = shows && got[b] == changes[i].byte;
+                free(got);
+                any = any || shows;
+                all = all && shows;
+            }
+            if (any && shown_all < phase) {
+                char what[96];
+                snprintf(what, sizeof(what), "phase %u shows before phase %u is all there", phase, shown_all);
+                fail(at, what);
+            }
+            if (all && shown_all == phase) shown_all = phase + 1;
+        }
+        if (stop == runs.count && !torn) CHECK(shown_all == SIGIL_DISK_PHASES, at, "the writes aren't all there");
+        xb_free(&after);
+        free(file);
+    }
+    for (size_t i = 0; i < runs.count; i++) free(runs.runs[i].data);
+    free(runs.runs);
+    free(img);
+}
+
+static void check_disk_phase_drives(void) {
+    /* A later phase writes into a page that a cluster an earlier phase
+     * replaced holds as zeros, as an entry goes into a directory filled with
+     * 0x00; other writes of that earlier phase lie far off, in other L2
+     * tables, so their entries go out in other parts. */
+    static const disk_change zero_page[] = {
+        { 0, 0x100000000ull, 64, 0x5A },
+        { 0, 0x80000ull + 0x9000, 64, 0x5B },
+        { 0, 0x180000000ull, 64, 0x5C },
+        { 0, 0x8CA80000ull + 0x150000, 64, 0x5D },
+        { 1, 0x100000000ull + 4096, 64, 0xA5 },
+        { 2, 0x100000000ull + 8192, 64, 0xA6 },
+        { 3, 0x80000ull + 0x9000 + 128, 64, 0xA7 },
+    };
+    /* A later phase maps a cluster through the second page of an L2 table an
+     * earlier phase made. */
+    static const disk_change l2_page[] = {
+        { 0, 0x140000000ull, 64, 0x5A },
+        { 0, 0x80000ull + 0x9000, 64, 0x5B },
+        { 0, 0x8CA80000ull + 0x150000, 64, 0x5D },
+        { 1, 0x140000000ull + 0x2000000ull, 64, 0xA5 },
+        { 2, 0x140000000ull + 0x4000000ull, 64, 0xA6 },
+    };
+    static const unsigned forms[][2] = { { 16, 1 }, { 16, 0 }, { 12, 1 } };
+    for (size_t f = 0; f < sizeof(forms) / sizeof(forms[0]); f++) {
+        char where[96];
+        snprintf(where, sizeof(where), "the image's order, a zero page, %u-bit clusters%s", forms[f][0],
+                 forms[f][1] ? ", compressed" : "");
+        check_disk_phases(forms[f][0], forms[f][1], zero_page, sizeof(zero_page) / sizeof(zero_page[0]), where);
+        snprintf(where, sizeof(where), "the image's order, an L2 table's second page, %u-bit clusters%s", forms[f][0],
+                 forms[f][1] ? ", compressed" : "");
+        check_disk_phases(forms[f][0], forms[f][1], l2_page, sizeof(l2_page) / sizeof(l2_page[0]), where);
+    }
+}
+
+/* ---- a restore stopped part way ------------------------------------------------- */
+
+/* What a restore that stopped part way left on `after`, a drive that began
+ * as `before` and that the whole restore turns into `done`: every reference
+ * in the image counted (clusters counted that nothing refers to are the only
+ * waste), E:'s chains whole (clusters marked used that nothing holds are the
+ * only waste there), each of the game's two folders holding all its old files
+ * or all the unit's, and nothing else on the drive changed but free space. */
+static void check_left(const xb_guest *before, const xb_guest *done, const xb_guest *after, const xb_check *check,
+                       const char *where) {
+    xb_tree old, new, now;
+    xb_walk(before, &old);
+    xb_walk(done, &new);
+    xb_walk(after, &now);
+    CHECK(check->faults == 0, where, "a cluster is referenced more often than it is counted, or a table is wrong");
+    CHECK(now.faults == 0, where, "E:'s FAT chains are wrong");
+    static const char *const tops[] = { "UDATA", "TDATA" };
+    for (size_t t = 0; t < 2; t++) {
+        bool is_new = xb_folder_same(after, &now, done, &new, tops[t], "4d530004");
+        CHECK(is_new || xb_folder_same(after, &now, before, &old, tops[t], "4d530004"), where,
+              t ? "TDATA/4d530004 is neither the old folder nor the unit's" :
+                  "UDATA/4d530004 is neither the old folder nor the unit's");
+        CHECK(!is_new || xb_named(&now, tops[t], "4d530004") <= 1, where,
+              t ? "the unit's TDATA folder shows beside an old one of the same name" :
+                  "the unit's UDATA folder shows beside an old one of the same name");
+    }
+    others_intact(before, after, "4d530004", where);
+    if (!xb_only_game_changed(before, after, "4d530004", true)) fail(where, "the stop changed something that isn't the game's");
+    xb_tree_free(&old);
+    xb_tree_free(&new);
+    xb_tree_free(&now);
+}
+
+/* A restore in parts stopped after each of its writes, the next one never
+ * made, as a crash would stop it; then again with the write it stops at
+ * torn, only its last 4 KiB or its first 512 bytes stored, as a power cut can
+ * leave a write. What each stop left is checked, sigil still reads the
+ * drive, and restoring again from there finishes. */
+static void check_stopped(const xb_guest *before, unsigned bits, unsigned compress_every, unsigned version,
+                          const char *where) {
+    sigil_sync_result *unit = collect_halo(1, 16, 2, where);
+    uint8_t *img = NULL;
+    size_t len = 0;
+    xb_qcow2(before, bits, compress_every, version, &img, &len);
+    g_parts = 1;
+    mem_root root = {0};
+    root_put(&root, DRIVE, img, len);
+    game game;
+    make_game(&game, &root, "xemu", HALO);
+    game.req.overwrite_local = 1;
+    sigil_sync_result *r = NULL;
+    CHECK(unit && sigil_restore(&game.req, unit->data, unit->len, &r) == SIGIL_OK, where, "restore failed");
+    int calls = root.parts;
+    xb_guest done;
+    xb_tree tree;
+    load_drive(&root, DRIVE, &done, &tree, where);
+    xb_tree_free(&tree);
+    sigil_sync_result_free(r);
+    root_free(&root);
+    for (int k = 0; unit && k < 3 * calls; k++) {
+        int n = k % calls, torn = k / calls;
+        char at[200];
+        snprintf(at, sizeof(at), "%s, stopped after %d of %d writes%s", where, n, calls,
+                 torn == 1 ? ", the next with only its last 4 KiB" : torn == 2 ? ", the next with only its first 512 bytes" : "");
+        root_put(&root, DRIVE, img, len);
+        root.fail_part = n + 1;
+        root.torn = torn;
+        make_game(&game, &root, "xemu", HALO);
+        game.req.overwrite_local = 1;
+        r = NULL;
+        CHECK(sigil_restore(&game.req, unit->data, unit->len, &r) == SIGIL_ERR_IO && root.parts == n + 1, at,
+              "the restore didn't stop where its write failed");
+        sigil_sync_result_free(r);
+        xb_guest after;
+        xb_check check;
+        mem_file *f = root_find(&root, DRIVE);
+        xb_read_image(f->data, f->len, &after, &check);
+        check_left(before, &done, &after, &check, at);
+        xb_free(&after);
+
+        make_game(&game, &root, "xemu", HALO);
+        r = NULL;
+        CHECK(sigil_collect(&game.req, &r) == SIGIL_OK, at, "sigil can't read the drive the stop left");
+        sigil_sync_result_free(r);
+        root.fail_part = 0;
+        root.torn = 0;
+        make_game(&game, &root, "xemu", HALO);
+        game.req.overwrite_local = 1;
+        r = NULL;
+        CHECK(sigil_restore(&game.req, unit->data, unit->len, &r) == SIGIL_OK, at, "restoring again after the stop failed");
+        sigil_sync_result_free(r);
+        f = root_find(&root, DRIVE);
+        xb_read_image(f->data, f->len, &after, &check);
+        xb_walk(&after, &tree);
+        CHECK(check.faults == 0 && tree.faults == 0, at, "the drive restored again isn't whole");
+        unit_on_drive(unit->data, unit->len, &after, &tree, at);
+        others_intact(before, &after, "4d530004", at);
+        xb_tree_free(&tree);
+        xb_free(&after);
+        root_free(&root);
+    }
+    g_parts = 0;
+    free(img);
+    xb_free(&done);
+    sigil_sync_result_free(unit);
+}
+
+static void check_stopped_drives(void) {
+    xb_guest g;
+    second_drive(&g);
+    check_stopped(&g, 16, 2, 3, "stopped, 64 KiB clusters, half compressed");
+    check_stopped(&g, 16, 1, 3, "stopped, every cluster compressed");
+    check_stopped(&g, 16, 0, 2, "stopped, qcow2 version 2");
+    check_stopped(&g, 12, 3, 3, "stopped, 4 KiB clusters");
+    check_stopped(&g, 9, 0, 3, "stopped, 512-byte clusters");
+    /* The game's entry in UDATA's first cluster, the first free slot in its
+     * second: the new entry still goes where the old one was, so no stop
+     * shows the name twice or not at all. */
+    for (unsigned i = 0; i < 300; i++) {
+        char name[16];
+        snprintf(name, sizeof(name), "C%07X", i);
+        xb_mkdir(&g, xb_lookup(&g, 1, "UDATA", NULL), name, XB_TIME(8, 0, 0), XB_DATE(2026, 1, 1));
+    }
+    check_stopped(&g, 16, 0, 3, "stopped, a UDATA of 300 games");
+    /* The game's folder twice, spelled two ways, the second in UDATA's second
+     * cluster: the new folder takes the first one's slot, and the other is
+     * gone before it shows. */
+    uint32_t second = xb_mkdir(&g, xb_lookup(&g, 1, "UDATA", NULL), "4D530004", XB_TIME(7, 0, 0), XB_DATE(2025, 5, 5));
+    uint32_t data = xb_take(&g);
+    xb_set(&g, xb_cluster_off(data), "a second spelling", 17);
+    xb_add_entry(&g, second, "other.sav", 0, data, 17, XB_TIME(7, 0, 0), XB_DATE(2025, 5, 5));
+    check_stopped(&g, 16, 0, 3, "stopped, the game's folder spelled two ways");
+    check_stopped(&g, 16, 2, 3, "stopped, the game's folder spelled two ways, half compressed");
+    xb_free(&g);
+    blank_drive(&g);
+    check_stopped(&g, 16, 1, 3, "stopped, a blank drive");
+    /* An empty root filled with zeros, which read as its end. */
+    uint8_t *zeros = (uint8_t *)calloc(1, XB_CLUSTER);
+    xb_set(&g, xb_cluster_off(1), zeros, XB_CLUSTER);
+    free(zeros);
+    check_stopped(&g, 16, 1, 3, "stopped, an empty root filled with zeros");
+    check_stopped(&g, 16, 0, 3, "stopped, an empty root filled with zeros, uncompressed");
+    xb_free(&g);
+}
+
+/* The restore into a raw image stopped after each of its writes, whole and
+ * torn both ways, as check_stopped does it for qcow2: on a raw image the
+ * order of E:'s own writes is all there is. */
+static void check_raw_stopped(const xb_guest *before, const char *where) {
+    g_raw_size = XB_DISK_SIZE;
+    static const char *const listing[] = { "hdd.img" };
+    sigil_sync_result *unit = collect_halo(1, 16, 2, where);
+    xb_guest done;
+    xb_copy(before, &done);
+    mem_root unused = {0};
+    game game;
+    g_parts = 1;
+    int calls = 0;
+    for (int k = -1; unit && k < 3 * calls; k++) {
+        int n = k < 0 ? -1 : k % calls;
+        g_raw_torn = k < 0 ? 0 : k / calls;
+        char at[200];
+        snprintf(at, sizeof(at), "%s, stopped after %d of %d writes%s", where, n, calls,
+                 g_raw_torn == 1 ? ", the next with only its last 4 KiB" : g_raw_torn == 2 ? ", the next with only its first 512 bytes" : "");
+        xb_guest after;
+        xb_copy(before, &after);
+        make_game(&game, &unused, "x1box", HALO);
+        game.req.save.listing = listing;
+        game.req.save.listing_count = 1;
+        game.req.save.open = raw_open;
+        game.req.save.open_ctx = n < 0 ? &done : &after;
+        game.req.write = raw_write;
+        game.req.write_at = raw_write_at;
+        game.req.write_ctx = n < 0 ? &done : &after;
+        game.req.overwrite_local = 1;
+        g_raw_calls = 0;
+        g_raw_stop = n < 0 ? 0 : n + 1;
+        sigil_sync_result *r = NULL;
+        int rc = sigil_restore(&game.req, unit->data, unit->len, &r);
+        sigil_sync_result_free(r);
+        if (n < 0) {
+            /* The whole restore first: how many writes it makes, and the drive it leaves. */
+            CHECK(rc == SIGIL_OK, where, "restore into a raw image failed");
+            calls = g_raw_calls;
+            xb_tree tree;
+            xb_walk(&done, &tree);
+            CHECK(tree.faults == 0 && tree.lost == 0, where, "E:'s FAT chains are wrong");
+            unit_on_drive(unit->data, unit->len, &done, &tree, where);
+            xb_tree_free(&tree);
+        } else {
+            CHECK(rc == SIGIL_ERR_IO && g_raw_calls == n + 1, at, "the restore didn't stop where its write failed");
+            xb_check none = { 0, 0 };
+            check_left(before, &done, &after, &none, at);
+        }
+        xb_free(&after);
+    }
+    g_raw_stop = 0;
+    g_raw_torn = 0;
+    g_parts = 0;
+    xb_free(&done);
+    sigil_sync_result_free(unit);
+}
+
+static void check_raw_stopped_drives(void) {
+    xb_guest g;
+    second_drive(&g);
+    check_raw_stopped(&g, "stopped, a raw image");
+    xb_free(&g);
+
+    /* UDATA's one cluster full and no folder of the game's: its entry needs a
+     * cluster added to UDATA. Every cluster the restore can take held a
+     * folder's entries before, which no folder may show at any stop. */
+    blank_drive(&g);
+    put_others(&g);
+    uint32_t udata = xb_lookup(&g, 1, "UDATA", NULL);
+    for (unsigned i = 0; i < XB_CLUSTER / XB_SLOT - 2; i++) {
+        char name[16];
+        snprintf(name, sizeof(name), "D%07X", i);
+        xb_add_entry(&g, udata, name, XB_DIR, 0, 0, XB_TIME(8, 0, 0), XB_DATE(2026, 1, 1));
+    }
+    uint32_t stale[60], elsewhere = 0, seen = 0;
+    for (uint32_t c = 2; c < XB_CLUSTERS && !elsewhere; c++) {
+        if (xb_fat(&g, c) != 0) continue;
+        if (seen < 60) stale[seen] = c;
+        if (++seen == 200) elsewhere = c;
+    }
+    uint8_t *old = (uint8_t *)malloc(XB_CLUSTER);
+    memset(old, 0xFF, XB_CLUSTER);
+    memset(old, 0, XB_SLOT);
+    old[0] = 5;
+    old[1] = XB_DIR;
+    memcpy(old + 2, "STALE", 5);
+    xb_put_le32(old + 44, elsewhere);
+    for (uint32_t i = 0; i < 60; i++) xb_set(&g, xb_cluster_off(stale[i]), old, XB_CLUSTER);
+    free(old);
+    check_raw_stopped(&g, "stopped, a raw image whose UDATA grows");
     xb_free(&g);
 }
 
@@ -1005,25 +1622,39 @@ static void check_large_tree(void) {
 }
 
 int main(void) {
-    check_collect();
-    check_collect_edges();
-    check_restore(16, 2, 3, "restore, 64 KiB clusters, half compressed");
-    check_restore(16, 1, 3, "restore, every cluster compressed");
-    check_restore(16, 0, 2, "restore, qcow2 version 2");
-    check_restore(12, 3, 3, "restore, 4 KiB clusters");
-    check_restore(9, 0, 3, "restore, 512-byte clusters");
-    check_restore_blank();
-    check_both_ways();
-    check_units_from_before();
-    check_refusals();
-    check_conflict();
-    check_images();
-    check_write_failures();
-    check_names();
-    check_needs_a_named_drive();
-    check_raw(XB_DISK_SIZE, "a raw image, 8 GiB");
-    check_raw(XB_RETAIL_SIZE, "a raw image that ends where E: does");
-    check_large_tree();
+    for (g_parts = 0; g_parts < 2; g_parts++) {
+        check_collect();
+        check_collect_edges();
+        check_restore(16, 2, 3, "restore, 64 KiB clusters, half compressed");
+        check_restore(16, 1, 3, "restore, every cluster compressed");
+        check_restore(16, 0, 2, "restore, qcow2 version 2");
+        check_restore(12, 3, 3, "restore, 4 KiB clusters");
+        check_restore(9, 0, 3, "restore, 512-byte clusters");
+        check_restore_blank();
+        check_both_ways();
+        check_units_from_before();
+        check_refusals();
+        check_conflict();
+        check_images();
+        check_write_failures();
+        check_names();
+        check_needs_a_named_drive();
+        check_raw(XB_DISK_SIZE, "a raw image, 8 GiB");
+        check_raw(XB_RETAIL_SIZE, "a raw image that ends where E: does");
+        check_large_tree();
+        check_broken_old_chain();
+    }
+    g_parts = 0;
+    check_parts_match_whole(16, 2, false, "parts and whole, 64 KiB clusters");
+    check_parts_match_whole(16, 1, false, "parts and whole, every cluster compressed");
+    check_parts_match_whole(12, 0, false, "parts and whole, 4 KiB clusters");
+    check_parts_match_whole(16, 2, true, "parts and whole over old saves, 64 KiB clusters");
+    check_parts_match_whole(16, 1, true, "parts and whole over old saves, every cluster compressed");
+    check_parts_match_whole(12, 0, true, "parts and whole over old saves, 4 KiB clusters");
+    check_nearly_full();
+    check_disk_phase_drives();
+    check_stopped_drives();
+    check_raw_stopped_drives();
     if (g_fails) {
         fprintf(stderr, "%d check(s) failed\n", g_fails);
         return 1;

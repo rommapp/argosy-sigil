@@ -9,7 +9,10 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** [PosixFileAccess.write] replaces a file whole, through a temporary file renamed over it. */
+/**
+ * [PosixFileAccess.write] replaces a file whole, through a temporary file renamed over it;
+ * [PosixFileAccess.writeAt] writes part of a file that is there, and makes none.
+ */
 class PosixFileAccessTest {
     private fun root() = Files.createTempDirectory("sigil-posix").toFile().apply { deleteOnExit() }
 
@@ -47,5 +50,21 @@ class PosixFileAccessTest {
         }
         assertArrayEquals(byteArrayOf(1, 2, 3), card.readBytes())
         assertEquals(listOf("Chrono Cross.srm"), root.list()!!.toList())
+    }
+
+    @Test
+    fun aPartWriteChangesOnlyItsBytesAndGrowsTheFile() {
+        val root = root()
+        val drive = java.io.File(root, "hdd.img")
+        drive.writeBytes(byteArrayOf(0, 1, 2, 3))
+        assertTrue(PosixFileAccess.writeAt(root.path, "hdd.img", 2, byteArrayOf(9, 9, 9)))
+        assertArrayEquals(byteArrayOf(0, 1, 9, 9, 9), drive.readBytes())
+    }
+
+    @Test
+    fun aPartWriteNeverMakesAFile() {
+        val root = root()
+        assertFalse(PosixFileAccess.writeAt(root.path, "hdd.img", 0, byteArrayOf(1)))
+        assertEquals(emptyList<String>(), root.list()!!.toList())
     }
 }

@@ -394,6 +394,19 @@ static bool load_access_class(JNIEnv *env) {
     return g_access_read && g_access_write && g_access_remove;
 }
 
+/* SigilPartFileAccess, looked up only for a restore that asks for part writes, so an access
+ * that implements SigilFileAccess alone is never asked for a method it doesn't have. */
+static jclass g_part_access_class = NULL;
+static jmethodID g_part_access_write_at = NULL;
+
+static bool load_part_access_class(JNIEnv *env) {
+    if (g_part_access_write_at) return true;
+    if (!g_part_access_class) g_part_access_class = global_class(env, "com/nendo/sigil/SigilPartFileAccess");
+    if (!g_part_access_class) return false;
+    g_part_access_write_at = find_method(env, g_part_access_class, "writeAt", "(Ljava/lang/String;Ljava/lang/String;J[B)Z");
+    return g_part_access_write_at != NULL;
+}
+
 /* A failed or throwing call is an I/O error to sigil; the Java exception is
  * cleared so the native call can finish and raise SIGIL_ERR_IO itself. */
 static bool access_threw(JNIEnv *env) {
@@ -934,6 +947,19 @@ static int write_member(void *ctx, const char *relative_path, const uint8_t *dat
     return !access_threw(env) && ok ? 0 : -1;
 }
 
+static int write_member_at(void *ctx, const char *relative_path, uint64_t offset, const uint8_t *data, size_t len) {
+    access_ctx *a = (access_ctx *)ctx;
+    JNIEnv *env = a->env;
+    jstring jpath = jni_string(env, relative_path);
+    jbyteArray jdata = jpath ? byte_array(env, data, len) : NULL;
+    jboolean ok = jdata ? (*env)->CallBooleanMethod(env, a->access, g_part_access_write_at, a->root, jpath, (jlong)offset,
+                                                    jdata)
+                        : JNI_FALSE;
+    if (jpath) (*env)->DeleteLocalRef(env, jpath);
+    if (jdata) (*env)->DeleteLocalRef(env, jdata);
+    return !access_threw(env) && ok ? 0 : -1;
+}
+
 static int remove_member(void *ctx, const char *relative_path) {
     access_ctx *a = (access_ctx *)ctx;
     JNIEnv *env = a->env;
@@ -1021,10 +1047,12 @@ Java_com_nendo_sigil_Sigil_nativeSync(JNIEnv *env, jclass clazz,
                                        jbyteArray jstate, jboolean unmanaged, jboolean overwrite_local,
                                        jobjectArray jclaimed, jobjectArray jcompanion_ids,
                                        jobjectArray jcompanion_units, jboolean repair, jstring jprofile,
-                                       jobject jaccess) {
+                                       jboolean writes_parts, jobject jaccess) {
     (void)clazz;
     if (!jroot || !jlayout || !jcontent || !jaccess) { throw_sigil(env, SIGIL_ERR_INVALID_ARG); return NULL; }
     if (!load_access_class(env)) { throw_binding_broken(env, "SigilFileAccess"); return NULL; }
+    /* Sigil.restore lets writes_parts through only with a SigilPartFileAccess. */
+    if (writes_parts && !load_part_access_class(env)) { throw_binding_broken(env, "SigilPartFileAccess"); return NULL; }
 
     const char *root     = jni_utf8(env, jroot);
     const char *profile  = jprofile ? jni_utf8(env, jprofile) : NULL;
@@ -1072,7 +1100,7 @@ Java_com_nendo_sigil_Sigil_nativeSync(JNIEnv *env, jclass clazz,
     access_ctx actx = { env, jaccess, jroot };
     sigil_sync_request req;
     memset(&req, 0, sizeof(req));
-    req.struct_version = SIGIL_SYNC_REQUEST_V1;
+    req.struct_version = SIGIL_SYNC_REQUEST_V2;
     req.save.struct_version = SIGIL_SAVE_REQUEST_V1;
     req.save.layout = layout;
     req.save.platform = platform;
@@ -1113,6 +1141,8 @@ Java_com_nendo_sigil_Sigil_nativeSync(JNIEnv *env, jclass clazz,
     req.write = write_member;
     req.remove = remove_member;
     req.write_ctx = &actx;
+    /* A restore that asks for part writes gets a drive image's changed parts alone. */
+    req.write_at = writes_parts ? write_member_at : NULL;
 
     sigil_sync_result *r = NULL;
     int rc = !claims_valid || !companions_valid ? SIGIL_ERR_INVALID_ARG

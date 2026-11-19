@@ -6,7 +6,9 @@
  * `TDATA/<id>/...`, each file with the time the drive has for it: the tree
  * X1 BOX's own save manager exports for a game and takes back
  * (izzy2lost/xemu at 57bc6d6, XboxSaveManager.kt exportZip and importZip).
- * Restore replaces those two folders on the drive and nothing else on it. */
+ * Restore replaces those two folders on the drive and nothing else on it,
+ * and writes the image back as the parts that changed where the request
+ * can write part of a file, as the whole file where it can't. */
 #include "fatx.h"
 #include "sync_internal.h"
 
@@ -429,10 +431,12 @@ static int place_dir(placer *p, const file_list *in, const char *path, uint32_t 
 }
 
 /* Stages the game's two folders as the unit has them: what the drive holds
- * of them goes, then each file of the unit is written, its folders made as
- * they come. Nothing else on the drive is touched. SIGIL_ERR_NO_SPACE,
- * naming the file that didn't fit and the clusters it lacked, when E: is
- * too full. */
+ * of them is taken out, then each file of the unit is written, its folders
+ * made as they come, and the flush puts the new folders where the old ones
+ * were and frees the old ones (fatx.h has the order). Nothing else on the
+ * drive is touched. SIGIL_ERR_NO_SPACE, naming the file that didn't fit and
+ * the clusters it lacked, when E: is too full: written in parts, the unit's
+ * files need room beside the ones they replace. */
 static int stage_game(sigil_fatx *fs, const char *id, const file_list *in, sigil_sync_result *r) {
     int rc = SIGIL_OK;
     for (size_t f = 0; rc == SIGIL_OK && f < FOLDER_COUNT; f++) {
@@ -500,19 +504,66 @@ static int verify_drive(const sigil_sync_request *req, const char *path, const c
     return rc == SIGIL_OK && strcmp(found, identity) == 0 ? SIGIL_OK : SIGIL_ERR_IO;
 }
 
-/* Writes the drive with its staged changes through the request, as one
- * file, then reads it back: its bytes, and the game's saves on it. The
- * drive is closed first, since a client may replace the file it had open. */
+typedef struct {
+    const sigil_sync_request *req;
+    const char               *path;
+    sigil_io                 *io;      /* the written file, when reading it back */
+    uint8_t                  *chunk;
+} part_writer;
+
+static int write_part(void *ctx, uint64_t off, const uint8_t *data, size_t len) {
+    part_writer *w = (part_writer *)ctx;
+    return sigil_sync_write_at(w->req)(w->req->write_ctx, w->path, off, data, len) == 0 ? SIGIL_OK : SIGIL_ERR_IO;
+}
+
+static int check_part(void *ctx, uint64_t off, const uint8_t *data, size_t len) {
+    part_writer *w = (part_writer *)ctx;
+    size_t got = 0;
+    bool same = sigil_io_read_upto(w->io, off, w->chunk, len, &got) == SIGIL_OK && got == len &&
+                memcmp(w->chunk, data, len) == 0;
+    return same ? SIGIL_OK : SIGIL_ERR_IO;
+}
+
+/* Writes the parts of the drive the staged changes touch, then reads each
+ * back through a fresh open. */
+static int write_parts(const sigil_sync_ctx *x, drive *v) {
+    part_writer w = { x->req, v->path, NULL, NULL };
+    int rc = sigil_disk_runs(v->disk, true, write_part, &w);
+    if (rc != SIGIL_OK) return SIGIL_ERR_IO;
+    w.io = x->req->save.open(x->req->save.open_ctx, v->path);
+    w.chunk = (uint8_t *)malloc(COMPARE_CHUNK);
+    rc = w.io && w.chunk ? sigil_disk_runs(v->disk, false, check_part, &w) : SIGIL_ERR_IO;
+    free(w.chunk);
+    if (w.io) sigil_io_close(w.io);
+    return rc == SIGIL_OK ? SIGIL_OK : SIGIL_ERR_IO;
+}
+
+/* Writes the drive with its staged changes through the request, then reads
+ * it back: what was written, and the game's saves on it. A request that can
+ * write part of a file gets only the parts that changed; any other gets the
+ * whole file. The drive's stream is closed first, since a client may replace
+ * or reopen the file it had open. */
 static int write_drive(const sigil_sync_ctx *x, drive *v, const char *id, const char *identity) {
-    uint8_t *file = NULL;
-    size_t len = 0;
-    int rc = sigil_disk_file(v->disk, &file, &len);
-    drive_close(v);
-    if (rc == SIGIL_OK && (!sigil_sync_path_inside(v->path) || x->req->write(x->req->write_ctx, v->path, file, len) != 0 ||
-                           !file_holds(x->req, v->path, file, len))) {
-        rc = SIGIL_ERR_IO;
+    int rc = sigil_sync_path_inside(v->path) ? SIGIL_OK : SIGIL_ERR_IO;
+    if (rc == SIGIL_OK && sigil_sync_write_at(x->req)) {
+        sigil_fatx_close(v->fs);
+        v->fs = NULL;
+        sigil_disk_detach(v->disk);
+        sigil_io_close(v->io);
+        v->io = NULL;
+        rc = write_parts(x, v);
+        drive_close(v);
+    } else if (rc == SIGIL_OK) {
+        uint8_t *file = NULL;
+        size_t len = 0;
+        rc = sigil_disk_file(v->disk, &file, &len);
+        drive_close(v);
+        if (rc == SIGIL_OK && (x->req->write(x->req->write_ctx, v->path, file, len) != 0 ||
+                               !file_holds(x->req, v->path, file, len))) {
+            rc = SIGIL_ERR_IO;
+        }
+        free(file);
     }
-    free(file);
     if (rc == SIGIL_OK) rc = verify_drive(x->req, v->path, id, identity);
     return rc;
 }
@@ -552,6 +603,9 @@ int sigil_sync_restore_xbox(sigil_sync_ctx *x, const uint8_t *unit, size_t len, 
         rc = SIGIL_ERR_CONFLICT;
     }
     if (rc == SIGIL_OK && !same) {
+        /* Written back whole, in one write no stop shows half done, the new
+         * saves may take the old ones' clusters; written in parts, they may not. */
+        if (!sigil_sync_write_at(x->req)) sigil_fatx_free_at_once(v.fs);
         rc = stage_game(v.fs, id, &incoming, r);
         if (rc == SIGIL_ERR_DAMAGED) snprintf(r->problem, sizeof(r->problem), "%s", v.path);
         /* What is staged must read back as the unit before any of it is written. */

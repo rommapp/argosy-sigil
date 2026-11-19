@@ -81,6 +81,19 @@ static void xb_copy(const xb_guest *from, xb_guest *to) {
     }
 }
 
+/* `len` bytes at `off` read the same on both drives; chunks neither holds are zeros on both. */
+static bool xb_same_bytes(const xb_guest *a, const xb_guest *b, uint64_t off, size_t len) {
+    static const uint8_t zeros[XB_CHUNK];
+    while (len) {
+        size_t at = (size_t)(off % XB_CHUNK), n = XB_CHUNK - at < len ? XB_CHUNK - at : len;
+        const uint8_t *x = a->chunks[off / XB_CHUNK], *y = b->chunks[off / XB_CHUNK];
+        if ((x || y) && memcmp((x ? x : zeros) + at, (y ? y : zeros) + at, n) != 0) return false;
+        off += n;
+        len -= n;
+    }
+    return true;
+}
+
 /* The first byte at which two drives differ, or UINT64_MAX when they read the same. */
 static uint64_t xb_first_difference(const xb_guest *a, const xb_guest *b) {
     static const uint8_t zeros[XB_CHUNK];
@@ -291,6 +304,7 @@ typedef struct {
     size_t   count;
     size_t   cap;
     int      faults;
+    uint32_t lost;   /* clusters the FAT marks used that no file or folder holds: wasted, not harmful */
     uint8_t *used;   /* one flag per cluster a file or folder holds */
 } xb_tree;
 
@@ -365,7 +379,8 @@ static void xb_walk_dir(xb_tree *t, const xb_guest *g, uint32_t dir, const char 
 
 /* Every file and folder on E:, and what is wrong with its chains: `faults`
  * counts a cluster two files hold, a chain into a free cluster, a file
- * whose chain isn't its size, and a used cluster nothing holds. */
+ * whose chain isn't its size, and a cluster a file holds that the FAT marks
+ * free; `lost` counts the clusters marked used that nothing holds. */
 static void xb_walk(const xb_guest *g, xb_tree *t) {
     memset(t, 0, sizeof(*t));
     t->used = (uint8_t *)calloc(XB_CLUSTERS, 1);
@@ -379,9 +394,9 @@ static void xb_walk(const xb_guest *g, xb_tree *t) {
     xb_claim(t, g, 1, UINT32_MAX, "(root)");
     xb_walk_dir(t, g, 1, "", 0);
     for (uint32_t c = 1; c < XB_CLUSTERS; c++) {
-        if ((xb_fat(g, c) != 0) != (t->used[c] != 0)) {
-            fprintf(stderr, "FATX: cluster %u is %s and %s\n", c, xb_fat(g, c) ? "marked used" : "marked free",
-                    t->used[c] ? "held by a file" : "held by nothing");
+        if (xb_fat(g, c) != 0 && !t->used[c]) t->lost++;
+        if (xb_fat(g, c) == 0 && t->used[c]) {
+            fprintf(stderr, "FATX: cluster %u is marked free and held by a file\n", c);
             t->faults++;
             return;
         }
@@ -414,6 +429,69 @@ static bool xb_file_is(const xb_guest *g, const xb_tree *t, const char *path, co
     bool same = memcmp(have, data, len) == 0;
     free(have);
     return same;
+}
+
+/* `path` is folder `top`/`id` or lies in it, compared without case as FATX compares names. */
+static bool xb_in_folder(const char *path, const char *top, const char *id) {
+    size_t nt = strlen(top), ni = strlen(id);
+    for (size_t i = 0; i < nt + 1 + ni; i++) {
+        char x = path[i], y = i < nt ? top[i] : i == nt ? '/' : id[i - nt - 1];
+        if (x >= 'a' && x <= 'z') x = (char)(x - 32);
+        if (y >= 'a' && y <= 'z') y = (char)(y - 32);
+        if (x != y || !x) return false;
+    }
+    return path[nt + 1 + ni] == '\0' || path[nt + 1 + ni] == '/';
+}
+
+/* How many entries of folder `top` name folder `id`, compared without case. */
+static size_t xb_named(const xb_tree *t, const char *top, const char *id) {
+    size_t n = 0, len = strlen(top) + 1 + strlen(id);
+    for (size_t i = 0; i < t->count; i++) n += strlen(t->items[i].path) == len && xb_in_folder(t->items[i].path, top, id);
+    return n;
+}
+
+/* The spelling of the first entry of folder `top` that names `id`, which
+ * is the one a FATX lookup finds; "" when there is none. */
+static const char *xb_found_as(const xb_tree *t, const char *top, const char *id) {
+    size_t len = strlen(top) + 1 + strlen(id);
+    for (size_t i = 0; i < t->count; i++) {
+        if (strlen(t->items[i].path) == len && xb_in_folder(t->items[i].path, top, id)) return t->items[i].path;
+    }
+    return "";
+}
+
+/* `path` is the folder spelled exactly `folder` or lies in it. */
+static bool xb_under(const char *path, const char *folder) {
+    size_t n = strlen(folder);
+    return n && strncmp(path, folder, n) == 0 && (path[n] == '\0' || path[n] == '/');
+}
+
+/* Folder `top`/`id`, as a FATX lookup finds it, holds the same on `a` as on
+ * `b`: its own entry's times, and every file and folder below it with its
+ * name, size, bytes and times. */
+static bool xb_folder_same(const xb_guest *a, const xb_tree *ta, const xb_guest *b, const xb_tree *tb, const char *top,
+                           const char *id) {
+    size_t skip = strlen(top) + 1 + strlen(id), na = 0, nb = 0;
+    const char *fa = xb_found_as(ta, top, id), *fb = xb_found_as(tb, top, id);
+    for (size_t k = 0; k < tb->count; k++) nb += xb_under(tb->items[k].path, fb);
+    for (size_t i = 0; i < ta->count; i++) {
+        const xb_node *n = &ta->items[i], *m = NULL;
+        if (!xb_under(n->path, fa)) continue;
+        na++;
+        for (size_t k = 0; k < tb->count && !m; k++) {
+            const xb_node *o = &tb->items[k];
+            if (xb_under(o->path, fb) && strcmp(o->path + skip, n->path + skip) == 0) m = o;
+        }
+        if (!m || m->attr != n->attr || m->size != n->size || m->time != n->time || m->date != n->date) return false;
+        if (!(n->attr & XB_DIR) && n->size) {
+            uint8_t *x = xb_file_bytes(a, n), *y = xb_file_bytes(b, m);
+            bool same = memcmp(x, y, n->size) == 0;
+            free(x);
+            free(y);
+            if (!same) return false;
+        }
+    }
+    return na == nb;
 }
 
 /* ---- qcow2, written ------------------------------------------------------------- */
@@ -570,7 +648,8 @@ static void xb_qcow2(const xb_guest *g, unsigned bits, unsigned compress_every, 
 /* ---- qcow2, read back and checked ------------------------------------------------ */
 
 typedef struct {
-    int      faults;   /* a reference the counts don't cover, a flag that is wrong, a table outside the file */
+    int      faults;   /* a reference the counts don't cover, a COPIED flag that disagrees with a count of 1,
+                          a table outside the file */
     uint64_t leaks;    /* clusters counted more often than they are referenced: wasted, not harmful */
 } xb_check;
 
@@ -592,6 +671,15 @@ static void xb_read_image(const uint8_t *img, size_t len, xb_guest *g, xb_check 
     uint64_t rt_entries = (uint64_t)xb_be32(img + 56) * cs / 8;
     uint64_t file_clusters = (len + cs - 1) / cs;
     uint32_t *need = (uint32_t *)calloc(file_clusters + 1, sizeof(*need));
+    /* Each L2 table and each uncompressed data cluster, with whether its entry says COPIED: qemu's
+     * check_oflag_copied (block/qcow2-refcount.c at v9.2.0) holds COPIED to a count of exactly 1. */
+    uint64_t *copied = (uint64_t *)malloc(sizeof(*copied) * 1024);
+    size_t copied_n = 0, copied_cap = 1024;
+#define XB_COPIED(host, flag)                                                                      \
+    do {                                                                                           \
+        if (copied_n == copied_cap) copied = (uint64_t *)realloc(copied, sizeof(*copied) * (copied_cap *= 2)); \
+        copied[copied_n++] = ((host) / cs) << 1 | ((flag) ? 1u : 0u);                              \
+    } while (0)
 #define XB_REF(off, bytes, what)                                                                   \
     for (uint64_t c_ = (off) / cs; c_ <= ((off) + (bytes) - 1) / cs; c_++) {                       \
         if (c_ >= file_clusters) {                                                                 \
@@ -614,10 +702,7 @@ static void xb_read_image(const uint8_t *img, size_t len, xb_guest *g, xb_check 
         uint64_t l1e = xb_be64(img + l1_off + (uint64_t)i1 * 8), l2_off = l1e & 0x00FFFFFFFFFFFE00ull;
         if (!l2_off) continue;
         XB_REF(l2_off, cs, "an L2 table");
-        if (!(l1e >> 63)) {
-            fprintf(stderr, "qcow2: L1 entry %u lacks the COPIED flag\n", i1);
-            check->faults++;
-        }
+        XB_COPIED(l2_off, l1e >> 63);
         for (size_t i2 = 0; i2 < per_l2 && !check->faults; i2++) {
             uint64_t e = xb_be64(img + l2_off + i2 * 8), index = (uint64_t)i1 * per_l2 + i2;
             if (e & (1ull << 62)) {
@@ -649,16 +734,24 @@ static void xb_read_image(const uint8_t *img, size_t len, xb_guest *g, xb_check 
                 continue;
             }
             XB_REF(host, cs, "a data cluster");
-            if (!(e >> 63)) {
-                fprintf(stderr, "qcow2: data cluster %llu lacks the COPIED flag\n", (unsigned long long)index);
-                check->faults++;
-            }
+            XB_COPIED(host, e >> 63);
             if (!(e & 1) && host + cs <= len) xb_set(g, index * cs, img + host, cs);
         }
     }
+#define XB_COUNT(c) (((c) / per_block < rt_entries && (xb_be64(img + rt_off + ((c) / per_block) * 8) & ~511ull))       \
+    ? (uint32_t)((img[(xb_be64(img + rt_off + ((c) / per_block) * 8) & ~511ull) + ((c) % per_block) * 2] << 8) |       \
+                 img[(xb_be64(img + rt_off + ((c) / per_block) * 8) & ~511ull) + ((c) % per_block) * 2 + 1])         \
+    : 0u)
+    for (size_t i = 0; i < copied_n && !check->faults; i++) {
+        uint64_t c = copied[i] >> 1;
+        if (c < file_clusters && (XB_COUNT(c) == 1) != (copied[i] & 1)) {
+            fprintf(stderr, "qcow2: cluster %llu is counted %u times and its entry %s COPIED\n", (unsigned long long)c,
+                    XB_COUNT(c), (copied[i] & 1) ? "says" : "doesn't say");
+            check->faults++;
+        }
+    }
     for (uint64_t c = 0; c < file_clusters && !check->faults; c++) {
-        uint64_t block = c / per_block < rt_entries ? xb_be64(img + rt_off + (c / per_block) * 8) & ~511ull : 0;
-        uint32_t have = block ? (uint32_t)((img[block + (c % per_block) * 2] << 8) | img[block + (c % per_block) * 2 + 1]) : 0;
+        uint32_t have = XB_COUNT(c);
         if (have < need[c]) {
             fprintf(stderr, "qcow2: cluster %llu is counted %u times and referenced %u times\n",
                     (unsigned long long)c, have, need[c]);
@@ -668,6 +761,9 @@ static void xb_read_image(const uint8_t *img, size_t len, xb_guest *g, xb_check 
         }
     }
 #undef XB_REF
+#undef XB_COPIED
+#undef XB_COUNT
+    free(copied);
     free(piece);
     free(need);
 }
@@ -731,14 +827,20 @@ static void xb_restore_free_slots(const xb_guest *before, xb_guest *clone, uint3
  * `id`: the clusters of its folders and files and their FAT entries, which
  * were its own or free before, its entry in UDATA and TDATA, and those two
  * folders themselves where the drive had none. Every other byte of the
- * drive, on any partition, must be the same. */
-static bool xb_only_game_changed(const xb_guest *before, const xb_guest *after, const char *id) {
+ * drive, on any partition, must be the same. A restore that `stopped` part
+ * way may also leave clusters it took marked used with nothing holding them,
+ * and bytes it wrote in clusters still free, which nothing reads. */
+static bool xb_only_game_changed(const xb_guest *before, const xb_guest *after, const char *id, bool stopped) {
     xb_tree tb, ta;
     xb_walk(before, &tb);
     xb_walk(after, &ta);
     uint8_t *was = (uint8_t *)calloc(XB_CLUSTERS, 1), *is = (uint8_t *)calloc(XB_CLUSTERS, 1);
     xb_game_clusters(before, &tb, id, was);
     xb_game_clusters(after, &ta, id, is);
+    for (uint32_t c = 1; stopped && c < XB_CLUSTERS; c++) {
+        if (xb_fat(before, c) != 0) continue;
+        if (xb_fat(after, c) != 0 ? !ta.used[c] : !xb_same_bytes(before, after, xb_cluster_off(c), XB_CLUSTER)) is[c] = 1;
+    }
     static const char *const tops[] = { "UDATA", "TDATA" };
     xb_guest clone;
     xb_copy(after, &clone);

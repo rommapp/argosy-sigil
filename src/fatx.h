@@ -64,8 +64,9 @@ uint32_t sigil_fatx_free_clusters(const sigil_fatx *fs);
 
 /**
  * The entries of the directory starting at cluster `dir`, in the order it
- * holds them; `*out` is malloc'd. SIGIL_ERR_DAMAGED when its chain leaves the
- * volume, runs into a free cluster or loops.
+ * holds them, without those sigil_fatx_remove took out; `*out` is malloc'd.
+ * SIGIL_ERR_DAMAGED when its chain leaves the volume, runs into a free
+ * cluster or loops.
  */
 int sigil_fatx_list(sigil_fatx *fs, uint32_t dir, sigil_fatx_entry **out, size_t *count);
 
@@ -80,23 +81,57 @@ int sigil_fatx_read(sigil_fatx *fs, const sigil_fatx_entry *file, uint8_t **out,
  *  question mark or a bar. */
 bool sigil_fatx_name_ok(const char *name);
 
+/*
+ * The calls below change E:. They take clusters only from those free at
+ * open, so a new file never lands where a removed one was, and stage their
+ * writes on the disk in four phases (sigil_disk_set_phase), so a restore
+ * written in parts that stops after any write leaves every chain whole, the
+ * clusters it marked used and no entry holds as its only waste, and each
+ * entry it replaces either as it was or as it was to be:
+ *  0. the new files and folders, with their FAT entries, which no entry
+ *     there at open points at yet;
+ *  1. 0xE5 on each removed entry no new entry takes the slot of, so another
+ *     spelling of a folder is gone before the new one shows;
+ *  2. the entries that put the new files and folders in directories there
+ *     at open, each in the slot of a removed entry of the same name when
+ *     there is one, so the two never show together; the FAT entry that adds
+ *     a cluster to a directory there at open;
+ *  3. the FAT entries of what was removed, freed.
+ * Phases 1 to 3 are staged by sigil_fatx_flush.
+ */
+
 /**
- * Removes a file, or a directory with everything in it: its clusters are
- * freed and its entry marked deleted. Staged on the disk, like every change.
+ * For a drive written back whole in one write, which no stop can show half
+ * done: what sigil_fatx_remove takes out is freed at once, and its clusters
+ * can be taken again, as they could before the order above was needed.
+ */
+void sigil_fatx_free_at_once(sigil_fatx *fs);
+
+/**
+ * Takes out a file, or a directory with everything in it: no listing shows
+ * it from now on, and sigil_fatx_flush marks its entry deleted (unless a new
+ * entry takes its slot) and frees its clusters, which sigil_fatx_free_at_once
+ * frees here instead.
  */
 int sigil_fatx_remove(sigil_fatx *fs, const sigil_fatx_entry *entry);
 
 /**
  * A new directory `name` in directory `dir`, stamped `time` and `date`;
- * `*made` gets its cluster. SIGIL_ERR_NO_SPACE when E: or `dir` is full.
+ * `*made` gets its cluster. SIGIL_ERR_NO_SPACE when E: or `dir` is full:
+ * unless sigil_fatx_free_at_once was called, what is removed is still there
+ * until the flush, so the new files need room beside it.
  */
 int sigil_fatx_mkdir(sigil_fatx *fs, uint32_t dir, const char *name, uint16_t time, uint16_t date, uint32_t *made);
 
-/** A new file `name` in directory `dir` holding `data`. SIGIL_ERR_NO_SPACE when E: or `dir` is full. */
+/** A new file `name` in directory `dir` holding `data`. SIGIL_ERR_NO_SPACE as sigil_fatx_mkdir. */
 int sigil_fatx_put(sigil_fatx *fs, uint32_t dir, const char *name, const uint8_t *data, size_t len, uint16_t time,
                    uint16_t date);
 
-/** Stages the FAT entries the calls above changed. Call once, after the last of them. */
+/**
+ * Stages the rest: the FAT entries of phase 0, then phases 1 to 3. Call
+ * once, after the last change; SIGIL_ERR_INVALID_ARG for a change or a flush
+ * after it.
+ */
 int sigil_fatx_flush(sigil_fatx *fs);
 
 #endif

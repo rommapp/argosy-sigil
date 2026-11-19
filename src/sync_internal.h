@@ -173,6 +173,9 @@ int sigil_sync_put(const sigil_sync_request *req, const char *path, const uint8_
 /** Removes `path` through the request; SIGIL_ERR_IO when that fails or
  *  `path` would leave the save root. */
 int sigil_sync_drop(const sigil_sync_request *req, const char *path);
+/** The request's callback for writing part of a file, or NULL when it gives
+ *  none: a request older than SIGIL_SYNC_REQUEST_V2 has no such field. */
+sigil_save_write_at_fn sigil_sync_write_at(const sigil_sync_request *req);
 /**
  * The length of `unit` without the hardcore marker Argosy appended to
  * uploads before it used sigil ({"h":true,...}, the JSON's length as a
@@ -254,8 +257,9 @@ int sigil_sync_restore_genesis(sigil_sync_ctx *x, const uint8_t *unit, size_t le
 int sigil_sync_collect_xbox(sigil_sync_ctx *x, sigil_sync_result *r);
 /**
  * Restore on Xbox: the unit's files replace the game's two folders on the
- * drive image, which is written back whole and read back. SIGIL_ERR_NO_TARGET,
- * naming the drive, when the save root holds none.
+ * drive image, which is written back and read back: only the parts that
+ * changed when the request can write part of a file, else the whole file.
+ * SIGIL_ERR_NO_TARGET, naming the drive, when the save root holds none.
  */
 int sigil_sync_restore_xbox(sigil_sync_ctx *x, const uint8_t *unit, size_t len, sigil_sync_result *r,
                             char local_identity[33]);

@@ -391,11 +391,27 @@ interface SigilFileAccess {
     fun remove(root: String, path: String): Boolean
 }
 
+/**
+ * A [SigilFileAccess] that can also write part of a file. A restore given one with
+ * `writesParts = true` writes only the parts that change of a file every game's saves sit in
+ * (an Xbox hard-disk image), in place; docs/sync.md, "Writing and removing", says what a restore
+ * stopped part way leaves.
+ */
+interface SigilPartFileAccess : SigilFileAccess {
+    /**
+     * Writes [data] at byte [offset] of the file at [path], which is there already, and returns
+     * once the bytes are stored, as FileChannel.force does: the rest of the file stays as it is,
+     * and it grows when the range ends past its end. A missing file is a failure; nothing is
+     * created.
+     */
+    fun writeAt(root: String, path: String, offset: Long, data: ByteArray): Boolean
+}
+
 /** One entry of a folder, as [SigilFileAccess.list] returns it. */
 data class SigilFileEntry(val name: String, val isDirectory: Boolean)
 
 /** [SigilFileAccess] through java.io.File, what every call uses unless given another. */
-object PosixFileAccess : SigilFileAccess {
+object PosixFileAccess : SigilPartFileAccess {
     private fun file(root: String, path: String) = if (path.isEmpty()) java.io.File(root) else java.io.File(root, path)
 
     override fun list(root: String, path: String): List<SigilFileEntry>? {
@@ -447,6 +463,15 @@ object PosixFileAccess : SigilFileAccess {
     }
 
     override fun remove(root: String, path: String): Boolean = file(root, path.trimEnd('/')).delete()
+
+    override fun writeAt(root: String, path: String, offset: Long, data: ByteArray): Boolean = runCatching {
+        java.nio.channels.FileChannel.open(file(root, path).toPath(), java.nio.file.StandardOpenOption.WRITE)
+            .use { channel ->
+                val buffer = java.nio.ByteBuffer.wrap(data)
+                while (buffer.hasRemaining()) channel.write(buffer, offset + buffer.position())
+                channel.force(true)
+            }
+    }.isSuccess
 }
 
 /**
@@ -550,6 +575,7 @@ object Sigil {
         companionUnits: Array<ByteArray?>,
         repair: Boolean,
         profile: String?,
+        writesParts: Boolean,
         fileAccess: SigilFileAccess
     ): SigilSyncResult
     @JvmStatic private external fun nativeLayoutSubdirs(layout: String): Array<String>
@@ -710,7 +736,7 @@ object Sigil {
         fileAccess: SigilFileAccess = PosixFileAccess
     ): SigilSyncResult =
         sync(null, game, core, contentPath, saveRoot, listing, options, gameIds, state, unmanaged, false, claimed,
-            companions, repair, profile, fileAccess)
+            companions, repair, profile, false, fileAccess)
 
     /**
      * Puts [unit], and each companion's unit given, back under [saveRoot] and reads them back.
@@ -727,6 +753,9 @@ object Sigil {
      * companion (repair changes neither of the last two); [SigilException.EXISTS] when Dolphin's
      * GCI folder has no free name for a new save.
      * The last six name the save, member or files in [SigilException.problem].
+     *
+     * Files are written whole through [SigilFileAccess.write]; the overload below that takes
+     * writesParts can write a drive image in parts instead.
      */
     fun restore(
         unit: ByteArray,
@@ -746,8 +775,40 @@ object Sigil {
         profile: String? = null,
         fileAccess: SigilFileAccess = PosixFileAccess
     ): SigilSyncResult =
-        sync(unit, game, core, contentPath, saveRoot, listing, options, gameIds, state, unmanaged, overwriteLocal,
-            claimed, companions, repair, profile, fileAccess)
+        restore(unit, game, core, contentPath, saveRoot, listing, options, gameIds, state, unmanaged, overwriteLocal,
+            claimed, companions, repair, profile, fileAccess, writesParts = false)
+
+    /**
+     * [restore] as above. With [writesParts], a file every game's saves sit in (an Xbox
+     * hard-disk image) gets only the parts that change, through [SigilPartFileAccess.writeAt],
+     * which [fileAccess] must then implement; docs/sync.md, "Writing and removing", says what a
+     * restore stopped part way leaves. Without it, files are written whole. writesParts has no
+     * default, so a call that leaves it out takes the overload above, whose shape callers
+     * compiled before it existed still link against.
+     */
+    fun restore(
+        unit: ByteArray,
+        game: SigilResult,
+        core: String,
+        contentPath: String,
+        saveRoot: String,
+        listing: List<String>? = null,
+        options: Map<String, String> = emptyMap(),
+        gameIds: List<String> = emptyList(),
+        state: ByteArray? = null,
+        unmanaged: Boolean = false,
+        overwriteLocal: Boolean = false,
+        claimed: List<String> = emptyList(),
+        companions: List<SigilCompanion> = emptyList(),
+        repair: Boolean = false,
+        profile: String? = null,
+        fileAccess: SigilFileAccess = PosixFileAccess,
+        writesParts: Boolean
+    ): SigilSyncResult {
+        require(!writesParts || fileAccess is SigilPartFileAccess) { "writesParts needs a SigilPartFileAccess" }
+        return sync(unit, game, core, contentPath, saveRoot, listing, options, gameIds, state, unmanaged,
+            overwriteLocal, claimed, companions, repair, profile, writesParts, fileAccess)
+    }
 
     private fun sync(
         unit: ByteArray?,
@@ -765,6 +826,7 @@ object Sigil {
         companions: List<SigilCompanion>,
         repair: Boolean,
         profile: String?,
+        writesParts: Boolean,
         fileAccess: SigilFileAccess
     ): SigilSyncResult {
         val (root, picked) = rooted(core, saveRoot, profile)
@@ -792,6 +854,7 @@ object Sigil {
             companions.map { it.unit }.toTypedArray(),
             repair,
             picked,
+            writesParts,
             fileAccess
         )
     }

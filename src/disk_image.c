@@ -9,10 +9,30 @@
 
 #define STAGE_PAGE 4096u
 
-/* One page of the file as it will be. `data` is NULL in an empty slot. */
+/* The steps a restore in parts writes in, in order (sigil_disk_runs). Each
+ * phase's bytes go before the table entries that point at them, every count
+ * a new cluster gains goes before any table points at it, and every count a
+ * replaced cluster loses goes after the tables have stopped pointing at it.
+ * That is qemu's own order (qemu at v9.2.0: block/qcow2-cluster.c
+ * perform_cow, "Before we update the L2 table to actually point to the new
+ * cluster, we need to be sure that the refcounts have been increased and COW
+ * was handled"; block/qcow2-refcount.c qcow2_alloc_bytes, "refcount blocks
+ * must be flushed before the caller's L2 table updates"; update_refcount, a
+ * decrease makes the refcount blocks wait for the L2 tables), with the file
+ * flushed between steps (block/qcow2-cache.c qcow2_cache_flush). */
+#define STEP_COUNT_UP    0u                                /* the counts new clusters gain */
+#define STEP_DATA(phase) (1u + 2u * (phase))               /* a phase's bytes */
+#define STEP_MAP(phase)  (2u + 2u * (phase))               /* the table entries that map them */
+#define STEP_COUNT_DOWN  (1u + 2u * SIGIL_DISK_PHASES)     /* the counts replaced clusters lose */
+#define STEPS            (STEP_COUNT_DOWN + 1u)
+
+/* One page of the file as each step leaves it: ver[s] is the page once every
+ * write up to step s is made, NULL where step s doesn't change it (the page
+ * then reads as the step before does, or as the file). */
 typedef struct {
     uint64_t index;
-    uint8_t *data;
+    bool     used;
+    uint8_t *ver[STEPS];
 } stage_page;
 
 #define QCOW2_MAGIC          0x514649FBu
@@ -35,6 +55,7 @@ struct sigil_disk {
     stage_page     *slots;       /* open addressing, a power of two */
     size_t          slot_count;
     size_t          staged;
+    unsigned        phase;       /* what the writes staged now belong to */
 
     bool            qcow2;
     unsigned        cluster_bits;
@@ -50,26 +71,49 @@ struct sigil_disk {
     uint8_t        *cluster;        /* scratch, one cluster */
 };
 
+static size_t stage_slot(uint64_t index, size_t mask) {
+    return (size_t)(index * 0x9E3779B97F4A7C15ull >> 20) & mask;
+}
+
 static stage_page *stage_find(const sigil_disk *d, uint64_t index) {
     if (!d->slot_count) return NULL;
     size_t mask = d->slot_count - 1;
-    for (size_t i = (size_t)(index * 0x9E3779B97F4A7C15ull >> 20) & mask;; i = (i + 1) & mask) {
+    for (size_t i = stage_slot(index, mask);; i = (i + 1) & mask) {
         stage_page *p = &d->slots[i];
-        if (!p->data) return NULL;
+        if (!p->used) return NULL;
         if (p->index == index) return p;
     }
 }
 
-static void stage_place(stage_page *slots, size_t count, uint64_t index, uint8_t *data) {
+static void stage_place(stage_page *slots, size_t count, const stage_page *page) {
     size_t mask = count - 1;
-    size_t i = (size_t)(index * 0x9E3779B97F4A7C15ull >> 20) & mask;
-    while (slots[i].data) i = (i + 1) & mask;
-    slots[i].index = index;
-    slots[i].data = data;
+    size_t i = stage_slot(page->index, mask);
+    while (slots[i].used) i = (i + 1) & mask;
+    slots[i] = *page;
 }
 
-/* Takes ownership of `data`. */
-static int stage_add(sigil_disk *d, uint64_t index, uint8_t *data) {
+/* The page as step `step` leaves it; NULL when no step up to it changes the page. */
+static uint8_t *page_at(const stage_page *p, unsigned step) {
+    for (unsigned s = step + 1; s-- > 0;) {
+        if (p->ver[s]) return p->ver[s];
+    }
+    return NULL;
+}
+
+/* The page once every step is made. */
+static uint8_t *page_last(const stage_page *p) {
+    return page_at(p, STEPS - 1);
+}
+
+/* The first step that changes the page. */
+static unsigned page_first(const stage_page *p) {
+    unsigned s = 0;
+    while (s + 1 < STEPS && !p->ver[s]) s++;
+    return s;
+}
+
+/* Stages page `index`, changed by step `step` into `data`, which it takes. */
+static int stage_add(sigil_disk *d, uint64_t index, unsigned step, uint8_t *data) {
     if ((d->staged + 1) * 2 > d->slot_count) {
         size_t count = d->slot_count ? d->slot_count * 2 : 256;
         stage_page *grown = (stage_page *)calloc(count, sizeof(*grown));
@@ -78,13 +122,18 @@ static int stage_add(sigil_disk *d, uint64_t index, uint8_t *data) {
             return SIGIL_ERR_OOM;
         }
         for (size_t i = 0; i < d->slot_count; i++) {
-            if (d->slots[i].data) stage_place(grown, count, d->slots[i].index, d->slots[i].data);
+            if (d->slots[i].used) stage_place(grown, count, &d->slots[i]);
         }
         free(d->slots);
         d->slots = grown;
         d->slot_count = count;
     }
-    stage_place(d->slots, d->slot_count, index, data);
+    stage_page page;
+    memset(&page, 0, sizeof(page));
+    page.index = index;
+    page.used = true;
+    page.ver[step] = data;
+    stage_place(d->slots, d->slot_count, &page);
     d->staged++;
     return SIGIL_OK;
 }
@@ -103,13 +152,25 @@ static int base_read(const sigil_disk *d, uint64_t off, uint8_t *buf, size_t len
     return SIGIL_OK;
 }
 
+/* Page `index` as the file holds it, malloc'd. */
+static int base_page(const sigil_disk *d, uint64_t index, uint8_t **out) {
+    *out = (uint8_t *)malloc(STAGE_PAGE);
+    if (!*out) return SIGIL_ERR_OOM;
+    int rc = base_read(d, index * STAGE_PAGE, *out, STAGE_PAGE);
+    if (rc != SIGIL_OK) {
+        free(*out);
+        *out = NULL;
+    }
+    return rc;
+}
+
 static int file_read(const sigil_disk *d, uint64_t off, uint8_t *buf, size_t len) {
     while (len) {
         size_t at = (size_t)(off % STAGE_PAGE);
         size_t n = STAGE_PAGE - at < len ? STAGE_PAGE - at : len;
         const stage_page *p = stage_find(d, off / STAGE_PAGE);
         if (p) {
-            memcpy(buf, p->data + at, n);
+            memcpy(buf, page_last(p) + at, n);
         } else {
             int rc = base_read(d, off, buf, n);
             if (rc != SIGIL_OK) return rc;
@@ -121,27 +182,83 @@ static int file_read(const sigil_disk *d, uint64_t off, uint8_t *buf, size_t len
     return SIGIL_OK;
 }
 
-static int file_write(sigil_disk *d, uint64_t off, const uint8_t *buf, size_t len) {
+/* Puts `n` bytes at `at` of staged page `p` into step `step` and every later
+ * step that changes the page. Nothing is staged when each of those already
+ * reads as `buf` there. */
+static int page_write(const sigil_disk *d, stage_page *p, unsigned step, size_t at, const uint8_t *buf, size_t n) {
+    uint8_t *base = NULL, *was = page_at(p, step);
+    if (!was) {
+        int rc = base_page(d, p->index, &base);
+        if (rc != SIGIL_OK) return rc;
+        was = base;
+    }
+    bool same = memcmp(was + at, buf, n) == 0;
+    for (unsigned s = step + 1; same && s < STEPS; s++) same = !p->ver[s] || memcmp(p->ver[s] + at, buf, n) == 0;
+    if (same) {
+        free(base);
+        return SIGIL_OK;
+    }
+    if (!p->ver[step]) {
+        if (base) {
+            p->ver[step] = base;
+            base = NULL;
+        } else {
+            p->ver[step] = (uint8_t *)malloc(STAGE_PAGE);
+            if (!p->ver[step]) return SIGIL_ERR_OOM;
+            memcpy(p->ver[step], was, STAGE_PAGE);
+        }
+    }
+    free(base);
+    for (unsigned s = step; s < STEPS; s++) {
+        if (p->ver[s]) memcpy(p->ver[s] + at, buf, n);
+    }
+    return SIGIL_OK;
+}
+
+/* Stages every page of the new cluster at `off` as step `step` leaves it,
+ * zeros where nothing is written yet. A page wholly past the file's old end
+ * goes out once ahead of everything (sigil_disk_runs), as its first step
+ * leaves it, so that step must be no later than the one that first points at
+ * the cluster: else a page first written in a later phase would show that
+ * phase as soon as the cluster is mapped. */
+static int stage_cluster(sigil_disk *d, uint64_t off, unsigned step) {
+    for (uint64_t index = off / STAGE_PAGE; index <= (off + d->cluster_size - 1) / STAGE_PAGE; index++) {
+        stage_page *p = stage_find(d, index);
+        if (p && page_at(p, step)) continue;
+        uint8_t *page = NULL;
+        int rc = base_page(d, index, &page);
+        if (rc == SIGIL_OK && p) {
+            p->ver[step] = page;
+        } else if (rc == SIGIL_OK) {
+            rc = stage_add(d, index, step, page);
+        }
+        if (rc != SIGIL_OK) return rc;
+    }
+    return SIGIL_OK;
+}
+
+/* Stages a write that step `step` makes. */
+static int file_write(sigil_disk *d, unsigned step, uint64_t off, const uint8_t *buf, size_t len) {
     if (off + len > d->new_len) d->new_len = off + len;
     while (len) {
         size_t at = (size_t)(off % STAGE_PAGE);
         size_t n = STAGE_PAGE - at < len ? STAGE_PAGE - at : len;
         uint64_t index = off / STAGE_PAGE;
         stage_page *p = stage_find(d, index);
+        int rc = SIGIL_OK;
         if (p) {
-            memcpy(p->data + at, buf, n);
+            rc = page_write(d, p, step, at, buf, n);
         } else {
-            uint8_t *page = (uint8_t *)malloc(STAGE_PAGE);
-            if (!page) return SIGIL_ERR_OOM;
-            int rc = base_read(d, index * STAGE_PAGE, page, STAGE_PAGE);
+            uint8_t *page = NULL;
+            rc = base_page(d, index, &page);
             if (rc == SIGIL_OK && memcmp(page + at, buf, n) != 0) {
                 memcpy(page + at, buf, n);
-                rc = stage_add(d, index, page);
+                rc = stage_add(d, index, step, page);
             } else {
                 free(page);
             }
-            if (rc != SIGIL_OK) return rc;
         }
+        if (rc != SIGIL_OK) return rc;
         off += n;
         buf += n;
         len -= n;
@@ -332,7 +449,8 @@ static int refcount_where(sigil_disk *d, uint64_t cluster, bool make, uint64_t *
         d->next_cluster += d->cluster_size;
         if (block + d->cluster_size > d->new_len) d->new_len = block + d->cluster_size;
         sigil_write_be64(raw, block);
-        rc = file_write(d, d->rt_off + ti * 8, raw, sizeof(raw));
+        rc = stage_cluster(d, block, STEP_COUNT_UP);
+        if (rc == SIGIL_OK) rc = file_write(d, STEP_COUNT_UP, d->rt_off + ti * 8, raw, sizeof(raw));
         if (rc == SIGIL_OK) rc = refcount_add(d, block >> d->cluster_bits, 1);
         if (rc != SIGIL_OK) return rc;
     } else if (!host_valid(d, block)) {
@@ -353,15 +471,17 @@ static int refcount_add(sigil_disk *d, uint64_t cluster, int delta) {
     /* A count the tables don't bear out: the image isn't consistent. */
     if (count < 0 || count > 0xFFFF || !where) return SIGIL_ERR_DAMAGED;
     sigil_write_be16(raw, (uint16_t)count);
-    return file_write(d, where, raw, sizeof(raw));
+    return file_write(d, delta > 0 ? STEP_COUNT_UP : STEP_COUNT_DOWN, where, raw, sizeof(raw));
 }
 
-/* A new cluster at the end of the file, zeroed and counted once. */
-static int allocate(sigil_disk *d, uint64_t *out) {
+/* A new cluster at the end of the file, zeroed and counted once, its pages
+ * staged at `step`, no later than the step that maps it. */
+static int allocate(sigil_disk *d, unsigned step, uint64_t *out) {
     uint64_t off = d->next_cluster;
     d->next_cluster += d->cluster_size;
     if (off + d->cluster_size > d->new_len) d->new_len = off + d->cluster_size;
-    int rc = refcount_add(d, off >> d->cluster_bits, 1);
+    int rc = stage_cluster(d, off, step);
+    if (rc == SIGIL_OK) rc = refcount_add(d, off >> d->cluster_bits, 1);
     *out = off;
     return rc;
 }
@@ -386,11 +506,11 @@ static int qcow2_write(sigil_disk *d, uint64_t index, size_t at, const uint8_t *
     int rc = SIGIL_OK;
     if (!(d->l1[i1] & QCOW2_OFFSET_MASK)) {
         uint64_t made = 0;
-        rc = allocate(d, &made);
+        rc = allocate(d, STEP_MAP(d->phase), &made);   /* an L2 table, which the L1 entry maps */
         if (rc != SIGIL_OK) return rc;
         d->l1[i1] = made | QCOW2_COPIED;
         sigil_write_be64(raw, d->l1[i1]);
-        rc = file_write(d, d->l1_off + i1 * 8, raw, sizeof(raw));
+        rc = file_write(d, STEP_MAP(d->phase), d->l1_off + i1 * 8, raw, sizeof(raw));
         if (rc != SIGIL_OK) return rc;
     } else if (!(d->l1[i1] & QCOW2_COPIED)) {
         return SIGIL_ERR_UNSUPPORTED_FORMAT;   /* an L2 table something else shares */
@@ -402,7 +522,7 @@ static int qcow2_write(sigil_disk *d, uint64_t index, size_t at, const uint8_t *
     uint64_t host = entry & QCOW2_OFFSET_MASK;
     bool own = !(entry & QCOW2_COMPRESSED) && host && (entry & QCOW2_COPIED);
     if (own && !host_valid(d, host)) return SIGIL_ERR_DAMAGED;
-    if (own && !(entry & QCOW2_ZERO)) return file_write(d, host + at, buf, n);
+    if (own && !(entry & QCOW2_ZERO)) return file_write(d, STEP_DATA(d->phase), host + at, buf, n);
 
     /* Anything else becomes a whole cluster: its bytes as they read, then ours. */
     uint8_t *whole = (uint8_t *)malloc((size_t)d->cluster_size);
@@ -414,14 +534,15 @@ static int qcow2_write(sigil_disk *d, uint64_t index, size_t at, const uint8_t *
             return SIGIL_OK;
         }
         memcpy(whole + at, buf, n);
-        if (!own) rc = allocate(d, &host);
+        if (!own) rc = allocate(d, STEP_DATA(d->phase), &host);
     }
-    if (rc == SIGIL_OK) rc = file_write(d, host, whole, (size_t)d->cluster_size);
+    if (rc == SIGIL_OK) rc = file_write(d, STEP_DATA(d->phase), host, whole, (size_t)d->cluster_size);
     free(whole);
     if (rc != SIGIL_OK) return rc;
     table[index % per_table] = host | QCOW2_COPIED;
     sigil_write_be64(raw, host | QCOW2_COPIED);
-    rc = file_write(d, (d->l1[i1] & QCOW2_OFFSET_MASK) + (index % per_table) * 8, raw, sizeof(raw));
+    rc = file_write(d, STEP_MAP(d->phase), (d->l1[i1] & QCOW2_OFFSET_MASK) + (index % per_table) * 8, raw,
+                    sizeof(raw));
     if (rc == SIGIL_OK && !own) rc = release(d, entry);
     return rc;
 }
@@ -455,7 +576,9 @@ int sigil_disk_open(const sigil_io *io, sigil_disk **out) {
 
 void sigil_disk_close(sigil_disk *d) {
     if (!d) return;
-    for (size_t i = 0; i < d->slot_count; i++) free(d->slots[i].data);
+    for (size_t i = 0; i < d->slot_count; i++) {
+        for (unsigned s = 0; s < STEPS; s++) free(d->slots[i].ver[s]);
+    }
     free(d->slots);
     for (uint32_t i = 0; d->l2 && i < d->l1_size; i++) free(d->l2[i]);
     free(d->l2);
@@ -486,7 +609,7 @@ int sigil_disk_read(sigil_disk *d, uint64_t off, void *buf, size_t len) {
 
 int sigil_disk_write(sigil_disk *d, uint64_t off, const void *buf, size_t len) {
     if (off > d->size || len > d->size - off) return SIGIL_ERR_DAMAGED;
-    if (!d->qcow2) return file_write(d, off, (const uint8_t *)buf, len);
+    if (!d->qcow2) return file_write(d, STEP_DATA(d->phase), off, (const uint8_t *)buf, len);
     const uint8_t *in = (const uint8_t *)buf;
     while (len) {
         size_t at = (size_t)(off & (d->cluster_size - 1));
@@ -504,6 +627,12 @@ bool sigil_disk_changed(const sigil_disk *d) {
     return d->staged > 0;
 }
 
+int sigil_disk_set_phase(sigil_disk *d, unsigned phase) {
+    if (phase < d->phase || phase >= SIGIL_DISK_PHASES) return SIGIL_ERR_INVALID_ARG;
+    d->phase = phase;
+    return SIGIL_OK;
+}
+
 int sigil_disk_file(sigil_disk *d, uint8_t **out, size_t *len) {
     *out = NULL;
     *len = 0;
@@ -519,9 +648,9 @@ int sigil_disk_file(sigil_disk *d, uint8_t **out, size_t *len) {
     }
     for (size_t i = 0; rc == SIGIL_OK && i < d->slot_count; i++) {
         const stage_page *p = &d->slots[i];
-        if (!p->data || p->index * STAGE_PAGE >= total) continue;
+        if (!p->used || p->index * STAGE_PAGE >= total) continue;
         size_t at = (size_t)(p->index * STAGE_PAGE);
-        memcpy(buf + at, p->data, total - at < STAGE_PAGE ? total - at : STAGE_PAGE);
+        memcpy(buf + at, page_last(p), total - at < STAGE_PAGE ? total - at : STAGE_PAGE);
     }
     if (rc != SIGIL_OK) {
         free(buf);
@@ -530,4 +659,89 @@ int sigil_disk_file(sigil_disk *d, uint8_t **out, size_t *len) {
     *out = buf;
     *len = total;
     return SIGIL_OK;
+}
+
+void sigil_disk_detach(sigil_disk *d) {
+    d->io = NULL;
+}
+
+#define RUN_MAX (1u << 20)
+
+static int compare_index(const void *a, const void *b) {
+    uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
+    return x < y ? -1 : x > y;
+}
+
+/* Bytes gathered into one run, sent when the next don't follow on or it is full. */
+typedef struct {
+    sigil_disk_run_fn each;
+    void             *ctx;
+    uint8_t          *buf;
+    uint64_t          off;
+    size_t            len;
+} run_out;
+
+static int run_send(run_out *r) {
+    if (!r->len) return SIGIL_OK;
+    int rc = r->each(r->ctx, r->off, r->buf, r->len);
+    r->len = 0;
+    return rc;
+}
+
+static int run_add(run_out *r, uint64_t off, const uint8_t *data, size_t len) {
+    if (r->len && (off != r->off + r->len || r->len + len > RUN_MAX)) {
+        int rc = run_send(r);
+        if (rc != SIGIL_OK) return rc;
+    }
+    if (!r->len) r->off = off;
+    memcpy(r->buf + r->len, data, len);
+    r->len += len;
+    return SIGIL_OK;
+}
+
+int sigil_disk_runs(sigil_disk *d, bool in_steps, sigil_disk_run_fn each, void *ctx) {
+    static const uint8_t zeros[STAGE_PAGE];
+    uint64_t *staged = (uint64_t *)malloc((d->staged ? d->staged : 1) * sizeof(*staged));
+    run_out out = { each, ctx, (uint8_t *)malloc(RUN_MAX), 0, 0 };
+    if (!staged || !out.buf) {
+        free(staged);
+        free(out.buf);
+        return SIGIL_ERR_OOM;
+    }
+    size_t n = 0;
+    for (size_t i = 0; i < d->slot_count; i++) {
+        if (d->slots[i].used) staged[n++] = d->slots[i].index;
+    }
+    qsort(staged, n, sizeof(*staged), compare_index);
+    /* The page holding the file's end, the first wholly past it, and the end of the file as it will be. */
+    uint64_t end_page = d->file_len / STAGE_PAGE, past = (d->file_len + STAGE_PAGE - 1) / STAGE_PAGE;
+    uint64_t pages = (d->new_len + STAGE_PAGE - 1) / STAGE_PAGE;
+    int rc = SIGIL_OK;
+    /* What the file gains past its end, which nothing in it refers to yet: as
+     * each page's first step leaves it, or as it ends up. */
+    for (uint64_t page = end_page; rc == SIGIL_OK && page < pages; page++) {
+        uint64_t from = page * STAGE_PAGE < d->file_len ? d->file_len : page * STAGE_PAGE;
+        uint64_t to = (page + 1) * STAGE_PAGE < d->new_len ? (page + 1) * STAGE_PAGE : d->new_len;
+        const stage_page *p = stage_find(d, page);
+        if (from >= to || (!in_steps && p && page < past)) continue;
+        const uint8_t *data = !p ? zeros : in_steps ? p->ver[page_first(p)] : page_last(p);
+        rc = run_add(&out, from, data + (from - page * STAGE_PAGE), (size_t)(to - from));
+    }
+    if (rc == SIGIL_OK) rc = run_send(&out);
+    /* Then the pages each step changes, a step's runs ended before the next
+     * step's begin; or, not in steps, each page inside the file as it ends up.
+     * A page wholly past the end went out above as its first step leaves it. */
+    for (unsigned step = 0; rc == SIGIL_OK && step < (in_steps ? STEPS : 1u); step++) {
+        for (size_t i = 0; rc == SIGIL_OK && i < n; i++) {
+            const stage_page *p = stage_find(d, staged[i]);
+            const uint8_t *data = in_steps ? p->ver[step] : page_last(p);
+            if (!data || (staged[i] >= past && (!in_steps || step == page_first(p)))) continue;
+            uint64_t off = staged[i] * STAGE_PAGE;
+            rc = run_add(&out, off, data, (size_t)(d->new_len - off < STAGE_PAGE ? d->new_len - off : STAGE_PAGE));
+        }
+        if (rc == SIGIL_OK) rc = run_send(&out);
+    }
+    free(staged);
+    free(out.buf);
+    return rc;
 }

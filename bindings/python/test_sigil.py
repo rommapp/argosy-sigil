@@ -1018,3 +1018,54 @@ def test_xbox_saves_go_into_the_drive_image_and_come_back(tmp_path):
     # Another game's saves aren't this one's, and the drive is left as it is.
     other = sigil.SigilResult.persisted(platform="xbox", title_id="EM-009", save_id="454D0009", features=0)
     assert sigil.collect(other, "xemu", "FlatOut (USA).iso", tmp_path, options=_XEMU_DRIVE).data is None
+
+
+@pytest.mark.skipif(not _XEMU_BLANK.exists() or os.name == "nt", reason="needs the Xbox drive sample and sparse files")
+def test_an_xbox_drive_too_large_to_hold_in_memory_is_written_in_parts(tmp_path):
+    """Asked for parts, the binding writes a drive image back as the parts that changed. A sparse
+    image over the 2 GiB sigil will hold in memory can only go back that way, and stays sparse."""
+    drive = tmp_path / "xbox_hdd.qcow2"
+    drive.write_bytes(_XEMU_BLANK.read_bytes())
+    size = 5 * 512 * 1024 * 1024
+    os.truncate(drive, size)
+
+    unit = _stored_zip(_HALO_SAVE)
+    with pytest.raises(sigil.SigilOOMError):
+        sigil.restore(unit, _HALO, "xemu", "Halo (USA).iso", tmp_path, options=_XEMU_DRIVE)
+    assert drive.stat().st_size == size
+    restored = sigil.restore(unit, _HALO, "xemu", "Halo (USA).iso", tmp_path, options=_XEMU_DRIVE, writes_parts=True)
+    back = sigil.collect(_HALO, "xemu", "Halo (USA).iso", tmp_path, options=_XEMU_DRIVE)
+    assert back.identity_hash == restored.identity_hash == _romm_zip_hash(_HALO_SAVE)
+    assert size < drive.stat().st_size < size + 4 * 1024 * 1024
+    assert drive.stat().st_blocks * 512 < 64 * 1024 * 1024
+
+
+@pytest.mark.skipif(not _XEMU_BLANK.exists() or os.name == "nt", reason="needs the Xbox drive sample")
+def test_an_xbox_drive_is_written_whole_unless_parts_are_asked_for(tmp_path):
+    # Whole, the drive is a new file renamed over the old one; in parts, the same file written in place.
+    whole, parts = tmp_path / "whole", tmp_path / "parts"
+    for root in (whole, parts):
+        root.mkdir()
+        (root / "xbox_hdd.qcow2").write_bytes(_XEMU_BLANK.read_bytes())
+    was = {root: (root / "xbox_hdd.qcow2").stat().st_ino for root in (whole, parts)}
+    unit = _stored_zip(_HALO_SAVE)
+    sigil.restore(unit, _HALO, "xemu", "Halo (USA).iso", whole, options=_XEMU_DRIVE)
+    sigil.restore(unit, _HALO, "xemu", "Halo (USA).iso", parts, options=_XEMU_DRIVE, writes_parts=True)
+    assert (whole / "xbox_hdd.qcow2").stat().st_ino != was[whole]
+    assert (parts / "xbox_hdd.qcow2").stat().st_ino == was[parts]
+    assert (whole / "xbox_hdd.qcow2").read_bytes() == (parts / "xbox_hdd.qcow2").read_bytes()
+
+
+@pytest.mark.skipif(not _XEMU_BLANK.exists(), reason="Xbox drive samples missing")
+def test_an_xbox_part_write_that_cant_be_stored_fails_the_restore(tmp_path, monkeypatch):
+    # Each part is on the disk before the next is written, which is what keeps their order.
+    (tmp_path / "xbox_hdd.qcow2").write_bytes(_XEMU_BLANK.read_bytes())
+
+    def no_space(_fd):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(sigil.os, "fsync", no_space)
+    with pytest.raises(sigil.SigilIOError):
+        sigil.restore(
+            _stored_zip(_HALO_SAVE), _HALO, "xemu", "Halo (USA).iso", tmp_path, options=_XEMU_DRIVE, writes_parts=True
+        )

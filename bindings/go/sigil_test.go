@@ -3,6 +3,7 @@
 package sigil
 
 import (
+	"archive/zip"
 	"bytes"
 	"crypto/md5"
 	"encoding/binary"
@@ -1302,5 +1303,130 @@ func TestTwoProfilesAndNonePickedIsAmbiguousListingThem(t *testing.T) {
 	}
 	if _, err := ListProfiles("pcsx_rearmed", root); !errors.Is(err, ErrUnsupportedFormat) {
 		t.Fatalf("ListProfiles without profiles = %v", err)
+	}
+}
+
+// xboxUnit is a game's save folders zipped as they sit on a drive's E:.
+func xboxUnit(t *testing.T, files map[string][]byte) []byte {
+	t.Helper()
+	var out bytes.Buffer
+	archive := zip.NewWriter(&out)
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		member, err := archive.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Store})
+		if err == nil {
+			_, err = member.Write(files[name])
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return out.Bytes()
+}
+
+var haloSave = map[string][]byte{
+	"UDATA/4d530004/TitleMeta.xbx":             []byte("TitleName=Halo\r\n"),
+	"UDATA/4d530004/0A1B2C3D4E5F/SaveMeta.xbx": []byte("Name=Checkpoint\r\n"),
+	"UDATA/4d530004/0A1B2C3D4E5F/blam.sav":     bytes.Repeat([]byte{1, 2, 3, 4}, 10000),
+}
+
+// xemu has no drive until its hdd_path setting names one.
+var xemuDrive = &SyncOptions{Options: map[string]string{"hdd_path": "/home/me/.local/share/xemu/xemu/xbox_hdd.qcow2"}}
+
+func TestAnXboxRestoreWithoutADriveImageNamesTheOneItNeeds(t *testing.T) {
+	halo := PersistedResult("xbox", "MS-004", "4D530004", 0)
+	root := t.TempDir()
+	_, err := Restore(xboxUnit(t, haloSave), halo, "xemu", "Halo (USA).iso", root, xemuDrive)
+	var problem *ProblemError
+	if !errors.Is(err, ErrNoTarget) || !errors.As(err, &problem) || problem.Problem != "xbox_hdd.qcow2" {
+		t.Fatalf("err = %v, want ErrNoTarget naming xbox_hdd.qcow2", err)
+	}
+	if _, err := Restore(xboxUnit(t, haloSave), halo, "xemu", "Halo (USA).iso", root, nil); !errors.Is(err, ErrInvalidArg) {
+		t.Fatalf("err = %v, want ErrInvalidArg for a request that names no drive", err)
+	}
+}
+
+// Asked for parts, the binding writes a drive image back as the parts that
+// changed. A sparse image over the 2 GiB sigil will hold in memory can only go
+// back that way.
+func TestAnXboxDriveTooLargeToHoldInMemoryIsWrittenInParts(t *testing.T) {
+	blank, err := os.ReadFile(filepath.Join("..", "..", "tests", "fixtures", "saves", "xbox", "files", "xemu-blank", "xbox_hdd.qcow2"))
+	if err != nil {
+		t.Skip("Xbox drive samples missing")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("needs sparse files")
+	}
+	halo := PersistedResult("xbox", "MS-004", "4D530004", 0)
+	root := t.TempDir()
+	drive := filepath.Join(root, "xbox_hdd.qcow2")
+	const size = 5 * 512 * 1024 * 1024
+	if err := os.WriteFile(drive, blank, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(drive, size); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Restore(xboxUnit(t, haloSave), halo, "xemu", "Halo (USA).iso", root, xemuDrive); !errors.Is(err, ErrOOM) {
+		t.Fatalf("whole: err = %v, want ErrOOM", err)
+	}
+	parts := &SyncOptions{Options: xemuDrive.Options, WritesParts: true}
+	restored, err := Restore(xboxUnit(t, haloSave), halo, "xemu", "Halo (USA).iso", root, parts)
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	back, err := Collect(halo, "xemu", "Halo (USA).iso", root, xemuDrive)
+	if err != nil || back.IdentityHash != restored.IdentityHash || back.Data == nil {
+		t.Fatalf("collect = %+v, %v", back, err)
+	}
+	info, err := os.Stat(drive)
+	if err != nil || info.Size() <= size || info.Size() > size+4*1024*1024 {
+		t.Fatalf("the drive is %d bytes, %v", info.Size(), err)
+	}
+}
+
+// Whole, the drive is a new file renamed over the old one; in parts, the same
+// file written in place. Both leave the same bytes.
+func TestAnXboxDriveIsWrittenWholeUnlessPartsAreAskedFor(t *testing.T) {
+	blank, err := os.ReadFile(filepath.Join("..", "..", "tests", "fixtures", "saves", "xbox", "files", "xemu-blank", "xbox_hdd.qcow2"))
+	if err != nil {
+		t.Skip("Xbox drive samples missing")
+	}
+	halo := PersistedResult("xbox", "MS-004", "4D530004", 0)
+	var drives [2][]byte
+	for i, writesParts := range []bool{false, true} {
+		root := t.TempDir()
+		drive := filepath.Join(root, "xbox_hdd.qcow2")
+		if err := os.WriteFile(drive, blank, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		before, err := os.Stat(drive)
+		if err != nil {
+			t.Fatal(err)
+		}
+		opts := &SyncOptions{Options: xemuDrive.Options, WritesParts: writesParts}
+		if _, err := Restore(xboxUnit(t, haloSave), halo, "xemu", "Halo (USA).iso", root, opts); err != nil {
+			t.Fatalf("WritesParts %v: %v", writesParts, err)
+		}
+		after, err := os.Stat(drive)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if os.SameFile(before, after) != writesParts {
+			t.Fatalf("WritesParts %v: the drive was written in place: %v", writesParts, os.SameFile(before, after))
+		}
+		if drives[i], err = os.ReadFile(drive); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !bytes.Equal(drives[0], drives[1]) {
+		t.Fatal("whole and in parts left different drives")
 	}
 }

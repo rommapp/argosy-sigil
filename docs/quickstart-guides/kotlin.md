@@ -282,7 +282,9 @@ Sigil.collect(
     fileAccess: SigilFileAccess = PosixFileAccess,   // How sigil reads, writes and removes the files.
 ): SigilSyncResult
 
-Sigil.restore(unit: ByteArray, /* same inputs */, overwriteLocal: Boolean = false): SigilSyncResult
+Sigil.restore(unit: ByteArray, /* same inputs */, overwriteLocal: Boolean = false,
+              writesParts: Boolean = false): SigilSyncResult   // writesParts: an Xbox drive image's changed
+                                                               //   parts alone, through a SigilPartFileAccess.
 
 class SigilCompanion(
     gameIds: List<String>,      // The companion's ids, as for gameIds.
@@ -434,8 +436,20 @@ interface SigilFileAccess {
                                                                   //   emptied first.
 }
 
+interface SigilPartFileAccess : SigilFileAccess {
+    fun writeAt(root: String, path: String, offset: Long,         // Writes data at a byte offset of a file
+                data: ByteArray): Boolean                         //   that is there, growing it when the
+                                                                  //   range ends past its end; returns once
+                                                                  //   the bytes are stored.
+}
+
 data class SigilFileEntry(name: String, isDirectory: Boolean)
 ```
+
+A restore writes whole files. `restore(..., writesParts = true)` with an
+access that implements `SigilPartFileAccess`, as `PosixFileAccess` does,
+gets an Xbox drive image's changed parts alone, which is the only way an
+image over 2 GiB restores ([sync](../sync.md#writing-and-removing)).
 
 Each call gets the save root as you passed it and a path relative to it:
 `/`-separated, never starting with `/`, never holding a `..` segment, and

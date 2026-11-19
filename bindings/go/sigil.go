@@ -5,7 +5,7 @@
 package sigil
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/../../include
+#cgo CFLAGS: -I${SRCDIR}/../../include -D_FILE_OFFSET_BITS=64
 #cgo LDFLAGS: -L${SRCDIR}/../../build -lsigil -lsigil_chdr -lsigil_zstd -lsigil_zlib -lsigil_lzma -lsigil_aes
 
 #include <errno.h>
@@ -124,6 +124,30 @@ static int sigil_go_write_member(void *ctx, const char *relative_path, const uin
     return sigil_go_replace_file(path, data, len);
 }
 
+// Writes part of a file that is there, stored before it returns: an Xbox drive
+// image gets only what changed.
+static int sigil_go_write_member_at(void *ctx, const char *relative_path, uint64_t offset, const uint8_t *data,
+                                    size_t len) {
+    char path[SIGIL_SAVE_PATH_MAX * 2];
+    int n = snprintf(path, sizeof(path), "%s/%s", (const char *)ctx, relative_path);
+    if (n <= 0 || (size_t)n >= sizeof(path)) return -1;
+    FILE *f = fopen(path, "r+b");
+    if (!f) return -1;
+#ifdef _WIN32
+    int ok = _fseeki64(f, (long long)offset, SEEK_SET) == 0;
+#else
+    int ok = fseeko(f, (off_t)offset, SEEK_SET) == 0;
+#endif
+    ok = ok && fwrite(data, 1, len, f) == len && fflush(f) == 0;
+#ifdef _WIN32
+    ok = ok && _commit(_fileno(f)) == 0;
+#else
+    ok = ok && fsync(fileno(f)) == 0;
+#endif
+    ok = fclose(f) == 0 && ok;
+    return ok ? 0 : -1;
+}
+
 static int sigil_go_remove_member(void *ctx, const char *relative_path) {
     char path[SIGIL_SAVE_PATH_MAX * 2];
     int n = snprintf(path, sizeof(path), "%s/%s", (const char *)ctx, relative_path);
@@ -134,10 +158,11 @@ static int sigil_go_remove_member(void *ctx, const char *relative_path) {
     return remove(path) == 0 ? 0 : -1;
 }
 
-static void sigil_go_set_sync_io(sigil_sync_request *req, char *root) {
+static void sigil_go_set_sync_io(sigil_sync_request *req, char *root, int writes_parts) {
     req->save.open = sigil_go_open_member;
     req->save.open_ctx = root;
     req->write = sigil_go_write_member;
+    req->write_at = writes_parts ? sigil_go_write_member_at : NULL;
     req->remove = sigil_go_remove_member;
     req->write_ctx = root;
 }
@@ -1319,6 +1344,11 @@ type SyncOptions struct {
 	Companions     []Companion // Games whose saves this game reads, in the order they go on.
 	Repair         bool        // Rebuild what ErrDamaged named, where sigil can.
 	Profile        string      // Layouts with profiles: the profile whose saves to take, by Profile.ID.
+	// Restore: write only the parts that change of a file every game's saves
+	// sit in (an Xbox drive image), in place, instead of the whole file
+	// through a temporary file renamed over it. docs/sync.md, "Writing and
+	// removing", says what a restore stopped part way leaves.
+	WritesParts bool
 }
 
 // Companion is a game whose saves this game reads, as a sequel reads its
@@ -1419,7 +1449,7 @@ func runSync(unit []byte, game *Result, core, contentPath, saveRoot string, opts
 	var a cAllocs
 	defer a.free()
 	creq := (*C.sigil_sync_request)(a.alloc(C.sizeof_sigil_sync_request))
-	creq.struct_version = C.SIGIL_SYNC_REQUEST_V1
+	creq.struct_version = C.SIGIL_SYNC_REQUEST_V2
 	fillSaveRequest(&a, &creq.save, game, core, contentPath, listing, opts.Options, root, profile)
 	creq.game_ids = a.strings(opts.GameIDs)
 	creq.game_id_count = C.size_t(len(opts.GameIDs))
@@ -1457,7 +1487,11 @@ func runSync(unit []byte, game *Result, core, contentPath, saveRoot string, opts
 		creq.state = (*C.uint8_t)(state)
 		creq.state_len = C.size_t(len(opts.State))
 	}
-	C.sigil_go_set_sync_io(creq, a.str(root))
+	writesParts := C.int(0)
+	if opts.WritesParts {
+		writesParts = 1
+	}
+	C.sigil_go_set_sync_io(creq, a.str(root), writesParts)
 
 	var cres *C.sigil_sync_result
 	var rc C.int

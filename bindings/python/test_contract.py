@@ -124,6 +124,8 @@ _SYNC_FIELDS = {
     "problem": ("problem", "problem", "Problem:"),
     "blocks short": ("blocksShort", "blocks_short", "BlocksShort"),
     "repair": ("repair", "repair", "Repair"),
+    "write part of a file": ("fun writeAt(", "def write_member_at(", "sigil_go_write_member_at("),
+    "ask for part writes": ("writesParts: Boolean\n", "writes_parts: bool = False", "WritesParts bool"),
 }
 
 GO = ROOT / "bindings" / "go" / "sigil.go"
