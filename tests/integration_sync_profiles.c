@@ -1672,11 +1672,26 @@ static void x360_root(mem_root *root, const char *id) {
     put_sample(root, &g_x360, "xbox360", id, NULL, "content/");
 }
 
+/* True when the samples a check needs are on disk (b may be NULL); else the
+ * check says which is missing and is skipped, so whoever has some of the
+ * samples runs the checks those cover. */
+static bool x360_have(const char *check, const char *a, const char *b) {
+    const char *ids[] = { a, b };
+    for (size_t i = 0; i < 2; i++) {
+        if (ids[i] && !corpus_present(&g_x360, "xbox360", ids[i])) {
+            fprintf(stderr, "SKIP %s: sample %s missing\n", check, ids[i]);
+            return false;
+        }
+    }
+    return true;
+}
+
 /* Forza Horizon 2 as the maintainer's console saved it in Edge: collect
  * takes the save folder and both headers, Edge's 328-byte form, under their
  * unit names and never the XUID; restored into a Canary whose one profile is
  * another, every file lands under that profile's id byte for byte. */
 static void check_xenia_edge_to_canary(sigil_sync_result **edge_unit) {
+    if (!x360_have("xenia edge to canary", X360_EDGE, NULL)) return;
     mem_root edge = {0};
     x360_root(&edge, X360_EDGE);
     game g;
@@ -1705,6 +1720,7 @@ static void check_xenia_edge_to_canary(sigil_sync_result **edge_unit) {
  * Canary's byte for byte, the thumbnail Canary added included, and Edge then
  * collects what Canary sent. */
 static void check_xenia_canary_to_edge(void) {
+    if (!x360_have("xenia canary to edge", X360_CANARY, X360_EDGE)) return;
     mem_root canary = {0};
     x360_root(&canary, X360_CANARY);
     game c;
@@ -1782,6 +1798,7 @@ static void check_xenia_console_upload(const sigil_sync_result *edge_unit) {
 /* Charlie Murder's save, a folder named by 33 zeros, moves from Edge to a
  * Canary with another profile unchanged. */
 static void check_xenia_charlie_murder(void) {
+    if (!x360_have("charlie murder", X360_CM, NULL)) return;
     mem_root edge = {0};
     x360_root(&edge, X360_CM);
     game g;
@@ -1809,6 +1826,7 @@ static void check_xenia_new_saves(void) {
     const char *ids[] = { X360_G2_EDGE, X360_G2_CAN };
     const char *layouts[] = { "xenia_edge", "xenia_canary" };
     for (size_t i = 0; i < 2; i++) {
+        if (!x360_have(ids[i], ids[i], NULL)) continue;
         mem_root source = {0};
         x360_root(&source, ids[i]);
         game g;
@@ -1836,6 +1854,7 @@ static void check_xenia(void) {
     sigil_sync_result *edge_unit = NULL;
     check_xenia_edge_to_canary(&edge_unit);
     if (edge_unit) check_xenia_console_upload(edge_unit);
+    else fprintf(stderr, "SKIP xenia console upload: no unit from %s\n", X360_EDGE);
     check_xenia_canary_to_edge();
     check_xenia_charlie_murder();
     check_xenia_new_saves();
@@ -1885,8 +1904,8 @@ int main(void) {
         return TEST_SKIP;
     }
     bool odin = corpus_present(&g_switch, "switch", "eden-profile") && corpus_present(&g_wiiu, "wiiu", "cemu-account");
-    bool xenia = corpus_present(&g_x360, "xbox360", X360_EDGE) && corpus_present(&g_x360, "xbox360", X360_CANARY) &&
-                 corpus_present(&g_x360, "xbox360", X360_CM) && corpus_present(&g_x360, "xbox360", X360_G2_EDGE) &&
+    bool xenia = corpus_present(&g_x360, "xbox360", X360_EDGE) || corpus_present(&g_x360, "xbox360", X360_CANARY) ||
+                 corpus_present(&g_x360, "xbox360", X360_CM) || corpus_present(&g_x360, "xbox360", X360_G2_EDGE) ||
                  corpus_present(&g_x360, "xbox360", X360_G2_CAN);
     if (!odin && !xenia) {
         fprintf(stderr, "SKIP: profile samples missing\n");
