@@ -242,10 +242,10 @@ static int publish_saves(profile_sync *s, incoming_unit *u) {
     return sigil_profile_publish(&s->root, has_account, has_device, &u->published);
 }
 
-/* Member `i` as its folder keeps files: a content header in the folder's
- * form, anything else as it came. Sets what identity counts for it and the
- * MD5 of what restore writes. */
-static int in_folder_form(incoming_unit *u, size_t i, const char *entry) {
+/* Member `i` as its folder keeps files: a content header as the folder's
+ * form says, under `profile` in an account folder; anything else as it came.
+ * Sets what identity counts for it and the MD5 of what restore writes. */
+static int in_folder_form(incoming_unit *u, size_t i, const char *entry, const char *profile) {
     sigil_zip_member *m = &u->members[i];
     const sigil_layout_area *folder = u->folders[i];
     if (folder && folder->header) {
@@ -253,7 +253,8 @@ static int in_folder_form(incoming_unit *u, size_t i, const char *entry) {
         uint8_t *data = NULL;
         size_t len = 0;
         header_package(entry, package);
-        int rc = sigil_x360_header_to(folder->header, m->data, m->len, package, &data, &len);
+        int rc = sigil_x360_header_to(folder->header, m->data, m->len, package,
+                                      folder->area == SIGIL_SAVE_AREA_ACCOUNT ? profile : NULL, &data, &len);
         if (rc != SIGIL_OK) return rc;
         free(m->data);
         m->data = data;
@@ -314,7 +315,7 @@ static int read_unit(const sigil_sync_ctx *x, profile_sync *s, const uint8_t *un
         if (u->paths[i][0] && !sigil_sync_path_inside(u->paths[i])) return SIGIL_ERR_IO;
         if (u->paths[i][0] && placed_twice(u, i)) return SIGIL_ERR_UNSUPPORTED_FORMAT;
         if (!skip) note_maker(f.folder, f.area, u->members[i].data, u->members[i].len, u->maker, &mixed);
-        rc = in_folder_form(u, i, f.entry);
+        rc = in_folder_form(u, i, f.entry, s->root.profile);
         if (rc != SIGIL_OK) return rc;
     }
     if (mixed) u->maker[0] = '\0';

@@ -11,11 +11,13 @@
  *   writes it (content_manager.cc ExtractContentHeader at 27d11a2;
  *   xcontent/xcontent.h XContentContainerHeader).
  *
- * The unit carries each header as its emulator wrote it. Restore writes the
- * form the layout's folder names, built the way the emulator builds it from
- * the other: Canary's FillHeader for the container, Edge's
- * ContentDataFromHeader for the aggregate. Identity covers what both forms
- * carry, so a header moved between them is the same save. */
+ * The unit carries each header as its emulator wrote it. Restore writes what
+ * the layout's folder names (sigil_header_form): for Canary the container,
+ * built from an aggregate as Canary's FillHeader builds it; for XenDroid the
+ * aggregate, built from a container as Edge's ContentDataFromHeader reads one;
+ * for Edge, which reads both and writes a header only for a save it creates,
+ * the header as the unit holds it. Identity covers what both forms carry, so a
+ * header moved between them is the same save. */
 #include "sync_internal.h"
 #include <inttypes.h>
 
@@ -47,12 +49,17 @@ static bool magic_valid(uint32_t magic) {
     return magic == 0x434F4E20u || magic == 0x4C495645u || magic == 0x50495253u;  /* CON , LIVE, PIRS */
 }
 
-/* By content, as Canary's ReadContentHeaderFile tells them apart
- * (xcontent/xcontent_package_directory.cc at 27d11a2): shorter than the
- * container's metadata, at least an aggregate's size, is the aggregate; the
- * metadata's size or the padded size is the container. Edge's reader also
- * wants the container's magic (content_manager.cc ReadContentHeaderFile at
- * 4ad875a). Anything else neither emulator reads. */
+/* By content, as both emulators read it. Canary (xcontent/
+ * xcontent_package_directory.cc ReadContentHeaderFile at 27d11a2) reads one
+ * shorter than the container's metadata, of at least an aggregate's size, as
+ * the aggregate; one of exactly the metadata's or the padded size as the
+ * container, without checking the magic, and lists the save only when the
+ * magic is valid (IsValidPackage); any other size not at all. Edge
+ * (content_manager.cc ReadContentHeaderFile at 4ad875a) reads one of at least
+ * the metadata's size whose magic is valid as the container, and any other of
+ * at least an aggregate's size by its first 0x148 bytes as the aggregate.
+ * Anything else the two read differently, or neither reads: SIGIL_HEADER_NONE,
+ * which restore copies as it is. */
 int sigil_x360_header_form(const uint8_t *h, size_t len) {
     if (!h || len < AGG_SIZE) return SIGIL_HEADER_NONE;
     if (len < CON_METADATA_END) return SIGIL_HEADER_XCONTENT_AGGREGATE;
@@ -163,19 +170,44 @@ static void build_container(const header_fields *f, uint8_t *out) {
     memcpy(out + CON_FILE, f->file, file);
 }
 
-int sigil_x360_header_to(int form, const uint8_t *h, size_t len, const char *package, uint8_t **out, size_t *out_len) {
+/* Copies `h` into a new buffer. */
+static int copied(const uint8_t *h, size_t len, uint8_t **out, size_t *out_len) {
+    *out = (uint8_t *)malloc(len ? len : 1);
+    if (!*out) return SIGIL_ERR_OOM;
+    memcpy(*out, h, len);
+    *out_len = len;
+    return SIGIL_OK;
+}
+
+int sigil_x360_header_to(int form, const uint8_t *h, size_t len, const char *package, const char *profile,
+                         uint8_t **out, size_t *out_len) {
     *out = NULL;
     *out_len = 0;
     int from = sigil_x360_header_form(h, len);
-    if (from == SIGIL_HEADER_NONE) return SIGIL_ERR_UNSUPPORTED_FORMAT;
-    size_t size = from == form ? len : form == SIGIL_HEADER_XCONTENT_CONTAINER ? CON_FILE_SIZE : AGG_SIZE;
+    if (form == SIGIL_HEADER_XCONTENT_EITHER || from == SIGIL_HEADER_NONE ||
+        (from == form && form == SIGIL_HEADER_XCONTENT_AGGREGATE)) {
+        return copied(h, len, out, out_len);
+    }
+    if (from == form) {
+        int rc = copied(h, len, out, out_len);
+        /* Canary hands a container's profile_id to the game as the save's XUID
+         * (xcontent/xcontent_package.cc GetContentMetadata; the aggregate
+         * enumerator, xam_content_aggregate.cc), and opens content by that
+         * XUID's folder when it isn't 0 (content_manager.cc ResolvePackagePath),
+         * all at 27d11a2. For a save it makes under a profile it writes that
+         * profile's (InitializePackageHeader), so under another profile the
+         * header names that one. */
+        uint64_t xuid = 0;
+        if (rc == SIGIL_OK && profile && sigil_read_be64(h + CON_PROFILE) &&
+            sscanf(profile, "%16" SCNx64, &xuid) == 1 && strlen(profile) == 16) {
+            sigil_write_be64(*out + CON_PROFILE, xuid);
+        }
+        return rc;
+    }
+    size_t size = form == SIGIL_HEADER_XCONTENT_CONTAINER ? CON_FILE_SIZE : AGG_SIZE;
     *out = (uint8_t *)malloc(size);
     if (!*out) return SIGIL_ERR_OOM;
     *out_len = size;
-    if (from == form) {
-        memcpy(*out, h, len);
-        return SIGIL_OK;
-    }
     header_fields f;
     read_fields(h, len, package, &f);
     if (form == SIGIL_HEADER_XCONTENT_CONTAINER) build_container(&f, *out);

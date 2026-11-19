@@ -691,8 +691,7 @@ SIGIL_API int  sigil_collect(const sigil_sync_request *req, sigil_sync_result **
  *                          When the client doesn't know which profile the user plays as, it asks them
  *                          (`profiles`, or sigil_save_profiles) and passes `profile`.
  *                          Collect refuses the same way.
- *   SIGIL_ERR_UNSUPPORTED_FORMAT  on a layout with profiles, two unit members go to one file, or an
- *                          Xbox 360 save header is in neither form Xenia reads.
+ *   SIGIL_ERR_UNSUPPORTED_FORMAT  on a layout with profiles, two unit members go to one file.
  *   SIGIL_ERR_IO           a unit member's path would leave the save root, or a file the listing
  *                          holds won't open through save.open. Collect refuses the same way, so a
  *                          file it can't read never counts as no saves.

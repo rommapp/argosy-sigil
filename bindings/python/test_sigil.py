@@ -977,6 +977,12 @@ def test_an_xbox_360_header_names_the_profile_its_save_was_made_under(tmp_path):
     _xenia(edge, _CANARY_XUID, None)
     written = sigil.restore(unit.data, _FH2, "xenia_edge", "Forza Horizon 2.iso", edge)
     assert written.maker_profile == _CABINET_XUID
-    restored = (edge / "content" / _CANARY_XUID / header).read_bytes()
+    assert (edge / "content" / _CANARY_XUID / header).read_bytes() == _canary_header(_CABINET_XUID)
+    assert sigil.collect(_FH2, "xenia_edge", "Forza Horizon 2.iso", edge).maker_profile == _CABINET_XUID
+
+    xendroid = tmp_path / "xendroid"
+    _xenia(xendroid, _CANARY_XUID, None)
+    sigil.restore(unit.data, _FH2, "xendroid", "Forza Horizon 2.iso", xendroid)
+    restored = (xendroid / "content" / _CANARY_XUID / header).read_bytes()
     assert len(restored) == 0x148 and restored[0x138:0x140] == bytes(8)
-    assert sigil.collect(_FH2, "xenia_edge", "Forza Horizon 2.iso", edge).maker_profile == ""
+    assert sigil.collect(_FH2, "xendroid", "Forza Horizon 2.iso", xendroid).maker_profile == ""

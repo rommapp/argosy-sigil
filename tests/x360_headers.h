@@ -128,6 +128,21 @@ static uint8_t *x360_canary_header(const char *name, const char *file, uint32_t 
     return out;
 }
 
+/* `got` is container `from` as Canary keeps it under the profile `xuid`
+ * names: the same bytes, its profile_id that XUID when it names one
+ * (InitializePackageHeader writes the creating profile's). */
+static bool x360_renamed(const uint8_t *got, size_t got_len, const uint8_t *from, size_t from_len, uint64_t xuid) {
+    if (got_len != from_len || from_len < 0x379u) return false;
+    bool named = false;
+    for (size_t i = 0x371; i < 0x379; i++) named = named || from[i];
+    for (size_t i = 0; i < from_len; i++) {
+        uint8_t want = from[i];
+        if (named && i >= 0x371 && i < 0x379) want = (uint8_t)(xuid >> (8 * (0x378 - i)));
+        if (got[i] != want) return false;
+    }
+    return true;
+}
+
 /* `got` is what the emulator of `canary` (else Edge) writes for the save
  * whose header in the other form is `from`. */
 static bool x360_converted(const uint8_t *got, size_t got_len, const uint8_t *from, size_t from_len,

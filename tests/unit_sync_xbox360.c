@@ -223,11 +223,11 @@ static void check_restore_other_profile(const sigil_sync_result *unit, mem_root 
 }
 
 /* Canary's progress, under a header Canary made itself as its profile, goes
- * back to Edge: Edge's save becomes Canary's and its header what Edge's
- * ContentDataFromHeader makes of Canary's, under Edge's profile. The header
- * names its maker, which collect and restore report; Edge's form keeps none.
- * Edge then collects the same identity, and its sync state says nothing
- * changed there since. */
+ * back to Edge: Edge's save becomes Canary's, and its header Canary's as it
+ * is, since Edge reads the container and writes a header only for a save it
+ * creates. The header names its maker, which collect and restore report and
+ * Edge keeps. Edge then collects the same identity, and its sync state says
+ * nothing changed there since. */
 static void check_back_to_edge(mem_root *canary) {
     const char *canary_header = "content/" CANARY "/" TITLE "/Headers/00000001/ForzaProfile.header";
     put_text(canary, "content/" CANARY "/" TITLE "/00000001/ForzaProfile/PlayerDatabase", "progress made in canary");
@@ -251,9 +251,8 @@ static void check_back_to_edge(mem_root *canary) {
     sigil_sync_result *w = NULL;
     expect_rc("canary to edge", restore(&e, unit ? unit->data : NULL, unit ? unit->len : 0, &w), SIGIL_OK);
     if (!w || strcmp(w->maker_profile, CANARY) != 0) fail("canary to edge", "restore reports the unit's maker");
-    if (!holds(&edge, SAVE, "progress made in canary") ||
-        !converted(&edge, HEADER, canary, canary_header, "ForzaProfile", false)) {
-        fail("canary to edge", "Edge's save isn't Canary's, or its header isn't in Edge's form");
+    if (!holds(&edge, SAVE, "progress made in canary") || !same_file(&edge, HEADER, canary, canary_header)) {
+        fail("canary to edge", "Edge's save or header isn't Canary's as it was");
     }
     if (!holds(&edge, "content/" CABINET "/" OTHER "/00000001/Other/save.dat", "another game") ||
         !holds(&edge, "content/" CABINET DASHBOARD CABINET "/" TITLE ".gpd", "achievements")) {
@@ -269,7 +268,7 @@ static void check_back_to_edge(mem_root *canary) {
     if (!after || !unit || strcmp(after->identity_hash, unit->identity_hash) != 0 || after->changed) {
         fail("canary to edge", "Edge doesn't collect what Canary sent, unchanged");
     }
-    if (!after || after->maker_profile[0]) fail("canary to edge", "Edge's form keeps no maker");
+    if (!after || strcmp(after->maker_profile, CANARY) != 0) fail("canary to edge", "Edge keeps the maker");
     sigil_sync_result_free(after);
     sigil_sync_result_free(w);
     sigil_sync_result_free(before);
@@ -448,12 +447,12 @@ static void check_foreign_units(void) {
     root_free(&root);
 }
 
-/* A Canary-made header restored to another Canary keeps every byte, the
- * maker's XUID and what only the container holds included; restored to
- * XenDroid, which reads Edge's form alone, it is in Edge's form. */
+/* A Canary-made header, restored to Canary under its maker, keeps every byte;
+ * under another profile it names that one, as Canary writes for a save made
+ * there; to Edge it stays as it is; to XenDroid, which reads Edge's form
+ * alone, it is in Edge's form. */
 static void check_header_forms(void) {
     const char *from = "content/" CABINET "/" TITLE "/Headers/00000001/ForzaProfile.header";
-    const char *to = "content/" CANARY "/" TITLE "/Headers/00000001/ForzaProfile.header";
     mem_root source = {0};
     put_profile(&source, CABINET, true);
     put_text(&source, SAVE, "progress");
@@ -462,16 +461,25 @@ static void check_header_forms(void) {
     make_game(&g, &source, "xenia_canary");
     sigil_sync_result *unit = NULL;
     expect_rc("header forms collect", collect(&g, &unit), SIGIL_OK);
-    const char *layouts[] = { "xenia_canary", "xendroid" };
-    for (size_t k = 0; k < 2 && unit; k++) {
+    struct { const char *layout, *xuid; } to[] = {
+        { "xenia_canary", CABINET }, { "xenia_canary", CANARY }, { "xenia_edge", CANARY }, { "xendroid", CANARY },
+    };
+    for (size_t k = 0; k < 4 && unit; k++) {
+        char at[SIGIL_SAVE_PATH_MAX];
+        snprintf(at, sizeof(at), "content/%s/" TITLE "/Headers/00000001/ForzaProfile.header", to[k].xuid);
         mem_root target = {0};
-        put_profile(&target, CANARY, false);
+        put_profile(&target, to[k].xuid, false);
         game t;
-        make_game(&t, &target, layouts[k]);
+        make_game(&t, &target, to[k].layout);
         sigil_sync_result *w = NULL;
-        expect_rc(layouts[k], restore(&t, unit->data, unit->len, &w), SIGIL_OK);
-        bool ok = k == 0 ? same_file(&target, to, &source, from) : converted(&target, to, &source, from, "ForzaProfile", false);
-        if (!ok) fail(layouts[k], k == 0 ? "Canary's header changed" : "XenDroid's header isn't in Edge's form");
+        expect_rc(to[k].layout, restore(&t, unit->data, unit->len, &w), SIGIL_OK);
+        mem_file *got = root_find(&target, at), *src = root_find(&source, from);
+        bool ok = got && src;
+        if (ok && k < 2) ok = x360_renamed(got->data, got->len, src->data, src->len, k ? 0xE03000004B4F4E41ull : 0xE030000043414231ull);
+        else if (ok && k == 2) ok = got->len == src->len && memcmp(got->data, src->data, src->len) == 0;
+        else if (ok) ok = converted(&target, at, &source, from, "ForzaProfile", false);
+        if (!ok) fail(to[k].layout, "header not as that Xenia keeps it under that profile");
+        if (!w || strcmp(w->maker_profile, CABINET) != 0) fail(to[k].layout, "restore reports the unit's maker");
         sigil_sync_result_free(w);
         root_free(&target);
     }
@@ -479,8 +487,39 @@ static void check_header_forms(void) {
     root_free(&source);
 }
 
-/* A unit header in neither form is one no Xenia reads: restore builds no
- * form from it and refuses before writing. */
+/* Restored to Canary under another profile, a container that names no XUID,
+ * as FillHeader leaves one, stays as it is, and so does a device header,
+ * whatever XUID it names: only an account save's header names its profile. */
+static void check_rename_scope(void) {
+    const char *account = "content/" CABINET "/" TITLE "/Headers/00000001/ForzaProfile.header";
+    mem_root source = {0};
+    put_profile(&source, CABINET, true);
+    put_text(&source, SAVE, "progress");
+    put_text(&source, "content/" ZERO_XUID "/" TITLE "/00000001/marketplace/data", "shared");
+    put_canary_header(&source, account, "MMagTech", "ForzaProfile", 0);
+    put_canary_header(&source, DEVICE_HDR, "marketplace", "marketplace", 0xE030000043414231ull);
+    game g;
+    make_game(&g, &source, "xenia_canary");
+    sigil_sync_result *unit = NULL, *w = NULL;
+    expect_rc("rename scope collect", collect(&g, &unit), SIGIL_OK);
+    mem_root target = {0};
+    put_profile(&target, CANARY, false);
+    game t;
+    make_game(&t, &target, "xenia_canary");
+    expect_rc("rename scope restore", unit ? restore(&t, unit->data, unit->len, &w) : SIGIL_ERR_INVALID_ARG, SIGIL_OK);
+    if (!same_file(&target, "content/" CANARY "/" TITLE "/Headers/00000001/ForzaProfile.header", &source, account)) {
+        fail("rename scope", "a container naming no XUID changed");
+    }
+    if (!same_file(&target, DEVICE_HDR, &source, DEVICE_HDR)) fail("rename scope", "a device header changed");
+    sigil_sync_result_free(w);
+    sigil_sync_result_free(unit);
+    root_free(&target);
+    root_free(&source);
+}
+
+/* A header in neither form travels as it is: collect carries it, restore
+ * writes it unchanged for every Xenia, and both count it by its bytes, so
+ * they agree on the save. */
 static void check_unreadable_header(void) {
     const char *names[] = { TITLE "/00000001/Save/save.dat", TITLE "/Headers/00000001/Save.header" };
     uint8_t short_header[100];
@@ -488,16 +527,21 @@ static void check_unreadable_header(void) {
     uint8_t *data[] = { (uint8_t *)"x", short_header };
     size_t lens[] = { 1, sizeof(short_header) }, len = 0;
     uint8_t *zip = legacy_zip(names, data, lens, 2, &len);
-    const char *layouts[] = { "xenia_canary", "xenia_edge" };
-    for (size_t k = 0; k < 2; k++) {
+    const char *layouts[] = { "xenia_canary", "xenia_edge", "xendroid" };
+    for (size_t k = 0; k < 3; k++) {
         mem_root root = {0};
         put_profile(&root, CABINET, false);
         game g;
         make_game(&g, &root, layouts[k]);
-        int writes = root.writes;
-        sigil_sync_result *w = NULL;
-        expect_rc("unreadable header", restore(&g, zip, len, &w), SIGIL_ERR_UNSUPPORTED_FORMAT);
-        if (root.writes != writes) fail("unreadable header", "wrote before refusing");
+        sigil_sync_result *w = NULL, *r = NULL;
+        expect_rc("stray header restore", restore(&g, zip, len, &w), SIGIL_OK);
+        mem_file *h = root_find(&root, "content/" CABINET "/" TITLE "/Headers/00000001/Save.header");
+        if (!h || h->len != sizeof(short_header) || memcmp(h->data, short_header, h->len) != 0) {
+            fail("stray header restore", layouts[k]);
+        }
+        expect_rc("stray header collect", collect(&g, &r), SIGIL_OK);
+        if (!w || !r || strcmp(w->identity_hash, r->identity_hash) != 0) fail("stray header", "collect and restore disagree");
+        sigil_sync_result_free(r);
         sigil_sync_result_free(w);
         root_free(&root);
     }
@@ -601,6 +645,7 @@ int main(void) {
     check_profile_list();
     check_foreign_units();
     check_header_forms();
+    check_rename_scope();
     check_unreadable_header();
     check_makers();
     sigil_sync_result_free(unit);

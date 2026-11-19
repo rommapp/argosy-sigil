@@ -228,9 +228,8 @@ save. A PSP unit holds each of the game's folders by its own name
 (`ULUS10064DATA00/...`, `ULUS10064SETTINGS/...`). An Xbox 360 unit holds
 `<title id>/00000001/...` and `<title id>/Headers/00000001/...`, and
 `device/<title id>/...` for the all-zero XUID's saves, each header as its
-emulator wrote it; restore writes each header in the form the target's row
-names, and identity covers what both forms carry
-([xbox360](platforms/xbox360.md#sync)). The size file each yuzu fork keeps in a save folder
+emulator wrote it; restore writes each header as the target's row says, and
+identity covers what both forms carry ([xbox360](platforms/xbox360.md#sync)). The size file each yuzu fork keeps in a save folder
 (`.yuzu_save_size`, `.citron_save_size`, `.sudachi_save_size`,
 `.suyu_save_size`) is never collected, written or removed.
 
