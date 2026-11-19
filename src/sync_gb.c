@@ -231,12 +231,6 @@ static void identity_of(const sigil_sync_request *req, const gb_save *s, char ou
     else memcpy(out, part.md5, 33);
 }
 
-static void artifact_of(const sigil_sync_request *req, bool zip, sigil_sync_result *r) {
-    char stem[SIGIL_SAVE_ENTRY_MAX];
-    sigil_content_stem(req->save.content_path, stem, sizeof(stem));
-    snprintf(r->artifact, sizeof(r->artifact), "%s%s", stem, zip ? ".zip" : ".srm");
-}
-
 int sigil_sync_collect_gb(sigil_sync_ctx *x, sigil_sync_result *r) {
     gb_files f;
     gb_save s;
@@ -266,18 +260,13 @@ int sigil_sync_collect_gb(sigil_sync_ctx *x, sigil_sync_result *r) {
             rc = sigil_zip_store(members, n, &r->data, &r->len);
             r->shape = SIGIL_SAVE_SHAPE_MULTI;
         }
-        artifact_of(x->req, r->shape == SIGIL_SAVE_SHAPE_MULTI, r);
+        sigil_sync_cart_artifact(x->req, r->shape == SIGIL_SAVE_SHAPE_MULTI ? ".zip" : ".srm", r);
     }
     gb_free(&s);
     return rc;
 }
 
 /* ---- restore ------------------------------------------------------------------ */
-
-static bool ends_with(const char *s, const char *tail) {
-    size_t n = strlen(s), m = strlen(tail);
-    return n >= m && strcmp(s + n - m, tail) == 0;
-}
 
 /* The save a unit carries: the neutral RAM or zip, a raw .srm or .sav
  * (with its clock footer), or a zip of an emulator's .srm and .rtc. */
@@ -297,11 +286,12 @@ static int read_unit(const uint8_t *unit, size_t len, size_t received_len, gb_sa
         const sigil_zip_member *m = &members[i];
         snprintf(parts[i].name, sizeof(parts[i].name), "%s", m->name);
         sigil_md5_of(m->data, m->len, parts[i].md5);
-        if (strcmp(m->name, GB_SRAM_NAME) == 0 || ends_with(m->name, ".srm") || ends_with(m->name, ".sav")) {
+        if (strcmp(m->name, GB_SRAM_NAME) == 0 || sigil_ends_with(m->name, ".srm") ||
+            sigil_ends_with(m->name, ".sav")) {
             rc = take_ram(s, m->data, m->len, SIGIL_GB_CLOCK_VBA);
         } else if (strcmp(m->name, GB_CLOCK_NAME) == 0) {
             rc = take_clock(s, SIGIL_GB_CLOCK_VBA, m->data, m->len);
-        } else if (ends_with(m->name, ".rtc")) {
+        } else if (sigil_ends_with(m->name, ".rtc")) {
             rc = take_clock(s, clock_format(NULL, m->len), m->data, m->len);
         } else {
             rc = SIGIL_ERR_UNSUPPORTED_FORMAT;
@@ -345,7 +335,7 @@ static int ram_file(const sigil_sync_request *req, const char *path, const gb_sa
         return SIGIL_OK;
     }
     const gb_save *timed = in->has_clock ? in : local->has_clock ? local : NULL;
-    bool footer = ends_with(path, ".sav") && clock_cart(req) && timed;
+    bool footer = sigil_ends_with(path, ".sav") && clock_cart(req) && timed;
     *len = in->ram_len + (footer ? 48 : 0);
     *out = (uint8_t *)malloc(*len ? *len : 1);
     if (!*out) return SIGIL_ERR_OOM;
@@ -364,7 +354,7 @@ int sigil_sync_restore_gb(sigil_sync_ctx *x, const uint8_t *unit, size_t len, si
     if (rc == SIGIL_OK) rc = normalize(x->req, &in);
     if (rc == SIGIL_OK) {
         identity_of(x->req, &in, r->identity_hash);
-        artifact_of(x->req, r->shape == SIGIL_SAVE_SHAPE_MULTI, r);
+        sigil_sync_cart_artifact(x->req, r->shape == SIGIL_SAVE_SHAPE_MULTI ? ".zip" : ".srm", r);
         rc = files_of(x->req, &f);
     }
     if (rc == SIGIL_OK) rc = read_local(x->req, &f, &local);

@@ -34,7 +34,7 @@ save folder; sigil never searches the drive.
 | Wii | [wii](wii.md) | `wii` | yes | synced |
 | Wii U | [wiiu](wiiu.md) | `wiiu` | yes | synced |
 | Switch | [switch](switch.md) | `switch` | yes | synced |
-| Mega Drive, 32X, Master System, Game Gear | [genesis](genesis.md) | | no | located |
+| Mega Drive, 32X, Master System, Game Gear | [genesis](genesis.md) | `genesis`, `32x`, `sms`, `gamegear` | no | synced |
 | Sega CD | [segacd](segacd.md) | `segacd` (layout rows) | no | synced |
 | Saturn | [saturn](saturn.md) | `saturn` (layout rows) | no | synced |
 | Dreamcast | [dreamcast](dreamcast.md) | `dreamcast` | yes | synced |
@@ -177,7 +177,7 @@ value, and the default is the first listed.
 
 | Layout | Writes by default | Options that change it | From nothing |
 |---|---|---|---|
-| `libretro`, and any core with no row | `{stem}.srm`; `{stem}.rtc` on a clock cart (GB, GBC, N64); on GBA the save chip's bytes (0xFF to 128 KiB over a file already that long, with mGBA's clock inside when the ROM names the chip and the clock and the chip isn't 128 KiB flash) and no `.rtc` | | yes |
+| `libretro`, and any core with no row | `{stem}.srm`; `{stem}.rtc` on a clock cart (GB, GBC, N64). Mega Drive, 32X, Master System and Game Gear: `genesis_plus_gx` without trailing 0xFF, `picodrive` padded with 0xFF to its size where sigil knows it ([genesis](genesis.md#sync)). GBA: the save chip's bytes (0xFF to 128 KiB over a file already that long, with mGBA's clock inside when the ROM names the chip and the clock and the chip isn't 128 KiB flash) and no `.rtc` | | yes |
 | `vba_next` | `{stem}.srm`, 136 KiB: SRAM or flash at 0, an EEPROM at 128 KiB (GBA) | | yes |
 | `gpsp` | `{stem}.srm`, 128 KiB: the save chip's bytes, then 0xFF (GBA) | | yes |
 | `mgba_standalone`, `vbam_standalone`, `sameboy_standalone`, `gearboy_standalone` | `{stem}.sav`: the RAM, the clock appended on a clock cart. GBA on `mgba_standalone`: the save at its own size, then mGBA's 16-byte clock on a clock cart, at 8 KiB for an EEPROM | | yes |

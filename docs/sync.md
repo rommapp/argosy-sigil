@@ -24,6 +24,7 @@ and passes back. The calls and their fields are on each language's page
 | GBA | the save chip's bytes at the chip's size; on a cart with a clock, a zip of `save.sram` and `clock.rtc` | [gba](platforms/gba.md#sync) |
 | N64 | a zip of the save types the game uses (`eeprom`, `pak1` to `pak4`, `sram`, `flash`), whichever emulator wrote them | [n64](platforms/n64.md#sync) |
 | DS | the raw save, without DeSmuME's footer | [nds](platforms/nds.md#sync) |
+| Mega Drive, 32X, Master System, Game Gear | the cart's save RAM as the emulator's file holds it | [genesis](platforms/genesis.md#sync) |
 
 What restore writes for each layout, and which options change it, is in
 [restore targets](platforms/README.md#restore-targets).
@@ -52,6 +53,7 @@ next collect then gives the save in sigil's form; upload that.
 | GBA | any emulator's file (gpSP's 128 KiB, mGBA's 128 KiB with its clock inside when the ROM names the chip and the clock and the chip isn't 128 KiB flash, VBA Next's 136 KiB, a standalone mGBA `.sav` with its clock), a zip of one, or a zip of `save.sram` and a `clock.rtc` of any size (one that isn't mGBA's 16 bytes is left out) |
 | N64 | a libretro `.srm`, a lone `.eep`, or a zip of an emulator's files (`.srm`, `.eep`, `.sra`, `.fla`, `.mpk`, `_Cont_<n>.mpk`) |
 | DS | a raw save, or a DeSmuME `.dsv` with its footer |
+| Mega Drive, 32X, Master System, Game Gear | a raw `.srm` from genesis_plus_gx or picodrive, or a zip of the one save as `save.sram`, `.srm` or `.sav` |
 | Any | any of the above, or sigil's own unit, ending in the hardcore marker Argosy appended (`{"h":true,...}`, its length as a little-endian u32, then `ARGOSY` 01 00). Restore leaves the marker out of the saves, companion units included, and sets `hardcore_marker`; `content_hash` still covers it |
 | Switch | one folder rooted at `<title>/`: the device save for the titles that keep theirs on the device (Animal Crossing: New Horizons, Nintendo Switch Sports, 1-2-Switch, Ring Fit Adventure, the four Labo kits, Go Vacation), the account save for any other |
 
