@@ -556,8 +556,11 @@ typedef int (*sigil_save_write_fn)(void *ctx, const char *relative_path, const u
 typedef int (*sigil_save_remove_fn)(void *ctx, const char *relative_path);
 
 /* Writes `len` bytes at byte `offset` of one file of the save root, which is
- * there already: the rest of the file stays as it is, and it grows when the
- * range ends past its end. Returns 0 on success. */
+ * there already, and returns 0 once they are stored, as after fsync: the rest
+ * of the file stays as it is, and it grows when the range ends past its end.
+ * A missing file is a failure, not created. Restore orders these writes so
+ * that a stop after any of them leaves the file whole, and the order holds
+ * through a power cut only when each write is stored before the next. */
 typedef int (*sigil_save_write_at_fn)(void *ctx, const char *relative_path, uint64_t offset, const uint8_t *data,
                                       size_t len);
 
@@ -615,11 +618,13 @@ typedef struct {
     sigil_save_write_at_fn write_at;        /* restore, optional, read when struct_version is SIGIL_SYNC_REQUEST_V2:
                                                writes part of a file of the save root, called with write_ctx. Where
                                                every game's saves sit inside one large file (an Xbox hard-disk image),
-                                               restore writes only the parts of it that change, new parts at its end
-                                               first, and reads each back. NULL, or a V1 request, has restore hand the
-                                               whole file to `write` instead. A restore that fails between two of these
-                                               writes leaves the file part written: a client that can't have that
-                                               restores into a copy of the file and swaps it in on SIGIL_OK */
+                                               restore writes only the parts of it that change, in place, and reads
+                                               them back. NULL, or a V1 request, has restore hand the whole file to
+                                               `write` instead. A restore that stops between two of these writes (the
+                                               process ends, the power goes, or a write fails) leaves an image the
+                                               emulator reads, each of the game's save folders on it either as it was
+                                               or as the unit has it; space nothing refers to is all it can leave
+                                               behind (docs/platforms/xbox.md, "Writing in parts") */
 } sigil_sync_request;
 
 typedef struct {

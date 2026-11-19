@@ -179,20 +179,27 @@ dropped PCSX2 save folder, which PCSX2 would still show): remove it.
 
 `write` takes a whole file. Where every game's saves sit inside one large
 file, an Xbox hard-disk image, a request may also give `write_at`
-(`SIGIL_SYNC_REQUEST_V2`), which writes part of a file at a byte offset.
-Restore then writes only the parts of the image that change: first what
-it adds past the image's end, which nothing in the image refers to yet,
-then the changed pages inside it, lowest first, each run at most 1 MiB,
-and it reads every run back. The Python, Go and Kotlin bindings give it
-themselves (Kotlin through `SigilFileAccess.writeAt`). Without it restore
-holds the image in memory and hands it to `write` whole, which it refuses
-to do for an image over 2 GiB.
+(`SIGIL_SYNC_REQUEST_V2`), which writes part of a file that is there at a
+byte offset and returns once the bytes are stored. Restore then writes
+only the parts of the image that change, in place, each run at most
+1 MiB, and reads them back. Without `write_at`, restore holds the image in
+memory and hands it to `write` whole, which it refuses to do for an image
+over 2 GiB. The Python, Go and Kotlin bindings write whole files unless
+the caller asks for parts: `writes_parts=True`, `WritesParts`, or
+`writesParts = true` with a `SigilPartFileAccess`.
 
-A whole-file `write` can be made all or nothing by the client: write a
-new file, then rename it over the old one. A restore through `write_at`
-that fails between two writes (`SIGIL_ERR_IO`) leaves the image part
-written. A client that can't have that points `write_at`, and `open`, at
-a copy of the image and swaps it in once restore returns `SIGIL_OK`.
+The parts go out in an order that keeps the image whole after each of
+them ([xbox.md](platforms/xbox.md#writing-in-parts)). A restore through
+`write_at` that stops part way, because the process ends, the power goes
+or a write fails (`SIGIL_ERR_IO`), leaves an image the emulator reads,
+with each of the game's two save folders either as it was or as the unit
+has it. What it can leave behind is space nothing uses, never a broken
+save: clusters the image counts that nothing refers to, which
+`qemu-img check` reports as leaked and `qemu-img check -r leaks` frees,
+and clusters E:'s FAT marks used that no file holds. Restoring again
+finishes the job and leaves that space as it is. A power cut keeps the
+order only when each `write_at` is stored before it returns, as the
+bindings' are.
 
 ## Companions
 
