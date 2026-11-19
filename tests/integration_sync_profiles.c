@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 /* Folder saves kept per user profile: the yuzu forks, Cemu, Vita3K and RPCS3,
- * against the saves and profile lists pulled from an AYN Odin 3. */
+ * against the saves and profile lists pulled from an AYN Odin 3, and Xenia
+ * Canary and Edge against real Xbox 360 saves. */
 #include "save_corpus.h"
 #include "legacy_units.h"
 #include <inttypes.h>
@@ -39,7 +40,7 @@ static void expect_rc(const char *where, int got, int want) {
     fail(where, what);
 }
 
-static corpus_table g_switch, g_wiiu, g_vita;
+static corpus_table g_switch, g_wiiu, g_vita, g_x360;
 
 /* Puts every file of sample `id` into `root` under `prefix`, a path starting
  * with `strip` losing it first. Returns how many it put. */
@@ -1569,19 +1570,244 @@ static void check_resolve(void) {
     root_free(&root);
 }
 
-int main(void) {
-    char path[1024];
-    if (corpus_platform_path("switch", "manifest.tsv", path, sizeof(path)) != 0 || corpus_load(path, &g_switch) != 0 ||
-        corpus_platform_path("wiiu", "manifest.tsv", path, sizeof(path)) != 0 || corpus_load(path, &g_wiiu) != 0 ||
-        corpus_platform_path("psvita", "manifest.tsv", path, sizeof(path)) != 0 || corpus_load(path, &g_vita) != 0) {
-        fprintf(stderr, "SKIP: manifests missing\n");
-        return TEST_SKIP;
-    }
-    if (!corpus_present(&g_switch, "switch", "eden-profile") || !corpus_present(&g_wiiu, "wiiu", "cemu-account")) {
-        fprintf(stderr, "SKIP: profile samples missing\n");
-        return TEST_SKIP;
-    }
+/* ---- Xenia ------------------------------------------------------------------------ */
 
+#define X360_EDGE     "forza-horizon-2-xenia-edge"
+#define X360_CANARY   "forza-horizon-2-xenia-canary"
+#define X360_CM       "charlie-murder-xenia-edge"
+#define X360_FH2      "4D530AA4"
+#define X360_CMID     "58410B83"
+#define X360_SAMPLE   "E030000043414231"
+#define X360_OTHER    "E03000004B4F4E41"
+#define X360_ZERO     "0000000000000000"
+#define X360_PROFILE  "/FFFE07D1/00010000/"
+
+/* The Account Xenia keeps in a profile's folder, so the profile is listed.
+ * sigil reads only that it is there. */
+static void put_x360_profile(mem_root *root, const char *xuid) {
+    char path[SIGIL_SAVE_PATH_MAX];
+    uint8_t account[404];
+    memset(account, 0xA5, sizeof(account));
+    snprintf(path, sizeof(path), "content/%s" X360_PROFILE "%s/Account", xuid, xuid);
+    root_put(root, path, account, sizeof(account));
+}
+
+/* A sample's path is below Xenia's content folder, <XUID>/<title>/...; the
+ * unit names it below the XUID, the all-zero XUID's under device/
+ * (docs/platforms/xbox360.md, Sync). */
+static void x360_entry(const char *path, char out[SIGIL_SAVE_ENTRY_MAX]) {
+    const char *below = strchr(path, '/');
+    snprintf(out, SIGIL_SAVE_ENTRY_MAX, "%s%s", strncmp(path, X360_ZERO "/", 17) == 0 ? "device/" : "",
+             below ? below + 1 : path);
+}
+
+/* Where restore puts a sample's file for profile `xuid`. */
+static void x360_target(const char *path, const char *xuid, char out[SIGIL_SAVE_PATH_MAX]) {
+    const char *below = strchr(path, '/');
+    snprintf(out, SIGIL_SAVE_PATH_MAX, "content/%s/%s", strncmp(path, X360_ZERO "/", 17) == 0 ? X360_ZERO : xuid,
+             below ? below + 1 : path);
+}
+
+/* The unit member `name` holds exactly `data`. */
+static bool unit_member_is(const sigil_sync_result *r, const char *name, const uint8_t *data, size_t len) {
+    sigil_zip_member *m = NULL;
+    size_t n = 0;
+    bool same = false;
+    if (!r || !r->data || sigil_zip_read_mem(r->data, r->len, 1u << 30, &m, &n) != SIGIL_OK) return false;
+    for (size_t i = 0; i < n; i++) {
+        if (strcmp(m[i].name, name) == 0) same = m[i].len == len && memcmp(m[i].data, data, len) == 0;
+    }
+    sigil_zip_members_free(m, n);
+    return same;
+}
+
+/* The unit holds every file of sample `id`, byte for byte under its unit
+ * name, and nothing else. */
+static bool x360_unit_is(const sigil_sync_result *r, const char *id) {
+    size_t rows = 0;
+    bool same = true;
+    for (size_t i = 0; i < g_x360.nrows; i++) {
+        if (strcmp(corpus_get(&g_x360, i, "id"), id) != 0) continue;
+        const char *path = corpus_get(&g_x360, i, "path");
+        size_t len = 0;
+        uint8_t *data = corpus_sample(&g_x360, "xbox360", id, path, &len);
+        char entry[SIGIL_SAVE_ENTRY_MAX];
+        x360_entry(path, entry);
+        same = same && data && unit_member_is(r, entry, data, len);
+        free(data);
+        rows++;
+    }
+    char names[160][SIGIL_SAVE_ENTRY_MAX];
+    return same && unit_names(r, names, 160) == rows;
+}
+
+/* `root` holds every file of sample `id` under profile `xuid`, byte for
+ * byte, and no other save file: only the profile folders besides. */
+static bool x360_root_is(mem_root *root, const char *id, const char *xuid) {
+    size_t rows = 0, saves = 0;
+    bool same = true;
+    for (size_t i = 0; i < g_x360.nrows; i++) {
+        if (strcmp(corpus_get(&g_x360, i, "id"), id) != 0) continue;
+        const char *path = corpus_get(&g_x360, i, "path");
+        size_t len = 0;
+        uint8_t *data = corpus_sample(&g_x360, "xbox360", id, path, &len);
+        char at[SIGIL_SAVE_PATH_MAX];
+        x360_target(path, xuid, at);
+        mem_file *f = root_find(root, at);
+        same = same && data && f && f->len == len && memcmp(f->data, data, len) == 0;
+        free(data);
+        rows++;
+    }
+    for (size_t i = 0; i < root->count; i++) saves += strstr(root->files[i].path, X360_PROFILE) == NULL;
+    return same && saves == rows;
+}
+
+/* Xenia's content folder as a console keeps it: sample `id` under the
+ * sample's own XUID, with that profile's Account. */
+static void x360_root(mem_root *root, const char *id) {
+    put_x360_profile(root, X360_SAMPLE);
+    put_sample(root, &g_x360, "xbox360", id, NULL, "content/");
+}
+
+/* Forza Horizon 2 as the maintainer's console saved it in Edge: collect
+ * takes the save folder and both headers, Edge's 328-byte form, under their
+ * unit names and never the XUID; restored into a Canary whose one profile is
+ * another, every file lands under that profile's id byte for byte. */
+static void check_xenia_edge_to_canary(sigil_sync_result **edge_unit) {
+    mem_root edge = {0};
+    x360_root(&edge, X360_EDGE);
+    game g;
+    make_game(&g, &edge, "xenia_edge", "xbox360", X360_FH2);
+    sigil_sync_result *r = NULL;
+    expect_rc("xenia edge collect", collect(&g, &r), SIGIL_OK);
+    if (!r || strcmp(r->profile, X360_SAMPLE) != 0) fail("xenia edge collect", "profile");
+    if (!x360_unit_is(r, X360_EDGE)) fail("xenia edge collect", "unit isn't the sample under its unit names");
+
+    mem_root canary = {0};
+    put_x360_profile(&canary, X360_OTHER);
+    game c;
+    make_game(&c, &canary, "xenia_canary", "xbox360", X360_FH2);
+    sigil_sync_result *w = NULL;
+    expect_rc("xenia edge to canary", restore(&c, r, &w), SIGIL_OK);
+    if (!w || strcmp(w->profile, X360_OTHER) != 0) fail("xenia edge to canary", "profile");
+    if (!x360_root_is(&canary, X360_EDGE, X360_OTHER)) fail("xenia edge to canary", "files");
+    sigil_sync_result_free(w);
+    *edge_unit = r;
+    root_free(&canary);
+    root_free(&edge);
+}
+
+/* The same save after Canary bought a car on it, both headers rewritten in
+ * Canary's 40,960-byte form, goes back to Edge's folder: Edge's files become
+ * Canary's byte for byte, the thumbnail Canary added included, and Edge then
+ * collects what Canary sent. */
+static void check_xenia_canary_to_edge(void) {
+    mem_root canary = {0};
+    x360_root(&canary, X360_CANARY);
+    game c;
+    make_game(&c, &canary, "xenia_canary", "xbox360", X360_FH2);
+    sigil_sync_result *unit = NULL;
+    expect_rc("xenia canary collect", collect(&c, &unit), SIGIL_OK);
+    if (!x360_unit_is(unit, X360_CANARY)) fail("xenia canary collect", "unit isn't the sample under its unit names");
+
+    mem_root edge = {0};
+    x360_root(&edge, X360_EDGE);
+    game e;
+    make_game(&e, &edge, "xenia_edge", "xbox360", X360_FH2);
+    sigil_sync_result *before = NULL, *w = NULL, *after = NULL;
+    expect_rc("xenia edge before", collect(&e, &before), SIGIL_OK);
+    if (before) keep_state(&e, before);
+    expect_rc("xenia canary to edge", unit ? restore(&e, unit, &w) : SIGIL_ERR_INVALID_ARG, SIGIL_OK);
+    if (!x360_root_is(&edge, X360_CANARY, X360_SAMPLE)) fail("xenia canary to edge", "files");
+    expect_rc("xenia edge after", collect(&e, &after), SIGIL_OK);
+    if (!after || !unit || strcmp(after->identity_hash, unit->identity_hash) != 0) {
+        fail("xenia canary to edge", "Edge doesn't collect what Canary sent");
+    }
+    sigil_sync_result_free(after);
+    sigil_sync_result_free(w);
+    sigil_sync_result_free(before);
+    sigil_sync_result_free(unit);
+    root_free(&edge);
+    root_free(&canary);
+}
+
+/* The console's upload before sigil, Xenia's content folder zipped as it is
+ * with the profile folder in it, restores under another profile to exactly
+ * what sigil's own unit restores to, and leaves the profile folder behind. */
+static void check_xenia_console_upload(const sigil_sync_result *edge_unit) {
+    const char *names[LEGACY_ZIP_MAX];
+    uint8_t *data[LEGACY_ZIP_MAX];
+    size_t lens[LEGACY_ZIP_MAX], n = 0;
+    for (size_t i = 0; i < g_x360.nrows && n + 1 < LEGACY_ZIP_MAX; i++) {
+        if (strcmp(corpus_get(&g_x360, i, "id"), X360_EDGE) != 0) continue;
+        names[n] = corpus_get(&g_x360, i, "path");
+        data[n] = corpus_sample(&g_x360, "xbox360", X360_EDGE, names[n], &lens[n]);
+        if (data[n]) n++;
+    }
+    uint8_t account[404];
+    memset(account, 0xA5, sizeof(account));
+    names[n] = X360_SAMPLE X360_PROFILE X360_SAMPLE "/Account";
+    data[n] = account;
+    lens[n++] = sizeof(account);
+    size_t len = 0;
+    uint8_t *zip = legacy_zip(names, data, lens, n, &len);
+    sigil_sync_result upload = { .data = zip, .len = len };
+
+    mem_root older = {0}, own = {0};
+    put_x360_profile(&older, X360_OTHER);
+    put_x360_profile(&own, X360_OTHER);
+    game a, b;
+    make_game(&a, &older, "xenia_canary", "xbox360", X360_FH2);
+    make_game(&b, &own, "xenia_canary", "xbox360", X360_FH2);
+    sigil_sync_result *w = NULL, *v = NULL;
+    expect_rc("xenia console upload", restore(&a, &upload, &w), SIGIL_OK);
+    expect_rc("xenia own unit", restore(&b, edge_unit, &v), SIGIL_OK);
+    if (!roots_same(&older, &own) || !x360_root_is(&older, X360_EDGE, X360_OTHER)) {
+        fail("xenia console upload", "doesn't restore to what sigil's own unit restores to");
+    }
+    if (root_find(&older, "content/" X360_SAMPLE X360_PROFILE X360_SAMPLE "/Account")) {
+        fail("xenia console upload", "its profile folder was written");
+    }
+    sigil_sync_result_free(w);
+    sigil_sync_result_free(v);
+    for (size_t i = 0; i + 1 < n; i++) free(data[i]);
+    free(zip);
+    root_free(&older);
+    root_free(&own);
+}
+
+/* Charlie Murder's save, a folder named by 33 zeros, moves from Edge to a
+ * Canary with another profile unchanged. */
+static void check_xenia_charlie_murder(void) {
+    mem_root edge = {0};
+    x360_root(&edge, X360_CM);
+    game g;
+    make_game(&g, &edge, "xenia_edge", "xbox360", X360_CMID);
+    sigil_sync_result *r = NULL, *w = NULL;
+    expect_rc("charlie murder collect", collect(&g, &r), SIGIL_OK);
+    if (!x360_unit_is(r, X360_CM)) fail("charlie murder collect", "unit isn't the sample under its unit names");
+    mem_root canary = {0};
+    put_x360_profile(&canary, X360_OTHER);
+    game c;
+    make_game(&c, &canary, "xenia_canary", "xbox360", X360_CMID);
+    expect_rc("charlie murder restore", r ? restore(&c, r, &w) : SIGIL_ERR_INVALID_ARG, SIGIL_OK);
+    if (!x360_root_is(&canary, X360_CM, X360_OTHER)) fail("charlie murder restore", "files");
+    sigil_sync_result_free(w);
+    sigil_sync_result_free(r);
+    root_free(&canary);
+    root_free(&edge);
+}
+
+static void check_xenia(void) {
+    sigil_sync_result *edge_unit = NULL;
+    check_xenia_edge_to_canary(&edge_unit);
+    if (edge_unit) check_xenia_console_upload(edge_unit);
+    check_xenia_canary_to_edge();
+    check_xenia_charlie_murder();
+    sigil_sync_result_free(edge_unit);
+}
+
+static void run_odin(void) {
     sigil_sync_result *botw = NULL, *acnh = NULL;
     check_eden_collect(&botw, &acnh);
     if (botw && acnh) {
@@ -1612,10 +1838,33 @@ int main(void) {
     check_unopenable_files();
     sigil_sync_result_free(botw);
     sigil_sync_result_free(acnh);
+}
+
+int main(void) {
+    char path[1024];
+    if (corpus_platform_path("switch", "manifest.tsv", path, sizeof(path)) != 0 || corpus_load(path, &g_switch) != 0 ||
+        corpus_platform_path("wiiu", "manifest.tsv", path, sizeof(path)) != 0 || corpus_load(path, &g_wiiu) != 0 ||
+        corpus_platform_path("psvita", "manifest.tsv", path, sizeof(path)) != 0 || corpus_load(path, &g_vita) != 0 ||
+        corpus_platform_path("xbox360", "manifest.tsv", path, sizeof(path)) != 0 || corpus_load(path, &g_x360) != 0) {
+        fprintf(stderr, "SKIP: manifests missing\n");
+        return TEST_SKIP;
+    }
+    bool odin = corpus_present(&g_switch, "switch", "eden-profile") && corpus_present(&g_wiiu, "wiiu", "cemu-account");
+    bool xenia = corpus_present(&g_x360, "xbox360", X360_EDGE) && corpus_present(&g_x360, "xbox360", X360_CANARY) &&
+                 corpus_present(&g_x360, "xbox360", X360_CM);
+    if (!odin && !xenia) {
+        fprintf(stderr, "SKIP: profile samples missing\n");
+        return TEST_SKIP;
+    }
+    if (!xenia) fprintf(stderr, "SKIP: the Xbox 360 samples are missing\n");
+    else check_xenia();
+    if (!odin) fprintf(stderr, "SKIP: the Odin's profile samples are missing\n");
+    else run_odin();
 
     corpus_free(&g_switch);
     corpus_free(&g_wiiu);
     corpus_free(&g_vita);
+    corpus_free(&g_x360);
     if (g_fails) fprintf(stderr, "%d failure(s)\n", g_fails);
     return corpus_exit(g_fails);
 }
