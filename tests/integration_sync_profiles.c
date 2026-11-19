@@ -43,6 +43,18 @@ static void expect_rc(const char *where, int got, int want) {
 
 static corpus_table g_switch, g_wiiu, g_vita, g_x360;
 
+/* True when sample `id` of `platform` is on disk; else check `check` says
+ * so and is skipped, so whoever has some of the samples runs the checks
+ * those cover. */
+static bool present(const char *check, const corpus_table *t, const char *platform, const char *id) {
+    if (corpus_present(t, platform, id)) return true;
+    fprintf(stderr, "SKIP %s: sample %s/%s missing\n", check, platform, id);
+    return false;
+}
+#define HAVE_SWITCH(check, id) present(check, &g_switch, "switch", id)
+#define HAVE_WIIU(check, id)   present(check, &g_wiiu, "wiiu", id)
+#define HAVE_VITA(check, id)   present(check, &g_vita, "psvita", id)
+
 /* Puts every file of sample `id` into `root` under `prefix`, a path starting
  * with `strip` losing it first. Returns how many it put. */
 static size_t put_sample(mem_root *root, const corpus_table *t, const char *platform, const char *id,
@@ -197,6 +209,11 @@ static size_t sample_count(const corpus_table *t, const char *id) {
 /* ---- yuzu forks ------------------------------------------------------------------ */
 
 static void check_eden_collect(sigil_sync_result **botw_unit, sigil_sync_result **acnh_unit) {
+    if (!(HAVE_SWITCH("eden collect", "acnh-eden-jksv-meta") &&
+          HAVE_SWITCH("eden collect", "botw-eden") &&
+          HAVE_SWITCH("eden collect", "eden-profile"))) {
+        return;
+    }
     mem_root root = {0};
     size_t botw = eden_root(&root, "");
     game g;
@@ -223,6 +240,11 @@ static void check_eden_collect(sigil_sync_result **botw_unit, sigil_sync_result 
 }
 
 static void check_sidecar(void) {
+    if (!(HAVE_SWITCH("sidecar", "citron-profile") &&
+          HAVE_SWITCH("sidecar", "eden-profile") &&
+          HAVE_SWITCH("sidecar", "ssbu-eden-sidecar"))) {
+        return;
+    }
     mem_root root = {0};
     put_sample(&root, &g_switch, "switch", "eden-profile", NULL, "nand/system/save/8000000000000010/su/avators/");
     size_t n = put_sample(&root, &g_switch, "switch", "ssbu-eden-sidecar", NULL, EDEN_SAVES);
@@ -276,6 +298,7 @@ static void check_sidecar(void) {
 }
 
 static void check_cross_fork(const sigil_sync_result *botw) {
+    if (!(HAVE_SWITCH("cross fork", "citron-profile"))) return;
     mem_root root = {0};
     put_sample(&root, &g_switch, "switch", "citron-profile", NULL, "nand/system/save/8000000000000010/su/avators/");
     game g;
@@ -298,6 +321,11 @@ static void check_cross_fork(const sigil_sync_result *botw) {
 }
 
 static void check_split(void) {
+    if (!(HAVE_SWITCH("split", "citron-profile") &&
+          HAVE_SWITCH("split", "eden-profile") &&
+          HAVE_SWITCH("split", "mk8d-eden-split"))) {
+        return;
+    }
     mem_root root = {0};
     put_sample(&root, &g_switch, "switch", "eden-profile", NULL, "nand/system/save/8000000000000010/su/avators/");
     size_t user = put_sample(&root, &g_switch, "switch", "mk8d-eden-split", "user/", EDEN_SAVES);
@@ -349,6 +377,7 @@ static void check_split(void) {
 }
 
 static void check_root_too_high(const sigil_sync_result *botw) {
+    if (!(HAVE_SWITCH("root too high", "citron-profile"))) return;
     mem_root root = {0};
     eden_root(&root, ANDROID_EDEN);
     game g;
@@ -452,6 +481,7 @@ static void two_profiles(mem_root *root) {
 }
 
 static void check_two_profiles(const sigil_sync_result *botw, const sigil_sync_result *acnh) {
+    if (!(HAVE_SWITCH("two profiles", "citron-profile"))) return;
     mem_root root = {0};
     two_profiles(&root);
     put_sample(&root, &g_switch, "switch", "botw-eden", NULL, EDEN_SAVES);
@@ -519,6 +549,11 @@ static void check_two_profiles(const sigil_sync_result *botw, const sigil_sync_r
 }
 
 static void check_conflicts(void) {
+    if (!(HAVE_SWITCH("conflicts", "acnh-eden-jksv-meta") &&
+          HAVE_SWITCH("conflicts", "botw-eden") &&
+          HAVE_SWITCH("conflicts", "eden-profile"))) {
+        return;
+    }
     mem_root root = {0};
     eden_root(&root, "");
     game g;
@@ -582,6 +617,11 @@ static void make_mk8d(game *g, mem_root *root, const char *profile) {
 /* The device area's state belongs to the device and the account area's to
  * the profile, so syncing one profile doesn't stand in for another. */
 static void check_area_state(void) {
+    if (!(HAVE_SWITCH("area state", "citron-profile") &&
+          HAVE_SWITCH("area state", "eden-profile") &&
+          HAVE_SWITCH("area state", "mk8d-eden-split"))) {
+        return;
+    }
     mem_root root = {0}, newer = {0};
     mk8d_root(&root, false);
     mk8d_root(&newer, false);
@@ -629,6 +669,11 @@ static void cemu_root(mem_root *root) {
 }
 
 static void check_cemu(void) {
+    if (!(HAVE_WIIU("cemu", "botw-cemu") &&
+          HAVE_WIIU("cemu", "cemu-account") &&
+          HAVE_WIIU("cemu", "nintendo-land-cemu"))) {
+        return;
+    }
     mem_root root = {0};
     cemu_root(&root);
     game g;
@@ -717,6 +762,7 @@ static void check_cemu(void) {
 /* A demo saves under usr/save/00050002/, which its save id carries; the same
  * code under 00050000 is another title's. */
 static void check_cemu_demo(void) {
+    if (!(HAVE_WIIU("cemu demo", "botw-cemu") && HAVE_WIIU("cemu demo", "cemu-account"))) return;
     mem_root root = {0};
     put_sample(&root, &g_wiiu, "wiiu", "cemu-account", "act/", CEMU_ACT);
     put_sample(&root, &g_wiiu, "wiiu", "botw-cemu", NULL, "mlc01/usr/save/00050002/");
@@ -749,6 +795,7 @@ static void check_cemu_demo(void) {
 /* ---- Vita3K and RPCS3 ------------------------------------------------------------- */
 
 static void check_vita3k(void) {
+    if (!(HAVE_VITA("vita3k", "isaac-rebirth-vita3k"))) return;
     mem_root root = {0};
     put_text(&root, "ux0/user/00/user.xml", "<?xml version=\"1.0\"?>\n<user id=\"00\" name=\"Kat &amp; Co\" avatar=\"default\">\n</user>\n");
     size_t n = put_sample(&root, &g_vita, "psvita", "isaac-rebirth-vita3k", NULL, "ux0/user/00/savedata/");
@@ -1411,6 +1458,11 @@ static void check_save_base(void) {
 /* A listed save file or profile list the client can't open is an I/O error:
  * without the list, a collect would find no profile and report no saves. */
 static void check_unopenable_files(void) {
+    if (!(HAVE_SWITCH("unopenable files", "acnh-eden-jksv-meta") &&
+          HAVE_SWITCH("unopenable files", "botw-eden") &&
+          HAVE_SWITCH("unopenable files", "eden-profile"))) {
+        return;
+    }
     for (int which = 0; which < 2; which++) {
         mem_root root = {0};
         eden_root(&root, "");
@@ -1431,6 +1483,7 @@ static void check_unopenable_files(void) {
  * doesn't fit in the one byte left; nor does a two-byte one after 62 ASCII
  * bytes. */
 static void check_long_profile_names(void) {
+    if (!(HAVE_SWITCH("long profile names", "eden-profile"))) return;
     char long_name[128] = "";
     for (int i = 0; i < 31; i++) strcat(long_name, "\xC3\xA9");
     char want[128];
@@ -1502,6 +1555,11 @@ static void check_long_profile_names(void) {
 }
 
 static void check_list_profiles(void) {
+    if (!(HAVE_WIIU("list profiles", "cemu-account") &&
+          HAVE_SWITCH("list profiles", "citron-profile") &&
+          HAVE_SWITCH("list profiles", "eden-profile"))) {
+        return;
+    }
     mem_root root = {0};
     two_profiles(&root);
     sigil_save_request req;
@@ -1544,6 +1602,12 @@ static void check_list_profiles(void) {
 }
 
 static void check_resolve(void) {
+    if (!(HAVE_SWITCH("resolve", "acnh-eden-jksv-meta") &&
+          HAVE_SWITCH("resolve", "botw-eden") &&
+          HAVE_SWITCH("resolve", "eden-profile") &&
+          HAVE_SWITCH("resolve", "mk8d-eden-split"))) {
+        return;
+    }
     mem_root root = {0};
     eden_root(&root, "");
     put_sample(&root, &g_switch, "switch", "mk8d-eden-split", "user/", EDEN_SAVES);
@@ -1695,14 +1759,7 @@ static void x360_root(mem_root *root, const char *id) {
  * check says which is missing and is skipped, so whoever has some of the
  * samples runs the checks those cover. */
 static bool x360_have(const char *check, const char *a, const char *b) {
-    const char *ids[] = { a, b };
-    for (size_t i = 0; i < 2; i++) {
-        if (ids[i] && !corpus_present(&g_x360, "xbox360", ids[i])) {
-            fprintf(stderr, "SKIP %s: sample %s missing\n", check, ids[i]);
-            return false;
-        }
-    }
-    return true;
+    return present(check, &g_x360, "xbox360", a) && (!b || present(check, &g_x360, "xbox360", b));
 }
 
 /* Forza Horizon 2 as the maintainer's console saved it in Edge: collect
@@ -1897,7 +1954,8 @@ static void check_xenia(void) {
     sigil_sync_result_free(edge_unit);
 }
 
-static void run_odin(void) {
+/* Every row's cases but Xenia's. */
+static void check_others(void) {
     sigil_sync_result *botw = NULL, *acnh = NULL;
     check_eden_collect(&botw, &acnh);
     if (botw && acnh) {
@@ -1905,6 +1963,8 @@ static void run_odin(void) {
         check_root_too_high(botw);
         check_root_too_low(botw, acnh);
         check_two_profiles(botw, acnh);
+    } else {
+        fprintf(stderr, "SKIP cross fork, root too high, root too low, two profiles: no units from eden collect\n");
     }
     check_sidecar();
     check_split();
@@ -1939,18 +1999,8 @@ int main(void) {
         fprintf(stderr, "SKIP: manifests missing\n");
         return TEST_SKIP;
     }
-    bool odin = corpus_present(&g_switch, "switch", "eden-profile") && corpus_present(&g_wiiu, "wiiu", "cemu-account");
-    bool xenia = corpus_present(&g_x360, "xbox360", X360_EDGE) || corpus_present(&g_x360, "xbox360", X360_CANARY) ||
-                 corpus_present(&g_x360, "xbox360", X360_CM) || corpus_present(&g_x360, "xbox360", X360_G2_EDGE) ||
-                 corpus_present(&g_x360, "xbox360", X360_G2_CAN);
-    if (!odin && !xenia) {
-        fprintf(stderr, "SKIP: profile samples missing\n");
-        return TEST_SKIP;
-    }
-    if (!xenia) fprintf(stderr, "SKIP: the Xbox 360 samples are missing\n");
-    else check_xenia();
-    if (!odin) fprintf(stderr, "SKIP: the Odin's profile samples are missing\n");
-    else run_odin();
+    check_others();
+    check_xenia();
 
     corpus_free(&g_switch);
     corpus_free(&g_wiiu);
