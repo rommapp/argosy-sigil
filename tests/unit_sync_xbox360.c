@@ -295,7 +295,7 @@ static void check_older_unit(const sigil_sync_result *unit) {
 static void check_no_profile(const sigil_sync_result *unit) {
     mem_root empty = {0};
     game g;
-    make_game(&g, &empty, "xenia");
+    make_game(&g, &empty, "xenia_edge");
     sigil_sync_result *w = NULL;
     expect_rc("restore with no profile", restore(&g, unit->data, unit->len, &w), SIGIL_ERR_NO_TARGET);
     if (!w || strncmp(w->problem, TITLE "/", strlen(TITLE "/")) != 0) fail("restore with no profile", "problem");
@@ -319,7 +319,7 @@ static void check_two_profiles(void) {
     edge_root(&root);
     put_profile(&root, CANARY, false);
     game g;
-    make_game(&g, &root, "xenia");
+    make_game(&g, &root, "xenia_canary");
     sigil_sync_result *r = NULL;
     expect_rc("two profiles", collect(&g, &r), SIGIL_ERR_AMBIGUOUS);
     if (!r || strcmp(r->problem, CABINET "\n" CANARY) != 0 || r->profile_count != 2) {
@@ -367,7 +367,7 @@ static void check_foreign_units(void) {
     mem_root root = {0};
     put_profile(&root, CABINET, true);
     game g;
-    make_game(&g, &root, "xenia");
+    make_game(&g, &root, "xendroid");
     g.req.overwrite_local = 1;
     const char *names[] = { OTHER "/00000001/Other/save.dat" };
     uint8_t *data[] = { (uint8_t *)"x" };
@@ -394,7 +394,7 @@ static void check_foreign_units(void) {
 
 static void expect_base(const char *path, const char *base, const char *profile) {
     char got[SIGIL_SAVE_PATH_MAX], got_profile[SIGIL_PROFILE_ID_MAX];
-    int rc = sigil_save_base("xenia", path, got, sizeof(got), got_profile, sizeof(got_profile));
+    int rc = sigil_save_base("xenia_canary", path, got, sizeof(got), got_profile, sizeof(got_profile));
     if (rc != SIGIL_OK || strcmp(got, base) != 0 || strcmp(got_profile, profile) != 0) {
         char what[SIGIL_SAVE_PATH_MAX + 64];
         snprintf(what, sizeof(what), "%s gave '%s' '%s'", path, got, got_profile);
@@ -402,7 +402,7 @@ static void expect_base(const char *path, const char *base, const char *profile)
     }
 }
 
-static void check_layouts(void) {
+static void check_layouts(const sigil_sync_result *unit) {
     expect_base("/home/u/.local/share/Xenia/content/" CABINET "/" TITLE, "/home/u/.local/share/Xenia", CABINET);
     expect_base("/saves/x360/content/" ZERO_XUID "/" TITLE, "/saves/x360", "");
     expect_base("/saves/x360/content", "/saves/x360", "");
@@ -414,18 +414,18 @@ static void check_layouts(void) {
         fail("layouts", "xbox360");
         return;
     }
-    const char *want[] = { "xenia", "xenia_canary", "xenia_edge", "xendroid" };
+    const char *want[] = { "xenia_canary", "xenia_edge", "xendroid" };
     size_t found = 0, own = 0;
     for (size_t i = 0; i < n; i++) {
         own += strcmp(l[i].platform, "xbox360") == 0;
-        for (size_t k = 0; k < 4; k++) {
+        for (size_t k = 0; k < 3; k++) {
             if (strcmp(l[i].id, want[k]) == 0 && strcmp(l[i].platform, "xbox360") == 0 && l[i].profiles &&
                 !l[i].needs_existing) {
                 found++;
             }
         }
     }
-    if (strcmp(l[0].id, "libretro") != 0 || own != 4 || found != 4) fail("layouts", "the four Xenia rows, with profiles");
+    if (strcmp(l[0].id, "libretro") != 0 || own != 3 || found != 3) fail("layouts", "the three Xenia rows, with profiles");
     sigil_layouts_free(l);
     if (sigil_layouts("ps3", &l, &n) == SIGIL_OK) {
         for (size_t i = 0; i < n; i++) {
@@ -433,6 +433,22 @@ static void check_layouts(void) {
         }
         sigil_layouts_free(l);
     }
+
+    /* "xenia" names upstream Xenia, whose tree has no XUID or headers: no row
+     * takes it, so collect and restore refuse it rather than use another's. */
+    mem_root root = {0};
+    edge_root(&root);
+    game g;
+    make_game(&g, &root, "xenia");
+    sigil_sync_result *r = NULL;
+    expect_rc("xenia collect", collect(&g, &r), SIGIL_ERR_UNSUPPORTED_FORMAT);
+    sigil_sync_result_free(r);
+    r = NULL;
+    int writes = root.writes;
+    expect_rc("xenia restore", restore(&g, unit->data, unit->len, &r), SIGIL_ERR_UNSUPPORTED_FORMAT);
+    if (root.writes != writes) fail("xenia restore", "wrote");
+    sigil_sync_result_free(r);
+    root_free(&root);
 }
 
 int main(void) {
@@ -445,11 +461,11 @@ int main(void) {
         root_free(&canary);
         check_no_profile(unit);
         check_older_unit(unit);
+        check_layouts(unit);
     }
     check_two_profiles();
     check_profile_list();
     check_foreign_units();
-    check_layouts();
     sigil_sync_result_free(unit);
     if (g_fails) fprintf(stderr, "%d failure(s)\n", g_fails);
     return g_fails ? 1 : 0;

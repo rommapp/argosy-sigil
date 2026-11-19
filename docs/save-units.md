@@ -183,7 +183,7 @@ area it belongs to:
 | `cemu` | `mlc01/usr/save/{category}/{save_id}/user/{profile}/` | `user/common/` and `meta/` beside it | `mlc01/usr/save/system/act/{profile}/account.dat` (`PersistentId`, `MiiName`) |
 | `vita3k` | `ux0/user/{profile}/savedata/{save_id}/` | | `ux0/user/{profile}/user.xml` |
 | `rpcs3` | `dev_hdd0/home/{profile}/savedata/{save_id}*/` | | `dev_hdd0/home/{profile}/localusername` |
-| `xenia`, `xenia_canary`, `xenia_edge`, `xendroid` | `content/{profile}/{save_id}/00000001/` and `.../Headers/00000001/` | the same under the all-zero XUID | `content/{profile}/FFFE07D1/00010000/{profile}/Account`; encrypted, so ids only |
+| `xenia_canary`, `xenia_edge`, `xendroid` | `content/{profile}/{save_id}/00000001/` and `.../Headers/00000001/` | the same under the all-zero XUID | `content/{profile}/FFFE07D1/00010000/{profile}/Account`; encrypted, so ids only |
 | `ryujinx`, `kenjinx` | `bis/user/save/<index id>/0/` | the same | `system/Profiles.json`; `bis/system/save/8000000000000000/0/imkvdb.arc` says whose each folder is |
 | `ppsspp`, `ppsspp_standalone`, `psp_console` | | `PSP/SAVEDATA/{save_id}*/` | none |
 | `azahar`, `citra`, `lime3ds` | | `sdmc/Nintendo 3DS/<id0>/<id1>/title/{save_id}/data/` and `.../extdata/00000000/{extdata_id}/` | none |

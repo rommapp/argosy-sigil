@@ -892,6 +892,6 @@ def test_an_xbox_360_save_moves_between_xenias_under_each_ones_profile(tmp_path)
     assert not (canary / "content" / _CANARY_XUID / "FFFE07D1/00010000" / _CANARY_XUID / "4D530AA4.gpd").exists()
 
     with pytest.raises(sigil.SigilNoTargetError):
-        sigil.restore(unit.data, _FH2, "xenia", "Forza Horizon 2.iso", fresh)
-    sigil.restore(unit.data, _FH2, "xenia", "Forza Horizon 2.iso", fresh, profile=_CABINET_XUID)
+        sigil.restore(unit.data, _FH2, "xenia_edge", "Forza Horizon 2.iso", fresh)
+    sigil.restore(unit.data, _FH2, "xenia_edge", "Forza Horizon 2.iso", fresh, profile=_CABINET_XUID)
     assert (fresh / "content" / _CABINET_XUID / save).read_bytes() == b"progress"

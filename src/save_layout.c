@@ -498,17 +498,24 @@ static const sigil_layout_profiles RPCS3_PROFILES = {
 };
 static const char *const RPCS3_SUBDIRS[] = { "dev_hdd0/home" };
 
-/* Xenia Canary, Xenia Edge and XenDroid (src/xenia/kernel/xam/content_manager.cc
- * ResolvePackageRoot and the header path beside it; profile_manager.cc
- * GetProfilePath): content/<XUID>/<title>/00000001/<save>/ is a save, its
- * header content/<XUID>/<title>/Headers/00000001/<save>.header. A save the
- * game marks shared, or makes with no one signed in, sits under the all-zero
- * XUID. A profile is content/<XUID>/FFFE07D1/00010000/<XUID>/; the game's
- * achievements and the profile's settings stay there and don't travel. A unit
- * from before sigil is the content folder zipped as it is, <XUID>/...: its
- * save folders restore, its profile folders and gamer pictures (each
- * <XUID>/FFFE07D1/) are left out. The device areas come first so the all-zero
- * XUID of such a unit is never taken for a profile. */
+/* Xenia Canary, Xenia Edge and XenDroid. A save is
+ * content/<XUID>/<title>/00000001/<save>/ (src/xenia/kernel/xam/content_manager.cc
+ * ResolvePackageRoot, in Edge at 4ad875a, Canary at 27d11a2 and XenDroid at
+ * 779680a under emulator-core/src/main/cpp/xenia/), and its header
+ * content/<XUID>/<title>/Headers/00000001/<save>.header (Edge content_manager.cc
+ * PackageHeaderPath at 4ad875a, Canary xcontent/xcontent_package_directory.cc
+ * ComputeHeaderPath at 27d11a2, XenDroid content_manager.cc
+ * ResolvePackageHeaderPath at 779680a). A save the game marks shared, or makes
+ * with no one signed in, sits under the all-zero XUID. A profile is
+ * content/<XUID>/FFFE07D1/00010000/<XUID>/ (profile_manager.cc GetProfilePath,
+ * the same three commits); the game's achievements and the profile's settings
+ * stay there and don't travel. A unit from before sigil is the content folder
+ * zipped as it is, <XUID>/...: its save folders restore, its profile folders
+ * and gamer pictures (each <XUID>/FFFE07D1/) are left out. The device areas
+ * come first so the all-zero XUID of such a unit is never taken for a profile.
+ * Upstream Xenia keeps content/<title>/<type>/<save>/ with no XUID and no
+ * header (xenia-project/xenia content_manager.cc ResolvePackageRoot at
+ * 95a5c3e), so none of these rows is its. */
 static const sigil_layout_area XENIA_AREAS[] = {
     { "content/0000000000000000/{save_id}/00000001/", "device/{save_id}/00000001/", SIGIL_SAVE_AREA_DEVICE, false,
       "0000000000000000/{save_id}/00000001/" },
@@ -656,7 +663,6 @@ static const sigil_layout LAYOUTS[] = {
     /* aPS3e (aenu1/aps3e) and ARMSX3 keep RPCS3's tree under their config/ folder, user 00000001. */
     ROW_PROFILES("aps3e", "ps3", RPCS3_SUBDIRS, RPCS3_PROFILES),
     ROW_PROFILES("armsx3", "ps3", RPCS3_SUBDIRS, RPCS3_PROFILES),
-    ROW_PROFILES("xenia", "xbox360", XENIA_SUBDIRS, XENIA_PROFILES),
     ROW_PROFILES("xenia_canary", "xbox360", XENIA_SUBDIRS, XENIA_PROFILES),
     ROW_PROFILES("xenia_edge", "xbox360", XENIA_SUBDIRS, XENIA_PROFILES),
     ROW_PROFILES("xendroid", "xbox360", XENIA_SUBDIRS, XENIA_PROFILES),
