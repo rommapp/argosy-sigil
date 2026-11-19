@@ -3,7 +3,9 @@
  * xemu ran games on. Collect gives exactly the files the manifests list for
  * each title, and a title's saves restore into another drive, and into the
  * blank image, with that drive's own saves and everything else on it left
- * as they were. The images are read back by xbox_drive.h, not by sigil. */
+ * as they were. The images are read back by xbox_drive.h, not by sigil.
+ * Each check runs when its own samples are present (have), and the test
+ * skips when none ran. */
 #include "save_corpus.h"
 #include "sync_internal.h"
 #include "mem_root.h"
@@ -20,6 +22,17 @@ static void fail(const char *where, const char *what) {
 }
 
 static corpus_table g_manifest, g_entries;
+static int g_ran = 0;
+
+/* True, counting one more check that ran, when sample `a` and, unless NULL,
+ * sample `b` are on disk. Only xemu-blank is public (the manifest's source
+ * column); the other drives are the maintainer's captures, so each check
+ * runs on its own samples and skips without them. */
+static bool have(const char *a, const char *b) {
+    if (!corpus_present(&g_manifest, "xbox", a) || (b && !corpus_present(&g_manifest, "xbox", b))) return false;
+    g_ran++;
+    return true;
+}
 
 typedef struct {
     sigil_sync_request req;
@@ -96,7 +109,7 @@ static void check_unit(const sigil_sync_result *r, const char *id, const char *o
 static sigil_sync_result *collect_from(const char *id, const char *owner) {
     mem_root root = {0};
     sigil_sync_result *r = NULL;
-    if (load_sample(&root, id)) {
+    if (have(id, NULL) && load_sample(&root, id)) {
         game g;
         make_game(&g, &root, owner);
         if (sigil_collect(&g.req, &r) != SIGIL_OK) fail(id, "collect failed");
@@ -107,10 +120,14 @@ static sigil_sync_result *collect_from(const char *id, const char *owner) {
     return r;
 }
 
-/* Restores `unit`, title `owner`'s saves, into sample `into`, and checks the drive that comes out. */
-static void restore_into(const sigil_sync_result *unit, const char *owner, const char *into, const char *where) {
+/* Restores `unit`, title `owner`'s saves collected from sample `from`, into
+ * sample `into`, and checks the drive that comes out. */
+static void restore_into(const sigil_sync_result *unit, const char *owner, const char *from, const char *into,
+                         const char *where) {
     mem_root root = {0};
+    if (!have(from, into)) return;
     if (!unit || !unit->data || !load_sample(&root, into)) {
+        fail(where, "no unit, or no drive to restore into");
         root_free(&root);
         return;
     }
@@ -164,11 +181,6 @@ int main(void) {
         fprintf(stderr, "FAIL: can't read the xbox manifests\n");
         return 1;
     }
-    if (!corpus_present(&g_manifest, "xbox", "xemu-blank")) {
-        printf("SKIP: no xbox drive samples in %s/xbox/files\n", SIGIL_SAVE_FIXTURES);
-        return TEST_SKIP;
-    }
-
     /* Each title of every drive the manifests list, exactly as listed. */
     sigil_sync_result *flatout = collect_from("flatout-cabinetos", "454D0009");
     sigil_sync_result *orta = collect_from("orta-xemu", "53450007");
@@ -178,7 +190,7 @@ int main(void) {
 
     /* The blank image holds no saves, and neither drive holds the other's game. */
     mem_root root = {0};
-    if (load_sample(&root, "xemu-blank")) {
+    if (have("xemu-blank", NULL) && load_sample(&root, "xemu-blank")) {
         game g;
         make_game(&g, &root, "454D0009");
         sigil_sync_result *r = NULL;
@@ -187,15 +199,19 @@ int main(void) {
     }
     root_free(&root);
 
-    restore_into(flatout, "454D0009", "orta-xemu", "FlatOut into Orta's drive");
-    restore_into(flatout, "454D0009", "xemu-blank", "FlatOut into the blank image");
-    restore_into(orta, "53450007", "flatout-cabinetos", "Orta into FlatOut's drive");
-    restore_into(orta, "53450007", "xemu-blank", "Orta into the blank image");
+    restore_into(flatout, "454D0009", "flatout-cabinetos", "orta-xemu", "FlatOut into Orta's drive");
+    restore_into(flatout, "454D0009", "flatout-cabinetos", "xemu-blank", "FlatOut into the blank image");
+    restore_into(orta, "53450007", "orta-xemu", "flatout-cabinetos", "Orta into FlatOut's drive");
+    restore_into(orta, "53450007", "orta-xemu", "xemu-blank", "Orta into the blank image");
 
     sigil_sync_result_free(flatout);
     sigil_sync_result_free(orta);
     corpus_free(&g_manifest);
     corpus_free(&g_entries);
+    if (!g_ran) {
+        printf("SKIP: no xbox drive samples in %s/xbox/files\n", SIGIL_SAVE_FIXTURES);
+        return TEST_SKIP;
+    }
     if (g_fails) fprintf(stderr, "%d check(s) failed\n", g_fails);
     else printf("integration_sync_xbox: all checks passed\n");
     return corpus_exit(g_fails);
