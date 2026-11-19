@@ -70,8 +70,21 @@ typedef enum {
     SIGIL_PROFILES_CEMU,       /* act/<id>/account.dat: PersistentId= and MiiName= (UTF-16BE in hex) lines */
     SIGIL_PROFILES_VITA3K,     /* user/<id>/user.xml: the name attribute of <user> */
     SIGIL_PROFILES_RPCS3,      /* home/<id>/localusername: the name alone */
-    SIGIL_PROFILES_RYUJINX     /* system/Profiles.json: "user_id" (32 hex) and "name" per profile */
+    SIGIL_PROFILES_RYUJINX,    /* system/Profiles.json: "user_id" (32 hex) and "name" per profile */
+    SIGIL_PROFILES_XENIA       /* <id>/FFFE07D1/00010000/<id>/Account, <id> 16 uppercase hex digits and not
+                                  all zeros: the gamertag is encrypted with a console key sigil doesn't
+                                  carry, so a profile is its id alone */
 } sigil_profiles_format;
+
+/* The form of the content headers a folder holds, Xbox 360's
+ * (sync_xbox360.c). */
+typedef enum {
+    SIGIL_HEADER_NONE = 0,
+    SIGIL_HEADER_XCONTENT_AGGREGATE,   /* XCONTENT_AGGREGATE_DATA alone, the only form XenDroid reads */
+    SIGIL_HEADER_XCONTENT_CONTAINER,   /* the whole container header padded to 0xA000: Xenia Canary */
+    SIGIL_HEADER_XCONTENT_EITHER       /* Xenia Edge reads both and writes one only for a save it creates:
+                                          restore copies each as the unit holds it */
+} sigil_header_form;
 
 /* One folder of a game's saves on a layout with profiles. Templates are
  * relative to the emulator's base folder and end in '/'; {profile} and
@@ -84,6 +97,8 @@ typedef struct {
                                 the root's reach instead of refusing */
     const char *legacy;      /* an older unit's name for the folder, {profile} standing for any id, or NULL */
     bool        optional;    /* a unit may leave the folder out: restore then keeps what is there (3DS extdata) */
+    int         header;      /* sigil_header_form of the files: restore writes each as it says, and identity
+                                covers what both forms carry; SIGIL_HEADER_NONE for files that aren't headers */
 } sigil_layout_area;
 
 /* A layout whose saves are folders, kept per user profile when it has an

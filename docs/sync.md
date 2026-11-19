@@ -16,7 +16,7 @@ and passes back. The calls and their fields are on each language's page
 | GameCube | the game's `.gci` files, one or a zip, from a raw card or Dolphin's GCI folder | [gamecube](platforms/gamecube.md#sync) |
 | Saturn, Sega CD | `backup.ram`, or a zip with `backup.ram` and `cart.ram` | [saturn](platforms/saturn.md#sync), [segacd](platforms/segacd.md#sync) |
 | Dreamcast | `vmu_A1.bin`, or a zip of the VMUs present | [dreamcast](platforms/dreamcast.md#sync) |
-| Switch, Wii U, PS Vita, PS3 | a zip of the game's save folders, without the profile id | [switch](platforms/switch.md#sync), [wiiu](platforms/wiiu.md#sync), [psvita](platforms/psvita.md#sync), [ps3](platforms/ps3.md#sync) |
+| Switch, Wii U, PS Vita, PS3, Xbox 360 | a zip of the game's save folders, without the profile id | [switch](platforms/switch.md#sync), [wiiu](platforms/wiiu.md#sync), [psvita](platforms/psvita.md#sync), [ps3](platforms/ps3.md#sync), [xbox360](platforms/xbox360.md#sync) |
 | PSP | a zip of the game's save folders | [psp](platforms/psp.md#sync) |
 | Wii | a zip of the title's `data/` folder, under its code | [wii](platforms/wii.md#sync) |
 | 3DS | a zip of the title's save folder, its metadata and its extdata | [3ds](platforms/3ds.md#sync) |
@@ -49,6 +49,7 @@ next collect then gives the save in sigil's form; upload that.
 | Wii U | a zip naming the account folder by its id (`<save_id>/user/80000001/`) |
 | Wii | the title folder zipped from its code (`<code>/data/...`, `<code>/content/...`); `content/` is left out |
 | 3DS | a zip rooted at `data/` and `extdata/` |
+| Xbox 360 | Xenia's `content/` folder zipped as it is (`<XUID>/<title id>/00000001/...`, `<XUID>/<title id>/Headers/00000001/...`, `0000000000000000/<title id>/...`); each profile folder and the gamer pictures (`<XUID>/FFFE07D1/`) are left out |
 | GB, GBC | a raw `.srm`, a `.sav` with its clock appended, or a zip of an emulator's `.srm` and `.rtc` |
 | N64 | a libretro `.srm`, a lone `.eep`, or a zip of an emulator's files (`.srm`, `.eep`, `.sra`, `.fla`, `.mpk`, `_Cont_<n>.mpk`) |
 | DS | a raw save, or a DeSmuME `.dsv` with its footer |
@@ -225,7 +226,7 @@ Restore refuses, writing nothing, with:
 | `SIGIL_ERR_NO_SPACE` | the saves don't fit; `blocks_short` says by how much | the save |
 | `SIGIL_ERR_REGION` | a GameCube companion's save is from another Dolphin region than the game | the save |
 | `SIGIL_ERR_DAMAGED` | a file the saves go in is damaged and `repair` is 0, it isn't a card sigil can read, or it holds a corrupt save of the game or a companion (above) | the file |
-| `SIGIL_ERR_AMBIGUOUS` | more than one file could be the emulator's card and the options don't say which: Dolphin raw cards of two sizes with no `MemoryCardSize`. On layouts with profiles, two or more profiles and none picked, for a unit with an account save (ask the user which profile is theirs; `profiles` or `sigil_save_profiles` lists them); or two emulator folders under the root. Collect refuses the same way | the files, the profiles as `id name`, or the folders, one per line |
+| `SIGIL_ERR_AMBIGUOUS` | more than one file could be the emulator's card and the options don't say which: Dolphin raw cards of two sizes with no `MemoryCardSize`. On layouts with profiles, two or more profiles and none picked, for a unit with an account save (ask the user which profile is theirs; `profiles` or `sigil_save_profiles` lists them); or two emulator folders under the root. Collect refuses the same way | the files, the profiles as `id name` (the id alone where the emulator keeps no name), or the folders, one per line |
 | `SIGIL_ERR_NO_TARGET` | the unit holds a volume the emulator's settings keep no file for: a `cart.ram` for a core with no cart, a VMU port flycast doesn't keep per game. On layouts with profiles, a member no folder of the game takes, an account save with no profile there, or a folder outside the root. On Xbox, the save root holds no drive image, or a file's name can't be a FATX name | the unit member; the drive image's name when there is none |
 | `SIGIL_ERR_UNSUPPORTED_FORMAT` | layouts with profiles: two unit members go to one file | |
 | `SIGIL_ERR_IO` | a unit member's path would leave the save root, or a file the listing holds won't open through `open`. Collect refuses the same way, so a file it can't read never counts as no saves | |

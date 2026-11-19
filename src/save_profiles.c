@@ -65,6 +65,8 @@ static bool walk(const sigil_layout_profiles *row, const char *template_, const 
             size_t cap = 0;
             char *slot = var_slot(v, t, tn, &cap);
             if (!slot || pn >= cap) return false;
+            /* A variable a template names twice (Xenia's profile folder) is one folder name. */
+            if (slot[0] && (strlen(slot) != pn || strncmp(slot, p, pn) != 0)) return false;
             memcpy(slot, p, pn);
             slot[pn] = '\0';
         } else if (tn != pn || strncmp(t, p, tn) != 0) {
@@ -488,7 +490,7 @@ static void vita3k_name(const char *xml, size_t len, char out[SIGIL_PROFILE_NAME
 
 static void name_from(int format, const uint8_t *data, size_t len, char out[SIGIL_PROFILE_NAME_MAX]) {
     out[0] = '\0';
-    if (!data) return;
+    if (!data || format == SIGIL_PROFILES_XENIA) return;
     const char *text = (const char *)data;
     if (format == SIGIL_PROFILES_CEMU) {
         size_t value_len = 0;
@@ -504,7 +506,22 @@ static void name_from(int format, const uint8_t *data, size_t len, char out[SIGI
     }
 }
 
+/* An id in the form the emulator names a profile's folder. Xenia lists a
+ * folder named by 16 uppercase hex digits (profile_manager.cc FindProfiles,
+ * its regex [0-9A-F]{16}: Edge at 4ad875a, Canary at 27d11a2, XenDroid at
+ * 779680a); any other folder is one it never reads. The all-zero XUID, which
+ * FindProfiles also skips, is the row's device folder (device_folder_name). */
+static bool id_fits(int format, const char *id) {
+    if (format != SIGIL_PROFILES_XENIA) return true;
+    if (strlen(id) != 16) return false;
+    for (size_t i = 0; i < 16; i++) {
+        if (!(id[i] >= '0' && id[i] <= '9') && !(id[i] >= 'A' && id[i] <= 'F')) return false;
+    }
+    return true;
+}
+
 static void add_profile(sigil_profile_root *p, const char *id, const char *name) {
+    if (!id_fits(p->row->format, id) || device_folder_name(p->row, id)) return;
     for (size_t i = 0; i < p->profile_count; i++) {
         if (strcmp(p->profiles[i].id, id) == 0) return;
     }
@@ -980,6 +997,7 @@ int sigil_profile_root_open(const sigil_save_request *req, const sigil_layout_pr
     else if (implied[0]) pick(p, implied);
     else if (p->profile_count == 1) pick(p, p->profiles[0].id);
     else p->several = p->profile_count > 1;
+    if (p->profile[0] && !id_fits(row->format, p->profile)) return SIGIL_ERR_INVALID_ARG;
     return device_folder_name(row, p->profile) ? SIGIL_ERR_INVALID_ARG : SIGIL_OK;
 }
 
@@ -1181,7 +1199,8 @@ void sigil_profile_lines(const sigil_profile_root *p, char *out, size_t cap) {
     size_t n = 0;
     out[0] = '\0';
     for (size_t i = 0; i < p->profile_count && n < cap; i++) {
-        int w = snprintf(out + n, cap - n, "%s%s %s", i ? "\n" : "", p->profiles[i].id, p->profiles[i].name);
+        const char *name = p->profiles[i].name;
+        int w = snprintf(out + n, cap - n, "%s%s%s%s", i ? "\n" : "", p->profiles[i].id, name[0] ? " " : "", name);
         if (w > 0) n += (size_t)w;
     }
 }

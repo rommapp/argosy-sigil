@@ -1418,6 +1418,11 @@ type SyncResult struct {
 	// Collect: the first UnownedChanged names in Unowned are new or
 	// rewritten since the last collect saw their volume.
 	UnownedChanged int
+	// Layouts with profiles: the profile the account saves' own records
+	// name as the one they were made under, as Xenia keeps it in a save's
+	// header. Collect reads the saves, Restore the unit. "" when the records
+	// name none, or name different ones.
+	MakerProfile string
 }
 
 func goProfiles(cres *C.sigil_sync_result) []Profile {
@@ -1524,6 +1529,7 @@ func runSync(unit []byte, game *Result, core, contentPath, saveRoot string, opts
 		Alternates:     goAlternates(cres.alternates, cres.alternate_count),
 		HardcoreMarker: cres.hardcore_marker != 0,
 		UnownedChanged: int(cres.unowned_changed),
+		MakerProfile:   C.GoString(&cres.maker_profile[0]),
 	}
 	if cres.data != nil {
 		out.Data = C.GoBytes(unsafe.Pointer(cres.data), C.int(cres.len))

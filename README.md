@@ -55,7 +55,7 @@ do it yet) or `n/a` (the system has nothing of that kind).
 | [Saturn](docs/platforms/saturn.md) | no | yes | yes | single or multi | yes |
 | [Dreamcast](docs/platforms/dreamcast.md) | yes | yes | yes | single or multi | yes |
 | [Xbox](docs/platforms/xbox.md) | yes | yes | yes | folder | yes |
-| [Xbox 360](docs/platforms/xbox360.md) | yes | no | n/a | folder | no |
+| [Xbox 360](docs/platforms/xbox360.md) | yes | yes | n/a | folder | yes |
 | [Arcade](docs/platforms/arcade.md) | n/a | yes | no | single or multi | no |
 | [Neo Geo](docs/platforms/neogeo.md) | no | yes | no | single or multi | no |
 | [Neo Geo Pocket](docs/platforms/ngp.md) | no | yes | n/a | single | no |

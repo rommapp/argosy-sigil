@@ -71,6 +71,40 @@ static void artifact_of(const profile_sync *s, sigil_sync_result *r) {
     snprintf(r->artifact, sizeof(r->artifact), "%s.zip", s->root.save_id);
 }
 
+/* The save folder a header is for: the header's name without ".header"
+ * (Xenia's ComputeHeaderPath and PackageHeaderPath). */
+static void header_package(const char *path, char out[SIGIL_SAVE_ENTRY_MAX]) {
+    const char *base = strrchr(path, '/');
+    base = base ? base + 1 : path;
+    size_t n = strlen(base);
+    if (n > 7 && strcmp(base + n - 7, ".header") == 0) n -= 7;
+    snprintf(out, SIGIL_SAVE_ENTRY_MAX, "%.*s", (int)n, base);
+}
+
+/* The MD5 identity counts for a file of `folder`: for a content header, over
+ * what both header forms carry; else `raw`, the file's own. */
+static void identity_md5(const sigil_layout_area *folder, const char *name, const uint8_t *data, size_t len,
+                         const char raw[33], char out[33]) {
+    char package[SIGIL_SAVE_ENTRY_MAX];
+    if (folder && folder->header) {
+        header_package(name, package);
+        if (sigil_x360_header_md5(data, len, package, out)) return;
+    }
+    memcpy(out, raw, 33);
+}
+
+/* Folds the XUID an account save's header names into `maker`; `*mixed` once
+ * two of them name different ones. */
+static void note_maker(const sigil_layout_area *folder, int area, const uint8_t *data, size_t len,
+                       char maker[SIGIL_PROFILE_ID_MAX], bool *mixed) {
+    if (!folder || !folder->header || area != SIGIL_SAVE_AREA_ACCOUNT) return;
+    char named[SIGIL_PROFILE_ID_MAX];
+    sigil_x360_header_maker(data, len, named);
+    if (!named[0]) return;
+    if (!maker[0]) snprintf(maker, SIGIL_PROFILE_ID_MAX, "%s", named);
+    else if (strcmp(maker, named) != 0) *mixed = true;
+}
+
 /* ---- collect ------------------------------------------------------------------ */
 
 int sigil_sync_collect_profiles(sigil_sync_ctx *x, const sigil_layout_profiles *row, sigil_sync_result *r) {
@@ -86,21 +120,28 @@ int sigil_sync_collect_profiles(sigil_sync_ctx *x, const sigil_layout_profiles *
     if (rc != SIGIL_OK) return rc;
     sigil_zip_member *members = (sigil_zip_member *)calloc(n ? n : 1, sizeof(*members));
     sigil_named_md5 *parts = (sigil_named_md5 *)calloc(n ? n : 1, sizeof(*parts));
+    sigil_named_md5 *raw = (sigil_named_md5 *)calloc(n ? n : 1, sizeof(*raw));
     int *areas = (int *)calloc(n ? n : 1, sizeof(*areas));
-    if (!members || !parts || !areas) rc = SIGIL_ERR_OOM;
+    if (!members || !parts || !raw || !areas) rc = SIGIL_ERR_OOM;
+    char maker[SIGIL_PROFILE_ID_MAX] = "";
+    bool mixed = false;
     for (size_t i = 0; i < n && rc == SIGIL_OK; i++) {
         snprintf(members[i].name, sizeof(members[i].name), "%s", files[i].entry);
         rc = sigil_sync_read_file(x->req, files[i].path, PROFILE_MAX_MEMBER, &members[i].data, &members[i].len);
         if (rc == SIGIL_ERR_NOT_FOUND) rc = SIGIL_ERR_IO;
         if (rc != SIGIL_OK) break;
-        snprintf(parts[i].name, sizeof(parts[i].name), "%s", files[i].entry);
-        sigil_md5_of(members[i].data, members[i].len, parts[i].md5);
+        snprintf(raw[i].name, sizeof(raw[i].name), "%s", files[i].entry);
+        sigil_md5_of(members[i].data, members[i].len, raw[i].md5);
+        parts[i] = raw[i];
+        identity_md5(files[i].folder, files[i].entry, members[i].data, members[i].len, raw[i].md5, parts[i].md5);
+        note_maker(files[i].folder, files[i].area, members[i].data, members[i].len, maker, &mixed);
         areas[i] = files[i].area;
     }
+    if (rc == SIGIL_OK) snprintf(r->maker_profile, sizeof(r->maker_profile), "%s", mixed ? "" : maker);
     if (rc == SIGIL_OK && n) {
         rc = sigil_zip_store(members, n, &r->data, &r->len);
         identity_of(parts, areas, n, -1, r->identity_hash);
-        memcpy(r->content_hash, r->identity_hash, sizeof(r->content_hash));
+        content_of(raw, n, r->content_hash);
         r->shape = SIGIL_SAVE_SHAPE_FOLDER;
         artifact_of(&s, r);
     }
@@ -111,6 +152,7 @@ int sigil_sync_collect_profiles(sigil_sync_ctx *x, const sigil_layout_profiles *
     }
     if (members) sigil_zip_members_free(members, n);
     free(parts);
+    free(raw);
     free(areas);
     free(files);
     return rc;
@@ -125,7 +167,9 @@ typedef struct {
     int              *areas;
     const sigil_layout_area **folders;               /* the row's folder each member goes in, or NULL */
     sigil_named_md5  *parts;                         /* under the name collect gives each member */
+    char            (*written)[33];                  /* the MD5 of the bytes restore writes for each member */
     char              content[33];                   /* RomM's hash of the unit as it came */
+    char              maker[SIGIL_PROFILE_ID_MAX];   /* the XUID the unit's account headers name, or "" */
     bool              carried[AREA_COUNT];           /* the unit holds files of the area, by AREAS */
     sigil_profile_published published;               /* the save index's new entries for the unit's saves */
 } incoming_unit;
@@ -137,6 +181,7 @@ static void incoming_free(incoming_unit *u) {
     free(u->areas);
     free(u->folders);
     free(u->parts);
+    free(u->written);
 }
 
 static size_t area_index(int area) {
@@ -197,9 +242,35 @@ static int publish_saves(profile_sync *s, incoming_unit *u) {
     return sigil_profile_publish(&s->root, has_account, has_device, &u->published);
 }
 
+/* Member `i` as its folder keeps files: a content header as the folder's
+ * form says, under `profile` in an account folder; anything else as it came.
+ * Sets what identity counts for it and the MD5 of what restore writes. */
+static int in_folder_form(incoming_unit *u, size_t i, const char *entry, const char *profile) {
+    sigil_zip_member *m = &u->members[i];
+    const sigil_layout_area *folder = u->folders[i];
+    if (folder && folder->header) {
+        char package[SIGIL_SAVE_ENTRY_MAX];
+        uint8_t *data = NULL;
+        size_t len = 0;
+        header_package(entry, package);
+        int rc = sigil_x360_header_to(folder->header, m->data, m->len, package,
+                                      folder->area == SIGIL_SAVE_AREA_ACCOUNT ? profile : NULL, &data, &len);
+        if (rc != SIGIL_OK) return rc;
+        free(m->data);
+        m->data = data;
+        m->len = len;
+    }
+    char raw[33];
+    sigil_md5_of(m->data, m->len, raw);
+    memcpy(u->written[i], raw, sizeof(raw));
+    identity_md5(folder, entry, m->data, m->len, raw, u->parts[i].md5);
+    return SIGIL_OK;
+}
+
 static int read_unit(const sigil_sync_ctx *x, profile_sync *s, const uint8_t *unit, size_t len, incoming_unit *u,
                      sigil_sync_result *r) {
     memset(u, 0, sizeof(*u));
+    bool mixed = false;
     int rc = sigil_zip_read_mem(unit, len, PROFILE_MAX_MEMBER, &u->members, &u->count);
     if (rc != SIGIL_OK) return rc;
     if (argosy_device_unit(x, s, u)) {
@@ -215,7 +286,8 @@ static int read_unit(const sigil_sync_ctx *x, profile_sync *s, const uint8_t *un
     u->areas = (int *)calloc(u->count ? u->count : 1, sizeof(*u->areas));
     u->folders = (const sigil_layout_area **)calloc(u->count ? u->count : 1, sizeof(const sigil_layout_area *));
     u->parts = (sigil_named_md5 *)calloc(u->count ? u->count : 1, sizeof(*u->parts));
-    if (!u->paths || !u->areas || !u->folders || !u->parts) return SIGIL_ERR_OOM;
+    u->written = calloc(u->count ? u->count : 1, sizeof(*u->written));
+    if (!u->paths || !u->areas || !u->folders || !u->parts || !u->written) return SIGIL_ERR_OOM;
     for (size_t i = 0; i < u->count; i++) {
         snprintf(u->parts[i].name, sizeof(u->parts[i].name), "%s", u->members[i].name);
         sigil_md5_of(u->members[i].data, u->members[i].len, u->parts[i].md5);
@@ -242,13 +314,18 @@ static int read_unit(const sigil_sync_ctx *x, profile_sync *s, const uint8_t *un
         if (!skip) u->carried[area_index(f.area)] = true;
         if (u->paths[i][0] && !sigil_sync_path_inside(u->paths[i])) return SIGIL_ERR_IO;
         if (u->paths[i][0] && placed_twice(u, i)) return SIGIL_ERR_UNSUPPORTED_FORMAT;
+        if (!skip) note_maker(f.folder, f.area, u->members[i].data, u->members[i].len, u->maker, &mixed);
+        rc = in_folder_form(u, i, f.entry, s->root.profile);
+        if (rc != SIGIL_OK) return rc;
     }
+    if (mixed) u->maker[0] = '\0';
     return SIGIL_OK;
 }
 
 typedef struct {
     sigil_profile_file *files;
     size_t              count;
+    char              (*raw)[33];   /* each file's own MD5 */
     sigil_named_md5    *parts;
     int                *areas;
     int                *compared;   /* areas, SIGIL_SAVE_AREA_NONE for a file restore keeps whatever the unit holds */
@@ -256,6 +333,7 @@ typedef struct {
 
 static void local_free(local_files *l) {
     free(l->files);
+    free(l->raw);
     free(l->parts);
     free(l->areas);
     free(l->compared);
@@ -277,17 +355,19 @@ static int read_local(const sigil_sync_ctx *x, const profile_sync *s, const inco
     memset(l, 0, sizeof(*l));
     int rc = sigil_profile_files(&s->root, s->root.profile, &l->files, &l->count);
     if (rc != SIGIL_OK) return rc;
+    l->raw = calloc(l->count ? l->count : 1, sizeof(*l->raw));
     l->parts = (sigil_named_md5 *)calloc(l->count ? l->count : 1, sizeof(*l->parts));
     l->areas = (int *)calloc(l->count ? l->count : 1, sizeof(*l->areas));
     l->compared = (int *)calloc(l->count ? l->count : 1, sizeof(*l->compared));
-    if (!l->parts || !l->areas || !l->compared) return SIGIL_ERR_OOM;
+    if (!l->raw || !l->parts || !l->areas || !l->compared) return SIGIL_ERR_OOM;
     for (size_t i = 0; i < l->count; i++) {
         uint8_t *data = NULL;
         size_t len = 0;
         rc = sigil_sync_read_file(x->req, l->files[i].path, PROFILE_MAX_MEMBER, &data, &len);
         if (rc != SIGIL_OK) return rc == SIGIL_ERR_NOT_FOUND ? SIGIL_ERR_IO : rc;
         snprintf(l->parts[i].name, sizeof(l->parts[i].name), "%s", l->files[i].entry);
-        sigil_md5_of(data, len, l->parts[i].md5);
+        sigil_md5_of(data, len, l->raw[i]);
+        identity_md5(l->files[i].folder, l->files[i].entry, data, len, l->raw[i], l->parts[i].md5);
         free(data);
         l->areas[i] = l->files[i].area;
         l->compared[i] = kept(u, &l->files[i]) ? SIGIL_SAVE_AREA_NONE : l->files[i].area;
@@ -329,9 +409,10 @@ static bool goes(const incoming_unit *u, const local_files *l, size_t i) {
            !placed(u, l->files[i].path);
 }
 
+/* The local file at `path` holds exactly the bytes whose MD5 is `md5`. */
 static bool holds(const local_files *l, const char *path, const char *md5) {
     for (size_t i = 0; i < l->count; i++) {
-        if (strcmp(l->files[i].path, path) == 0) return strcmp(l->parts[i].md5, md5) == 0;
+        if (strcmp(l->files[i].path, path) == 0) return strcmp(l->raw[i], md5) == 0;
     }
     return false;
 }
@@ -346,7 +427,7 @@ static int write_areas(const sigil_sync_ctx *x, const incoming_unit *u, const lo
     const sigil_profile_published *pub = &u->published;
     int rc = pub->index ? sigil_sync_put(x->req, pub->counter_path, pub->counter, sizeof(pub->counter)) : SIGIL_OK;
     for (size_t i = 0; i < u->count && rc == SIGIL_OK; i++) {
-        if (!u->paths[i][0] || holds(l, u->paths[i], u->parts[i].md5)) continue;
+        if (!u->paths[i][0] || holds(l, u->paths[i], u->written[i])) continue;
         rc = sigil_sync_put(x->req, u->paths[i], u->members[i].data, u->members[i].len);
     }
     for (size_t i = 0; i < l->count && rc == SIGIL_OK; i++) {
@@ -369,6 +450,7 @@ int sigil_sync_restore_profiles(sigil_sync_ctx *x, const sigil_layout_profiles *
     bool already = false;
     if (rc == SIGIL_OK) {
         r->problem[0] = '\0';
+        snprintf(r->maker_profile, sizeof(r->maker_profile), "%s", u.maker);
         identity_of(u.parts, u.areas, u.count, -1, r->identity_hash);
         memcpy(r->content_hash, u.content, sizeof(r->content_hash));
         identity_of(l.parts, l.areas, l.count, -1, local_identity);

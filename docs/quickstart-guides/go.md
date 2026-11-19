@@ -344,6 +344,8 @@ type SyncResult struct {
     Companions   []CompanionResult // Collect: one per SyncOptions.Companions, in order.
     Profiles     []Profile         // Layouts with profiles: every profile the emulator lists.
     Profile      string            // The profile whose saves were taken or written; "" for none.
+    MakerProfile string            // The profile the account saves' own records name as their maker
+                                   //   (a Xenia Canary save's header); "" when they name none or differ.
     Alternates   []SaveAlternate   // Listed files other option values would take, as on SaveUnit.
     HardcoreMarker bool            // Restore: the unit ended in Argosy's legacy hardcore marker.
 }

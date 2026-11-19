@@ -176,9 +176,9 @@ reads and writes the `.bkr`, whatever the core's age. See
 
 ## Profiles
 
-The Switch, Wii U, Vita and PS3 emulators keep a game's saves per user
-profile, and the Switch and Wii U also keep saves every profile on the
-device shares. Their rows name each folder a game's saves sit in, with the
+The Switch, Wii U, Vita, PS3 and Xbox 360 emulators keep a game's saves
+per user profile, and the Switch, Wii U and Xbox 360 also keep saves every
+profile on the device shares. Their rows name each folder a game's saves sit in, with the
 area it belongs to:
 
 | Layout | Account | Device | Profile list |
@@ -187,6 +187,7 @@ area it belongs to:
 | `cemu` | `mlc01/usr/save/{category}/{save_id}/user/{profile}/` | `user/common/` and `meta/` beside it | `mlc01/usr/save/system/act/{profile}/account.dat` (`PersistentId`, `MiiName`) |
 | `vita3k` | `ux0/user/{profile}/savedata/{save_id}/` | | `ux0/user/{profile}/user.xml` |
 | `rpcs3` | `dev_hdd0/home/{profile}/savedata/{save_id}*/` | | `dev_hdd0/home/{profile}/localusername` |
+| `xenia_canary`, `xenia_edge`, `xendroid` | `content/{profile}/{save_id}/00000001/` and `.../Headers/00000001/` | the same under the all-zero XUID | `content/{profile}/FFFE07D1/00010000/{profile}/Account`; encrypted, so ids only |
 | `ryujinx`, `kenjinx` | `bis/user/save/<index id>/0/` | the same | `system/Profiles.json`; `bis/system/save/8000000000000000/0/imkvdb.arc` says whose each folder is |
 | `ppsspp`, `ppsspp_standalone`, `psp_console` | | `PSP/SAVEDATA/{save_id}*/` | none |
 | `azahar`, `citra`, `lime3ds` | | `sdmc/Nintendo 3DS/<id0>/<id1>/title/{save_id}/data/` and `.../extdata/00000000/{extdata_id}/` | none |
@@ -197,25 +198,42 @@ nothing below about picking a profile applies to them.
 
 The profile comes from the request, else from the root path when the root
 lies inside a profile's folder, else from the emulator's list when it holds
-one profile. Folders the list doesn't name are not a profile's. With two or
+one profile. Folders the list doesn't name are not a profile's. A profile
+id names a listed profile ignoring case, and its saves go to that profile's
+folder. An id that names none, from the request or the root path, is used as
+given, unless the emulator could never list it: then it is
+`SIGIL_ERR_INVALID_ARG`. On Xenia's rows that is anything but 16 uppercase
+hex digits, or the all-zero XUID ([xbox360](platforms/xbox360.md#save-layouts)). With two or
 more profiles and none picked, collect returns `SIGIL_ERR_AMBIGUOUS` when one
 of them holds the game's saves, and restore when the unit holds an account
-save, with `problem` listing them as `id name`, one per line; a device save
+save, with `problem` listing them as `id name` (the id alone where the
+emulator keeps no name, as Xenia), one per line; a device save
 alone needs no profile. A client that doesn't know which profile the user
 plays as should ask them: `sigil_save_profiles()` lists the emulator's
 profiles without a game, and the result's `profiles` holds the same list.
 Pass the answer as `profile` and store it per user.
 With the list out of the root's reach, the profile folders holding files
 stand for it. Results carry `profiles` and the `profile` chosen.
+`maker_profile` is the profile the account saves' own records name as the
+one they were made under, where the emulator keeps one (a Xenia Canary
+save's header, [xbox360](platforms/xbox360.md#sync)); a client can offer
+it when a game binds its save to the profile. Collect reads it from the
+saves on disk, restore from the unit, and it is empty when the records name
+none or name different ones.
 
-A unit never carries a profile id, so it restores under any profile. A
+A unit's member names never carry a profile id, so it restores under any
+profile. A
 yuzu-fork unit holds `<save_id>/...` for the account save and
 `device/<save_id>/...` for the device save. A Cemu unit holds
 `<low>/meta/`, `<low>/user/account/` and `<low>/user/common/`, the title
 id's low half without the category; an
 older unit naming the account folder by its id restores as the account
 save. A PSP unit holds each of the game's folders by its own name
-(`ULUS10064DATA00/...`, `ULUS10064SETTINGS/...`). The size file each yuzu fork keeps in a save folder
+(`ULUS10064DATA00/...`, `ULUS10064SETTINGS/...`). An Xbox 360 unit holds
+`<title id>/00000001/...` and `<title id>/Headers/00000001/...`, and
+`device/<title id>/...` for the all-zero XUID's saves, each header as its
+emulator wrote it; restore writes each header as the target's row says, and
+identity covers what both forms carry ([xbox360](platforms/xbox360.md#sync)). The size file each yuzu fork keeps in a save folder
 (`.yuzu_save_size`, `.citron_save_size`, `.sudachi_save_size`,
 `.suyu_save_size`) is never collected, written or removed.
 
@@ -233,7 +251,7 @@ the emulator never ran its save index entries
 ([switch](platforms/switch.md#save-layouts)).
 
 The root may sit anywhere around the emulator's base folder, the one
-holding the row's top folder (`nand`, `mlc01`, `ux0`, `dev_hdd0`). Above it,
+holding the row's top folder (`nand`, `mlc01`, `ux0`, `dev_hdd0`, `content`). Above it,
 sigil finds the base in the listing; two candidates are
 `SIGIL_ERR_AMBIGUOUS` naming them. Inside it, `root_path` says where: a root
 inside a profile's folder picks that profile, and folders outside the root

@@ -47,7 +47,8 @@ typedef struct {
  * The game is the request's save id; with none, no folder is the game's.
  * SIGIL_ERR_AMBIGUOUS, the candidate base folders one per line in `problem`,
  * when the listing holds more than one; SIGIL_ERR_INVALID_ARG when the root
- * lies inside one of the game's save folders.
+ * lies inside one of the game's save folders, or when the profile picked is
+ * one the emulator could never list.
  */
 int sigil_profile_root_open(const sigil_save_request *req, const sigil_layout_profiles *row, sigil_profile_root *p,
                             char problem[SIGIL_SAVE_PATH_MAX]);

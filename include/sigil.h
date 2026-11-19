@@ -38,6 +38,7 @@ extern "C" {
 #define SIGIL_SYNC_REQUEST_V1 1u
 #define SIGIL_SYNC_REQUEST_V2 2u   /* adds write_at */
 #define SIGIL_SYNC_RESULT_V1  1u
+#define SIGIL_SYNC_RESULT_V2  2u
 #define SIGIL_SUPPORT_V1  1u
 #define SIGIL_OPTIONS_V1  1u
 
@@ -348,7 +349,10 @@ typedef struct {
                                                    that profile, and saves outside the root are out of reach */
     const char               *profile;          /* layouts with profiles: the profile whose saves to take, by
                                                    sigil_save_profile.id, or NULL to take the one the root path
-                                                   names, else the only one the emulator lists */
+                                                   names, else the only one the emulator lists. An id names a
+                                                   listed profile ignoring case. One that names none and that the
+                                                   emulator could never list (Xenia: anything but 16 uppercase
+                                                   hex digits, or the all-zero XUID) is SIGIL_ERR_INVALID_ARG */
 } sigil_save_request;
 
 typedef struct {
@@ -629,7 +633,7 @@ typedef struct {
 } sigil_sync_request;
 
 typedef struct {
-    uint32_t  struct_version;                  /* SIGIL_SYNC_RESULT_V1 */
+    uint32_t  struct_version;                  /* SIGIL_SYNC_RESULT_V2 */
     char      artifact[SIGIL_SAVE_ENTRY_MAX];  /* the file name the unit travels under */
     int       shape;                           /* sigil_save_shape */
     uint8_t  *data;                            /* collect: the unit to upload; NULL when the game has no saves */
@@ -671,6 +675,11 @@ typedef struct {
                                                   marker out of the saves; content_hash still covers it */
     size_t    unowned_changed;                 /* collect: the first this many of `unowned` are new or rewritten since
                                                   the last collect saw their volume; 0 on a volume no collect has seen */
+    char      maker_profile[SIGIL_PROFILE_ID_MAX]; /* struct_version >= SIGIL_SYNC_RESULT_V2, layouts with profiles:
+                                                  the profile the account saves' own records name as the one they
+                                                  were made under, as Xenia keeps it in a save's header; collect
+                                                  reads the saves on disk, restore the unit. Empty when the
+                                                  records name none, or name different ones */
 } sigil_sync_result;
 
 /* Gathers the game's saves into one unit. Returns SIGIL_ERR_DAMAGED as restore does, and

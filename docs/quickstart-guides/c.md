@@ -414,6 +414,10 @@ typedef struct {
     sigil_save_alternate *alternates; /* Listed files other option values would take, as on the unit. */
     size_t alternate_count;
     int hardcore_marker;              /* restore: the unit ended in Argosy's legacy hardcore marker. */
+    char maker_profile[64];           /* struct_version >= SIGIL_SYNC_RESULT_V2: the profile the account
+                                         saves' own records name as the one they were made under (a
+                                         Xenia Canary save's header); "" when they name none or differ.
+                                         Collect reads the saves, restore the unit. */
 } sigil_sync_result;
 
 typedef struct {

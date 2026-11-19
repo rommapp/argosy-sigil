@@ -5,7 +5,7 @@
 
 static sigil_sync_result *new_result(void) {
     sigil_sync_result *r = (sigil_sync_result *)calloc(1, sizeof(*r));
-    if (r) r->struct_version = SIGIL_SYNC_RESULT_V1;
+    if (r) r->struct_version = SIGIL_SYNC_RESULT_V2;
     return r;
 }
 

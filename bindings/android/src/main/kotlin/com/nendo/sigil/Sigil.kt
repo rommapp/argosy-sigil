@@ -344,6 +344,9 @@ class SigilCardRepair(
  * [unownedChanged] is how many of the first [unowned] names are new or rewritten since the last
  * collect saw their volume: the saves a session that just ended wrote, when that collect came right
  * before it.
+ * [makerProfile] is, on a layout with profiles, the profile the account saves' own records name as
+ * the one they were made under, as Xenia keeps it in a save's header: collect reads the saves,
+ * restore the unit. Empty when the records name none, or name different ones.
  */
 class SigilSyncResult(
     val artifact: String,
@@ -361,7 +364,8 @@ class SigilSyncResult(
     val profile: String,
     val alternates: List<SigilSaveAlternate>,
     val hardcoreMarker: Boolean,
-    val unownedChanged: Int
+    val unownedChanged: Int,
+    val makerProfile: String
 ) {
     val shape: SigilSaveUnit.Shape get() = SigilSaveUnit.Shape.fromCode(shapeCode)
 }

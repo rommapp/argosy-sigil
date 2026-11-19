@@ -39,7 +39,7 @@ save folder; sigil never searches the drive.
 | Saturn | [saturn](saturn.md) | `saturn` (layout rows) | no | synced |
 | Dreamcast | [dreamcast](dreamcast.md) | `dreamcast` | yes | synced |
 | Xbox | [xbox](xbox.md) | `xbox` | yes | synced |
-| Xbox 360 | [xbox360](xbox360.md) | `xbox360` | yes | in development |
+| Xbox 360 | [xbox360](xbox360.md) | `xbox360` | yes | synced |
 | Arcade (FBNeo, MAME 2003-Plus) | [arcade](arcade.md) | | no | located |
 | Neo Geo | [neogeo](neogeo.md) | | no | located |
 | Neo Geo Pocket | [ngp](ngp.md) | | no | located |
@@ -145,6 +145,9 @@ section, fails `bindings/python/test_docs.py`.
 | `rpcs3` | [ps3](ps3.md) | RPCS3 | standalone |
 | `aps3e` | [ps3](ps3.md) | aPS3e | standalone |
 | `armsx3` | [ps3](ps3.md) | ARMSX3 | standalone |
+| `xenia_canary` | [xbox360](xbox360.md) | Xenia Canary | standalone |
+| `xenia_edge` | [xbox360](xbox360.md) | Xenia Edge | standalone |
+| `xendroid` | [xbox360](xbox360.md) | XenDroid | standalone |
 | `ppsspp` | [psp](psp.md) | PPSSPP | libretro core |
 | `ppsspp_standalone` | [psp](psp.md) | PPSSPP | standalone |
 | `psp_console` | [psp](psp.md) | PSP games on a PSP, or on a PS Vita (Adrenaline, the PSP emulator) | console |
@@ -215,5 +218,6 @@ value, and the default is the first listed.
 | `azahar`, `citra`, `lime3ds` | `sdmc/Nintendo 3DS/<32 zeros>/<32 zeros>/title/{save_id}/data/`, and the title's `extdata/00000000/{extdata_id}/` | | yes |
 | `vita3k` | `ux0/user/{profile}/savedata/{save_id}/` | | with `profile` |
 | `rpcs3`, `aps3e`, `armsx3` | `dev_hdd0/home/{profile}/savedata/{save_id}*/` | | with `profile` |
+| `xenia_canary`, `xenia_edge`, `xendroid` | `content/{profile}/{save_id}/00000001/` and `content/{profile}/{save_id}/Headers/00000001/`; device saves under the all-zero XUID | | with `profile` (a unit without an account save needs none) |
 | `ppsspp`, `ppsspp_standalone`, `psp_console` | `PSP/SAVEDATA/{save_id}*/` | | yes |
 | `xemu`, `x1box` | the game's `UDATA/{save_id}/` and `TDATA/{save_id}/` folders on E: inside the hard-disk image `hdd_path` names (`x1box`: `hdd.img` without it), shared | `hdd_path` names the image; `xemu` needs it | send the container: sigil makes no drive image, and refuses with `SIGIL_ERR_NO_TARGET` naming it |
