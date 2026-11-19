@@ -705,6 +705,8 @@ static void extended_l2(mem_root *root) { patch32(root, 76, 16); }
 static void wide_refcounts(mem_root *root) { patch32(root, 96, 6); }
 static void version_4(mem_root *root) { patch32(root, 4, 4); }
 static void short_header(mem_root *root) { patch32(root, 100, 72); }
+static void dirty_bitmaps(mem_root *root) { patch32(root, 92, 1); }
+static void reserved_autoclear(mem_root *root) { patch32(root, 92, 4); }
 static void zstd(mem_root *root) {
     patch32(root, 76, 8);
     root_find(root, DRIVE)->data[104] = 1;
@@ -765,6 +767,8 @@ static void check_images(void) {
     check_image("an image left dirty", SIGIL_ERR_UNSUPPORTED_FORMAT, left_dirty, false);
     check_image("an external data file", SIGIL_ERR_UNSUPPORTED_FORMAT, external_data, false);
     check_image("extended L2 entries", SIGIL_ERR_UNSUPPORTED_FORMAT, extended_l2, false);
+    check_image("dirty bitmaps", SIGIL_ERR_UNSUPPORTED_FORMAT, dirty_bitmaps, false);
+    check_image("a reserved autoclear bit", SIGIL_ERR_UNSUPPORTED_FORMAT, reserved_autoclear, false);
     check_image("64-bit reference counts", SIGIL_ERR_UNSUPPORTED_FORMAT, wide_refcounts, false);
     check_image("qcow2 version 4", SIGIL_ERR_UNSUPPORTED_FORMAT, version_4, false);
     check_image("Zstandard compression", SIGIL_ERR_UNSUPPORTED_FORMAT, zstd, false);
@@ -1000,38 +1004,6 @@ static void check_large_tree(void) {
     xb_free(&before);
 }
 
-/* Autoclear bits describe extensions a writer that doesn't know them must
- * clear: cleared by a restore that writes, left by a collect. */
-static void check_autoclear(void) {
-    const char *where = "autoclear bits";
-    sigil_sync_result *unit = collect_halo(1, 16, 2, where);
-    xb_guest g;
-    second_drive(&g);
-    mem_root root = {0};
-    put_drive(&root, DRIVE, &g, 16, 2, 3);
-    patch32(&root, 92, 1);
-    game game;
-    make_game(&game, &root, "xemu", HALO);
-    game.req.overwrite_local = 1;
-    sigil_sync_result *r = NULL;
-    CHECK(sigil_collect(&game.req, &r) == SIGIL_OK && xb_be32(root_find(&root, DRIVE)->data + 92) == 1, where,
-          "a collect changed the image");
-    sigil_sync_result_free(r);
-    r = NULL;
-    CHECK(unit && sigil_restore(&game.req, unit->data, unit->len, &r) == SIGIL_OK &&
-              xb_be64(root_find(&root, DRIVE)->data + 88) == 0,
-          where, "a restore left autoclear bits set");
-    xb_guest after;
-    xb_tree tree;
-    if (load_drive(&root, DRIVE, &after, &tree, where)) only_game_changed(&g, &after, "4d530004", where);
-    xb_tree_free(&tree);
-    sigil_sync_result_free(r);
-    sigil_sync_result_free(unit);
-    root_free(&root);
-    xb_free(&after);
-    xb_free(&g);
-}
-
 int main(void) {
     check_collect();
     check_collect_edges();
@@ -1052,7 +1024,6 @@ int main(void) {
     check_raw(XB_DISK_SIZE, "a raw image, 8 GiB");
     check_raw(XB_RETAIL_SIZE, "a raw image that ends where E: does");
     check_large_tree();
-    check_autoclear();
     if (g_fails) {
         fprintf(stderr, "%d check(s) failed\n", g_fails);
         return 1;

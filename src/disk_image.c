@@ -47,7 +47,6 @@ struct sigil_disk {
     uint64_t        rt_off;
     uint64_t        rt_entries;
     uint64_t        next_cluster;   /* where the next new cluster goes: the end of the file */
-    bool            autoclear;      /* the header holds autoclear bits a writer must clear */
     uint8_t        *cluster;        /* scratch, one cluster */
 };
 
@@ -194,7 +193,11 @@ static int qcow2_open(sigil_disk *d) {
             return SIGIL_ERR_UNSUPPORTED_FORMAT;
         }
         if (sigil_read_be32(h + 96) != 4) return SIGIL_ERR_UNSUPPORTED_FORMAT;   /* 16-bit reference counts */
-        d->autoclear = sigil_read_be64(h + QCOW2_AUTOCLEAR_OFFSET) != 0;
+        /* Autoclear bit 0 says the bitmaps extension holds consistent dirty
+         * bitmaps, which a write here would make stale; bit 1 comes only with
+         * an external data file, refused above, and the rest are reserved
+         * (qcow2.rst "autoclear_features" and "Bitmaps extension"). */
+        if (sigil_read_be64(h + QCOW2_AUTOCLEAR_OFFSET) != 0) return SIGIL_ERR_UNSUPPORTED_FORMAT;
     }
     uint64_t l1_bytes = (uint64_t)d->l1_size * 8;
     if (l1_bytes > QCOW2_MAX_L1_BYTES || !d->l1_off || (d->l1_off & 511) || d->l1_off > d->file_len ||
@@ -493,13 +496,6 @@ int sigil_disk_write(sigil_disk *d, uint64_t off, const void *buf, size_t len) {
         off += n;
         in += n;
         len -= n;
-    }
-    /* Autoclear bits describe extensions a writer that doesn't know them
-     * must declare stale (bitmaps): cleared with the first change. */
-    if (d->autoclear && d->staged) {
-        static const uint8_t zero[8] = { 0 };
-        d->autoclear = false;
-        return file_write(d, QCOW2_AUTOCLEAR_OFFSET, zero, sizeof(zero));
     }
     return SIGIL_OK;
 }

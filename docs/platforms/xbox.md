@@ -149,18 +149,16 @@ and 3 images with zlib compression and 16-bit reference counts, which is
 every image xemu and `qemu-img` make by default. It refuses, rather than
 guess at, an image with a backing file, encryption, internal snapshots,
 an external data file, extended L2 entries, another compression type or
-reference count width, or one qemu left marked dirty.
+reference count width, dirty bitmaps or another autoclear feature bit, or
+one qemu left marked dirty. A write would make an image's bitmaps stale,
+and xemu makes none: its own drives hold no bitmaps extension and no
+autoclear bits (every drive in `tests/fixtures/saves/xbox/manifest.tsv`).
 
 A write to a cluster the image holds uncompressed goes in place. A
 cluster that is compressed (every cluster of the image xemu publishes)
 or was never written is replaced by a new cluster at the end of the
 file, counted in the reference counts, and the references the old one
 held are dropped, so the image stays what `qemu-img check` calls clean.
-Autoclear feature bits are cleared with the first change, as the format
-asks of a writer that doesn't know them. An image that carried a dirty
-bitmap (xemu makes none) loses it that way, and `qemu-img check` then
-reports the bitmap's own clusters as leaked: space the image no longer
-uses, with no harm to what it holds.
 
 E: is at byte `0xABE80000` of a retail drive and `0x1312D6000` bytes
 long, whatever the drive's size, so the smallest drive that holds it is
@@ -199,7 +197,6 @@ The qcow2 and FATX code is a port of CabinetOS's MIT-licensed
 - A file's creation and last-access times aren't carried: the unit holds the last-write time, and restore writes it into all three stamps, as the kernel does for a file it creates. A folder gets the time of its newest file in all three, where the kernel keeps a folder's creation time and moves only its last write.
 - A folder with no file in it isn't carried (X1 BOX's export keeps one as a folder entry). The kernel makes a game's `UDATA` and `TDATA` folders again when the game starts.
 - Restore replaces the game's two folders with the unit's. X1 BOX's own import merges instead and keeps files the zip doesn't hold.
-- An image carrying a qcow2 dirty bitmap loses it, and `qemu-img check` then reports the bitmap's clusters as leaked ([The drive image](#the-drive-image)). xemu makes no bitmaps.
 - A drive image over 2 GiB, and any raw image, collects but doesn't restore: `write` takes a whole file, and sigil won't hold that much in memory.
 - X1 BOX wasn't run: its row and its FATX layout come from its source (`SetupWizardActivity.kt`, `HakuxHddSync.kt`, `XboxSaveManager.kt`, `xemu_fatx_import.c` at `57bc6d6`), and its raw and qcow2 images are the forms tested with xemu.
 - A game's saves under another title id (a title that reads an earlier one's saves) stay with that title: `game_ids` isn't read here.
