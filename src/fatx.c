@@ -17,17 +17,18 @@
 #define MAX_DIR_ENTRIES 4096u   /* sigil's own bound on one directory, so a chain that loops ends */
 #define MAX_DEPTH       64u
 
-/* The phases a restore's writes go out in (sigil_disk_set_phase), so one
- * that stops after any write leaves every chain whole, each folder it
- * replaces as it was or as it was to be, and clusters marked used that
- * nothing holds as its only waste. libfatx (v0.0.8 fatx_dir.c fatx_unlink)
- * frees a chain before it marks the entry deleted and hands the clusters
- * straight back out, which no such stop survives, so the order here is
- * sigil's own: nothing is pointed at before it is whole, and nothing is
- * freed while anything points at it. */
-#define PHASE_BUILD 0u   /* new files and folders, in clusters free at open, with their FAT entries */
-#define PHASE_LINK  1u   /* the entries that put them in folders there at open; 0xE5 on removed entries */
-#define PHASE_FREE  2u   /* the FAT entries of what was removed, freed */
+/* The phases a restore's writes go out in (sigil_disk_set_phase). Nothing is
+ * pointed at before it is whole and nothing is freed while anything points
+ * at it, so a restore in parts that stops after any write leaves every chain
+ * whole, each folder it replaces as it was or as it was to be, and clusters
+ * marked used that nothing holds as its only waste. libfatx (v0.0.8,
+ * fatx_dir.c fatx_unlink) frees a chain and then marks its entry deleted,
+ * and its fatx_alloc_cluster takes any free cluster; no source gives a FATX
+ * write order that survives a stop, so this one is sigil's. */
+#define PHASE_BUILD  0u   /* new files and folders, in clusters free at open, with their FAT entries */
+#define PHASE_UNLINK 1u   /* 0xE5 on removed entries no new entry takes the slot of */
+#define PHASE_LINK   2u   /* the entries that put the new ones in folders there at open */
+#define PHASE_FREE   3u   /* the FAT entries of what was removed, freed */
 
 /* An entry for a folder that was there at open, written in PHASE_LINK. */
 typedef struct {
@@ -35,11 +36,12 @@ typedef struct {
     uint8_t  raw[ENTRY_SIZE];
 } linked_entry;
 
-/* A removed entry: marked 0xE5 in PHASE_LINK unless a new entry took its
- * slot, its clusters freed in PHASE_FREE. */
+/* A removed entry: marked 0xE5 in PHASE_UNLINK unless a new entry took its
+ * slot, its clusters freed in PHASE_FREE, or at once (sigil_fatx_free_at_once). */
 typedef struct {
     sigil_fatx_entry entry;
     bool             replaced;
+    bool             freed;
 } removed_entry;
 
 struct sigil_fatx {
@@ -60,6 +62,7 @@ struct sigil_fatx {
     removed_entry *removed;
     size_t         removed_count, removed_cap;
     bool           flushed;      /* sigil_fatx_flush ran: nothing more is staged */
+    bool           at_once;      /* removals free their clusters at once (sigil_fatx_free_at_once) */
 };
 
 /* A 16-bit FAT's markers are widened when the FAT is read, so 0xFFFF is CHAIN_END here too. */
@@ -323,15 +326,20 @@ int sigil_fatx_remove(sigil_fatx *fs, const sigil_fatx_entry *entry) {
         fs->removed = grown;
         fs->removed_cap = cap;
     }
-    fs->removed[fs->removed_count].entry = *entry;
-    fs->removed[fs->removed_count].replaced = false;
-    fs->removed_count++;
-    return SIGIL_OK;
+    removed_entry *r = &fs->removed[fs->removed_count++];
+    r->entry = *entry;
+    r->replaced = false;
+    r->freed = fs->at_once;
+    return fs->at_once ? remove_tree(fs, entry, 0) : SIGIL_OK;
+}
+
+void sigil_fatx_free_at_once(sigil_fatx *fs) {
+    fs->at_once = true;
 }
 
 /* A free cluster, marked as the end of a chain; 0 when E: is full. It was
- * free at open: what a restore removes is freed only by sigil_fatx_flush,
- * after the last cluster is taken. */
+ * free at open: what a restore removes is freed by sigil_fatx_flush, after
+ * the last cluster is taken, unless sigil_fatx_free_at_once frees it at once. */
 static uint32_t take_cluster(sigil_fatx *fs) {
     for (uint32_t i = 0; i + 1 < fs->clusters; i++) {
         uint32_t c = 1 + (fs->next - 1 + i) % (fs->clusters - 1);
@@ -520,20 +528,24 @@ int sigil_fatx_flush(sigil_fatx *fs) {
     if (fs->flushed) return SIGIL_ERR_INVALID_ARG;
     fs->flushed = true;
     int rc = write_fat(fs, PHASE_BUILD);
-    if (rc == SIGIL_OK) rc = sigil_disk_set_phase(fs->d, PHASE_LINK);
-    for (size_t i = 0; rc == SIGIL_OK && i < fs->link_count; i++) {
-        rc = sigil_disk_write(fs->d, fs->links[i].slot, fs->links[i].raw, ENTRY_SIZE);
-    }
+    /* The other spellings of a replaced folder go before the new entry shows. */
+    if (rc == SIGIL_OK) rc = sigil_disk_set_phase(fs->d, PHASE_UNLINK);
     const uint8_t mark = ENTRY_DELETED;
     for (size_t i = 0; rc == SIGIL_OK && i < fs->removed_count; i++) {
         if (!fs->removed[i].replaced) rc = sigil_disk_write(fs->d, fs->removed[i].entry.at, &mark, 1);
+    }
+    if (rc == SIGIL_OK) rc = sigil_disk_set_phase(fs->d, PHASE_LINK);
+    for (size_t i = 0; rc == SIGIL_OK && i < fs->link_count; i++) {
+        rc = sigil_disk_write(fs->d, fs->links[i].slot, fs->links[i].raw, ENTRY_SIZE);
     }
     if (rc == SIGIL_OK) rc = write_fat(fs, PHASE_LINK);
     if (rc == SIGIL_OK) rc = sigil_disk_set_phase(fs->d, PHASE_FREE);
     /* The removed slots are written now, some with new entries: no listing hides them any more. */
     size_t removed = fs->removed_count;
     fs->removed_count = 0;
-    for (size_t i = 0; rc == SIGIL_OK && i < removed; i++) rc = remove_tree(fs, &fs->removed[i].entry, 0);
+    for (size_t i = 0; rc == SIGIL_OK && i < removed; i++) {
+        if (!fs->removed[i].freed) rc = remove_tree(fs, &fs->removed[i].entry, 0);
+    }
     if (rc == SIGIL_OK) rc = write_fat(fs, PHASE_FREE);
     fs->link_count = 0;
     memset(fs->changed, 0, fs->clusters);

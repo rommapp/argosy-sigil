@@ -1007,11 +1007,19 @@ static void check_raw(uint64_t size, const char *where) {
     xb_free(&g);
 }
 
-/* Both ways of writing leave the same file, and the parts are a small share of it. */
-static void check_parts_match_whole(unsigned bits, unsigned compress_every, const char *where) {
+/* Both ways of writing leave the same saves, and the parts are a small share
+ * of the file. Where the drive holds none of the game's saves, they leave the
+ * same file too; where it does, written whole the new saves may take the old
+ * ones' clusters, and written in parts they may not. */
+static void check_parts_match_whole(unsigned bits, unsigned compress_every, bool old_saves, const char *where) {
     sigil_sync_result *unit = collect_halo(1, 16, 2, where);
     xb_guest g;
-    second_drive(&g);
+    if (old_saves) {
+        second_drive(&g);
+    } else {
+        blank_drive(&g);
+        put_others(&g);
+    }
     mem_root whole = {0}, parts = {0};
     put_drive(&whole, DRIVE, &g, bits, compress_every, 3);
     put_drive(&parts, DRIVE, &g, bits, compress_every, 3);
@@ -1029,8 +1037,22 @@ static void check_parts_match_whole(unsigned bits, unsigned compress_every, cons
     CHECK(unit && sigil_restore(&game.req, unit->data, unit->len, &r2) == SIGIL_OK && parts.parts > 0 && parts.writes == 1,
           where, "the restore in parts failed");
     mem_file *a = root_find(&whole, DRIVE), *b = root_find(&parts, DRIVE);
-    CHECK(a && b && a->len == b->len && memcmp(a->data, b->data, a->len) == 0, where,
-          "the two ways of writing left different files");
+    if (!old_saves) {
+        CHECK(a && b && a->len == b->len && memcmp(a->data, b->data, a->len) == 0, where,
+              "the two ways of writing left different files");
+    }
+    mem_root *roots[2] = { &whole, &parts };
+    for (int k = 0; unit && k < 2; k++) {
+        xb_guest after;
+        xb_tree tree;
+        if (load_drive(roots[k], DRIVE, &after, &tree, where)) {
+            unit_on_drive(unit->data, unit->len, &after, &tree, where);
+            others_intact(&g, &after, "4d530004", where);
+            only_game_changed(&g, &after, "4d530004", where);
+        }
+        xb_tree_free(&tree);
+        xb_free(&after);
+    }
     /* A compressed cluster is written anew, whole, so only an image with plain clusters shows the saving. */
     CHECK(bits < 16 || compress_every == 1 || parts.part_bytes < before / 2, where, "the parts were most of the file");
 
@@ -1052,6 +1074,77 @@ static void check_parts_match_whole(unsigned bits, unsigned compress_every, cons
     root_free(&whole);
     root_free(&parts);
     xb_free(&g);
+}
+
+/* E: with room for the unit only once the game's old saves are gone.
+ * Written whole, the new saves take the old ones' clusters and fit. Written
+ * in parts, the old saves keep theirs until the new ones are in place, so
+ * the restore is refused as no space, writing nothing. */
+static void check_nearly_full(void) {
+    const char *where = "a nearly full E:";
+    sigil_sync_result *unit = collect_halo(1, 16, 2, where);
+    xb_guest g, done;
+    second_drive(&g);
+    /* How many clusters the game's saves hold before and after a restore with room. */
+    mem_root roomy = {0};
+    put_drive(&roomy, DRIVE, &g, 16, 2, 3);
+    game game;
+    make_game(&game, &roomy, "xemu", HALO);
+    game.req.overwrite_local = 1;
+    sigil_sync_result *r = NULL;
+    CHECK(unit && sigil_restore(&game.req, unit->data, unit->len, &r) == SIGIL_OK, where, "restore with room failed");
+    sigil_sync_result_free(r);
+    xb_tree tree;
+    load_drive(&roomy, DRIVE, &done, &tree, where);
+    xb_tree_free(&tree);
+    uint8_t *was = (uint8_t *)calloc(XB_CLUSTERS, 1), *is = (uint8_t *)calloc(XB_CLUSTERS, 1);
+    xb_walk(&g, &tree);
+    xb_game_clusters(&g, &tree, "4d530004", was);
+    xb_tree_free(&tree);
+    xb_walk(&done, &tree);
+    xb_game_clusters(&done, &tree, "4d530004", is);
+    xb_tree_free(&tree);
+    uint32_t old_n = 0, new_n = 0;
+    for (uint32_t c = 1; c < XB_CLUSTERS; c++) {
+        old_n += was[c];
+        new_n += is[c];
+    }
+    free(was);
+    free(is);
+    CHECK(old_n >= 2 && new_n > old_n, where, "the test drive doesn't hold what this check needs");
+    xb_fill(&g, new_n - 1);
+    for (int parts = 0; unit && parts < 2; parts++) {
+        g_parts = parts;
+        mem_root root = {0};
+        put_drive(&root, DRIVE, &g, 16, 2, 3);
+        make_game(&game, &root, "xemu", HALO);
+        game.req.overwrite_local = 1;
+        r = NULL;
+        int rc = sigil_restore(&game.req, unit->data, unit->len, &r);
+        if (!parts) {
+            CHECK(rc == SIGIL_OK && root.writes == 1, where, "written whole, the restore didn't take the old saves' room");
+            xb_guest after;
+            xb_check check;
+            mem_file *f = root_find(&root, DRIVE);
+            xb_read_image(f->data, f->len, &after, &check);
+            xb_walk(&after, &tree);
+            CHECK(check.faults == 0 && check.leaks == 0 && tree.faults == 0, where, "the drive written whole isn't whole");
+            unit_on_drive(unit->data, unit->len, &after, &tree, where);
+            others_intact(&g, &after, "4d530004", where);
+            xb_tree_free(&tree);
+            xb_free(&after);
+        } else {
+            CHECK(rc == SIGIL_ERR_NO_SPACE && r && r->problem[0] && r->blocks_short > 0 && root.writes == 0 && root.parts == 0,
+                  where, "written in parts, a restore with no room beside the old saves wasn't refused");
+        }
+        sigil_sync_result_free(r);
+        root_free(&root);
+    }
+    g_parts = 0;
+    root_free(&roomy);
+    xb_free(&done);
+    xb_free(&g);
+    sigil_sync_result_free(unit);
 }
 
 /* An old save whose chain runs past its size into a cluster free at open:
@@ -1258,11 +1351,15 @@ static void check_left(const xb_guest *before, const xb_guest *done, const xb_gu
     CHECK(now.faults == 0, where, "E:'s FAT chains are wrong");
     static const char *const tops[] = { "UDATA", "TDATA" };
     for (size_t t = 0; t < 2; t++) {
-        CHECK(xb_folder_same(after, &now, before, &old, tops[t], "4d530004") ||
-                  xb_folder_same(after, &now, done, &new, tops[t], "4d530004"),
-              where, t ? "TDATA/4d530004 is neither the old folder nor the unit's" :
-                         "UDATA/4d530004 is neither the old folder nor the unit's");
+        bool is_new = xb_folder_same(after, &now, done, &new, tops[t], "4d530004");
+        CHECK(is_new || xb_folder_same(after, &now, before, &old, tops[t], "4d530004"), where,
+              t ? "TDATA/4d530004 is neither the old folder nor the unit's" :
+                  "UDATA/4d530004 is neither the old folder nor the unit's");
+        CHECK(!is_new || xb_named(&now, tops[t], "4d530004") <= 1, where,
+              t ? "the unit's TDATA folder shows beside an old one of the same name" :
+                  "the unit's UDATA folder shows beside an old one of the same name");
     }
+
     others_intact(before, after, "4d530004", where);
     if (!xb_only_game_changed(before, after, "4d530004", true)) fail(where, "the stop changed something that isn't the game's");
     xb_tree_free(&old);
@@ -1360,6 +1457,15 @@ static void check_stopped_drives(void) {
         xb_mkdir(&g, xb_lookup(&g, 1, "UDATA", NULL), name, XB_TIME(8, 0, 0), XB_DATE(2026, 1, 1));
     }
     check_stopped(&g, 16, 0, 3, "stopped, a UDATA of 300 games");
+    /* The game's folder twice, spelled two ways, the second in UDATA's second
+     * cluster: the new folder takes the first one's slot, and the other is
+     * gone before it shows. */
+    uint32_t second = xb_mkdir(&g, xb_lookup(&g, 1, "UDATA", NULL), "4D530004", XB_TIME(7, 0, 0), XB_DATE(2025, 5, 5));
+    uint32_t data = xb_take(&g);
+    xb_set(&g, xb_cluster_off(data), "a second spelling", 17);
+    xb_add_entry(&g, second, "other.sav", 0, data, 17, XB_TIME(7, 0, 0), XB_DATE(2025, 5, 5));
+    check_stopped(&g, 16, 0, 3, "stopped, the game's folder spelled two ways");
+    check_stopped(&g, 16, 2, 3, "stopped, the game's folder spelled two ways, half compressed");
     xb_free(&g);
     blank_drive(&g);
     check_stopped(&g, 16, 1, 3, "stopped, a blank drive");
@@ -1530,9 +1636,13 @@ int main(void) {
         check_broken_old_chain();
     }
     g_parts = 0;
-    check_parts_match_whole(16, 2, "parts and whole, 64 KiB clusters");
-    check_parts_match_whole(16, 1, "parts and whole, every cluster compressed");
-    check_parts_match_whole(12, 0, "parts and whole, 4 KiB clusters");
+    check_parts_match_whole(16, 2, false, "parts and whole, 64 KiB clusters");
+    check_parts_match_whole(16, 1, false, "parts and whole, every cluster compressed");
+    check_parts_match_whole(12, 0, false, "parts and whole, 4 KiB clusters");
+    check_parts_match_whole(16, 2, true, "parts and whole over old saves, 64 KiB clusters");
+    check_parts_match_whole(16, 1, true, "parts and whole over old saves, every cluster compressed");
+    check_parts_match_whole(12, 0, true, "parts and whole over old saves, 4 KiB clusters");
+    check_nearly_full();
     check_disk_phase_drives();
     check_stopped_drives();
     check_raw_stopped_drives();

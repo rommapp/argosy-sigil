@@ -238,13 +238,14 @@ static void stop_each(const sigil_sync_result *unit, const char *owner, const ch
         xb_walk(&after, &now);
         if (check.faults) fail(at, "a cluster is referenced more often than it is counted, or a table is wrong");
         if (now.faults) fail(at, "E:'s FAT chains are wrong");
-        if (!xb_folder_same(&after, &now, &before, &old, "UDATA", folder) &&
-            !xb_folder_same(&after, &now, &done, &new, "UDATA", folder)) {
-            fail(at, "the game's UDATA folder is neither the old one nor the unit's");
-        }
-        if (!xb_folder_same(&after, &now, &before, &old, "TDATA", folder) &&
-            !xb_folder_same(&after, &now, &done, &new, "TDATA", folder)) {
-            fail(at, "the game's TDATA folder is neither the old one nor the unit's");
+        static const char *const tops[] = { "UDATA", "TDATA" };
+        for (size_t t = 0; t < 2; t++) {
+            bool is_new = xb_folder_same(&after, &now, &done, &new, tops[t], folder);
+            if (!is_new && !xb_folder_same(&after, &now, &before, &old, tops[t], folder)) {
+                fail(at, t ? "the game's TDATA folder is neither the old one nor the unit's" :
+                             "the game's UDATA folder is neither the old one nor the unit's");
+            }
+            if (is_new && xb_named(&now, tops[t], folder) > 1) fail(at, "the unit's folder shows beside an old one");
         }
         if (xb_others_changed(&before, &after, folder)) fail(at, "the drive's other files aren't as they were");
         if (!xb_only_game_changed(&before, &after, folder, true)) fail(at, "the stop changed something that isn't the game's");

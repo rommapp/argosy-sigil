@@ -443,19 +443,44 @@ static bool xb_in_folder(const char *path, const char *top, const char *id) {
     return path[nt + 1 + ni] == '\0' || path[nt + 1 + ni] == '/';
 }
 
-/* Folder `top`/`id` holds the same on `a` as on `b`: its own entry's times,
- * and every file and folder below it with its name, size, bytes and times. */
+/* How many entries of folder `top` name folder `id`, compared without case. */
+static size_t xb_named(const xb_tree *t, const char *top, const char *id) {
+    size_t n = 0, len = strlen(top) + 1 + strlen(id);
+    for (size_t i = 0; i < t->count; i++) n += strlen(t->items[i].path) == len && xb_in_folder(t->items[i].path, top, id);
+    return n;
+}
+
+/* The spelling of the first entry of folder `top` that names `id`, which
+ * is the one a FATX lookup finds; "" when there is none. */
+static const char *xb_found_as(const xb_tree *t, const char *top, const char *id) {
+    size_t len = strlen(top) + 1 + strlen(id);
+    for (size_t i = 0; i < t->count; i++) {
+        if (strlen(t->items[i].path) == len && xb_in_folder(t->items[i].path, top, id)) return t->items[i].path;
+    }
+    return "";
+}
+
+/* `path` is the folder spelled exactly `folder` or lies in it. */
+static bool xb_under(const char *path, const char *folder) {
+    size_t n = strlen(folder);
+    return n && strncmp(path, folder, n) == 0 && (path[n] == '\0' || path[n] == '/');
+}
+
+/* Folder `top`/`id`, as a FATX lookup finds it, holds the same on `a` as on
+ * `b`: its own entry's times, and every file and folder below it with its
+ * name, size, bytes and times. */
 static bool xb_folder_same(const xb_guest *a, const xb_tree *ta, const xb_guest *b, const xb_tree *tb, const char *top,
                            const char *id) {
     size_t skip = strlen(top) + 1 + strlen(id), na = 0, nb = 0;
-    for (size_t k = 0; k < tb->count; k++) nb += xb_in_folder(tb->items[k].path, top, id);
+    const char *fa = xb_found_as(ta, top, id), *fb = xb_found_as(tb, top, id);
+    for (size_t k = 0; k < tb->count; k++) nb += xb_under(tb->items[k].path, fb);
     for (size_t i = 0; i < ta->count; i++) {
         const xb_node *n = &ta->items[i], *m = NULL;
-        if (!xb_in_folder(n->path, top, id)) continue;
+        if (!xb_under(n->path, fa)) continue;
         na++;
         for (size_t k = 0; k < tb->count && !m; k++) {
             const xb_node *o = &tb->items[k];
-            if (xb_in_folder(o->path, top, id) && strcmp(o->path + skip, n->path + skip) == 0) m = o;
+            if (xb_under(o->path, fb) && strcmp(o->path + skip, n->path + skip) == 0) m = o;
         }
         if (!m || m->attr != n->attr || m->size != n->size || m->time != n->time || m->date != n->date) return false;
         if (!(n->attr & XB_DIR) && n->size) {
