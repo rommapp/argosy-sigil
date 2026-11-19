@@ -431,10 +431,12 @@ static int place_dir(placer *p, const file_list *in, const char *path, uint32_t 
 }
 
 /* Stages the game's two folders as the unit has them: what the drive holds
- * of them goes, then each file of the unit is written, its folders made as
- * they come. Nothing else on the drive is touched. SIGIL_ERR_NO_SPACE,
- * naming the file that didn't fit and the clusters it lacked, when E: is
- * too full. */
+ * of them is taken out, then each file of the unit is written, its folders
+ * made as they come, and the flush puts the new folders where the old ones
+ * were and frees the old ones (fatx.h has the order). Nothing else on the
+ * drive is touched. SIGIL_ERR_NO_SPACE, naming the file that didn't fit and
+ * the clusters it lacked, when E: hasn't room for the unit's files beside
+ * the ones they replace. */
 static int stage_game(sigil_fatx *fs, const char *id, const file_list *in, sigil_sync_result *r) {
     int rc = SIGIL_OK;
     for (size_t f = 0; rc == SIGIL_OK && f < FOLDER_COUNT; f++) {
