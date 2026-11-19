@@ -947,6 +947,22 @@ def test_an_x1_box_export_restores_as_a_unit(tmp_path):
 
 
 @pytest.mark.skipif(not _XEMU_BLANK.exists(), reason="Xbox drive samples missing")
+def test_an_xbox_restore_whose_write_fails_leaves_the_drive_as_it_was(tmp_path, monkeypatch):
+    # The drive holds every game's saves, and restore writes it back whole.
+    blank = _XEMU_BLANK.read_bytes()
+    (tmp_path / "xbox_hdd.qcow2").write_bytes(blank)
+
+    def no_space(_fd):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(sigil.os, "fsync", no_space)
+    with pytest.raises(sigil.SigilIOError):
+        sigil.restore(_stored_zip(_HALO_SAVE), _HALO, "xemu", "Halo (USA).iso", tmp_path, options=_XEMU_DRIVE)
+    assert (tmp_path / "xbox_hdd.qcow2").read_bytes() == blank
+    assert [p.name for p in tmp_path.iterdir()] == ["xbox_hdd.qcow2"]
+
+
+@pytest.mark.skipif(not _XEMU_BLANK.exists(), reason="Xbox drive samples missing")
 def test_xbox_saves_go_into_the_drive_image_and_come_back(tmp_path):
     blank = _XEMU_BLANK.read_bytes()
     (tmp_path / "xbox_hdd.qcow2").write_bytes(blank)

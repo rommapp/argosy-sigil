@@ -116,7 +116,11 @@ title's saves, the rest of E: and the other partitions stay as they are,
 byte for byte. The image is then written back through `write` as one
 file and read back: its bytes, then the game's saves on it. Nothing is
 written when the drive already holds the unit's saves, or when anything
-before the write fails.
+before the write fails. `write` replaces the file whole and, when it
+fails, leaves the file as it was (`sigil.h`), so a restore that fails
+leaves the drive as it was. The one exception is a `write` that reports
+success but whose file doesn't read back as written: restore fails, and
+the file holds what `write` stored.
 
 Restore also reads a zip of `UDATA/` and `TDATA/` as a client took them
 off a drive before it used sigil's units, in any case and with the saves
@@ -133,6 +137,7 @@ it as the game saves.
 | `SIGIL_ERR_UNSUPPORTED_FORMAT` | restore: two members go to one file, or one folder is spelled two ways. Either call: a qcow2 image using a feature sigil doesn't write (below) | |
 | `SIGIL_ERR_DAMAGED` | the file isn't a drive image with a FATX partition E:, its qcow2 tables don't hold together, or a chain of the game's files on E: is broken | the image |
 | `SIGIL_ERR_NO_SPACE` | restore: E: is too full; `blocks_short` counts 16 KiB clusters | the file that didn't fit |
+| `SIGIL_ERR_IO` | restore: what sigil staged doesn't read back as the unit, so nothing is written; `write` failed, which leaves the drive as it was; or the file `write` reported written doesn't read back as written (its bytes, or the game's saves on it), and holds what `write` stored | |
 | `SIGIL_ERR_OOM` | restore: the image is over 2 GiB, which sigil won't hold in memory to write back as one file. A raw image is the whole 8 GB drive, so it collects and doesn't restore | |
 
 Many games sign their saves; "non-roamable" titles also mix in the
