@@ -1,13 +1,13 @@
 # PlayStation 3
 
 Status: synced
-sigil reads `TITLE_ID` from `PARAM.SFO`, finds every save folder starting with it under the RPCS3 user profile, and syncs them with collect and restore.
+sigil reads `TITLE_ID` from `PARAM.SFO`, or a PSN package's title id from its content id, finds every save folder starting with it under the RPCS3 user profile, and syncs them with collect and restore.
 
 ## Identification
 
 | Slug | Inputs | `title_id` example | `usage` | Status |
 |---|---|---|---|---|
-| `ps3` | `.iso` (needs hint), game folder (recursive) or `.sfo` | `BLUS31426` (TITLE_ID from PARAM.SFO) | folder-prefix | experimental |
+| `ps3` | `.iso` or `.pkg` (needs hint), game folder (recursive) or `.sfo` | `BLUS31426` (TITLE_ID from PARAM.SFO; a `.pkg`'s from its content id) | folder-prefix | experimental |
 
 `experimental` is `1` on PS3 results: the extractor hasn't been validated
 against real-world samples.
@@ -17,9 +17,9 @@ against real-world samples.
 directly, an extracted-game folder (sigil takes the shallowest
 `PARAM.SFO` up to 4 levels down, the smallest path when two sit equally
 deep, so an update's or a trophy set's SFO further down never wins), or a
-disc image. Which shape it is gets decided from the `\0PSF`
-magic rather than assumed, so a disc image is never parsed as though its
-first sector were an SFO.
+disc image. Which shape it is gets decided from the magic (`\0PSF`, or
+`\x7FPKG` for a package) rather than assumed, so a disc image is never
+parsed as though its first sector were an SFO.
 
 On a disc the file sits at `PS3_GAME/PARAM.SFO`, with a copy at the root
 on some releases; sigil checks both, the same two locations aPS3e looks
@@ -27,10 +27,26 @@ in. PS3 discs carry a plain ISO9660 descriptor for their directory
 structure, so no UDF reader is involved. `.iso` is ambiguous across half
 a dozen platforms and needs an explicit `ps3` hint.
 
+**PSN packages (`.pkg`).** A package's PARAM.SFO sits in its encrypted
+data, so sigil reads the title id from the header and the metadata, which
+are in the clear and need no key. The title id is the name of the folder
+RPCS3 installs the package into (`read_metadata` in `unpkg.cpp` at
+c05ef18): the content id's title id, the nine characters after its first
+dash (`NPUA80083` in `UP9000-NPUA80083_00-FLOWERPS3PRIVATE`, at 0x30),
+unless a metadata packet 0xA names another folder, as RPCS3 reads it.
+Retail and debug packages read the same way, and nothing past the
+metadata is read. A PSP or Vita package, a release type RPCS3 doesn't
+install, or a metadata table that runs past the file is refused with
+`SIGIL_ERR_UNSUPPORTED_FORMAT`, and so is one that counts more than 64
+packets, sigil's own bound (RPCS3 has none; real packages carry 7 or 8). A name that can't begin a save folder's
+name, by RPCS3's rule for one (1 to 31 characters: A to Z, 0 to 9, `-` and
+`_`, with no `_` first), gives no id. PSP and Vita packages share the
+extension and the magic, so `.pkg` needs an explicit `ps3` hint.
+
 Saves land in `dev_hdd0/home/<user>/savedata` under directories that
 start with the title id and carry a per-artifact suffix
 (`BCUS99086GAMEDATA`), so `usage` is `folder-prefix` and consumers
-enumerate by prefix. PKG and encrypted-EBOOT inputs are not supported.
+enumerate by prefix. Encrypted-EBOOT inputs are not supported.
 
 ## Save layouts
 
@@ -73,6 +89,7 @@ layouts are in [sync](../sync.md).
 ## Open items
 
 - Real-hardware interop for Vita and PS3 needs encryption tooling outside RomM's reach. Emulator-to-emulator folder copies are lossless.
-- PKG and encrypted-EBOOT inputs are not supported.
+- Encrypted-EBOOT inputs are not supported.
+- A package's title id is the folder it installs into: its content id's, or a 0xA packet's. Where the PARAM.SFO inside a package carries another `TITLE_ID`, sigil still reports the folder's, because that SFO sits in the encrypted data. RPCS3 boots games whose `TITLE_ID` differs from their folder's name (`Emulator::Load` in `System.cpp` at c05ef18), so such packages can exist.
 - The `rpcs3` row collects every save folder whose name starts with `save_id`. A game picks its folder names at run time, and nothing in the game's files records them, so a game that saves under another title's id is not found. A client that knows the id the game uses can set `save_id` to it on the result it passes to collect and restore.
 - The extractor is experimental until validated against real-world samples.
