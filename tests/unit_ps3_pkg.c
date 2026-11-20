@@ -233,9 +233,9 @@ int main(void) {
 
     /* A 0xA of eight bytes or fewer is skipped, by its size, and the
      * content id's name stands until a 0xA that has one. */
-    packet small = { 0xA, 8, body2, 8 };
+    packet too_short = { 0xA, 8, body2, 8 };
     memset(body2, 0x41, 8);
-    build_pkg(pkg, PKG_RETAIL, PKG_PLATFORM_PS3, A_DLC, &small, 1);
+    build_pkg(pkg, PKG_RETAIL, PKG_PLATFORM_PS3, A_DLC, &too_short, 1);
     expect_id("0xA of eight bytes ignored", pkg, PKG_LEN, "NPUB30097");
     packet then[2] = { { 0xA, 4, body2, 4 }, dir };
     build_pkg(pkg, PKG_RETAIL, PKG_PLATFORM_PS3, A_DLC, then, 2);
