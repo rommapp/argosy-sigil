@@ -39,7 +39,11 @@ decides which. A `--platform` you pass is never second-guessed: it
 names the console outright, and the magic is consulted only when you
 name nothing. Check `source` on the result: `binary` means the id came
 from file content, `filename` means every binary path failed and a
-naming pattern was scanned instead.
+naming pattern was scanned instead. Only the named platform's own
+pattern is scanned, whether `--platform` or the extension named it; PS3,
+Xbox, Xbox 360, Dreamcast and the cartridge consoles have none, so a
+name gives them no id. Every pattern is tried only when nothing names
+the platform.
 
 Build it with the library; `-DSIGIL_BUILD_CLI=OFF` skips it
 ([building.md](building.md)).
