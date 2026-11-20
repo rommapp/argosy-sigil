@@ -36,19 +36,21 @@ int sigil_nca_extract_title_id(const uint8_t *decrypted_header, char out_title_i
         return SIGIL_OK;
     }
 
-    /* rights_id at 0x230: first 8 bytes BE, no reverse. */
-    const uint8_t *rid = decrypted_header + NCA_RIGHTS_ID_OFFSET;
-    bool nonzero = false;
-    for (int i = 0; i < 16; i++) { if (rid[i] != 0) { nonzero = true; break; } }
-    if (nonzero) {
-        sigil_hex_encode_8(rid, candidate, false);
-        if (candidate[0] == '0' && candidate[1] == '1') {
-            memcpy(out_title_id, candidate, 17);
-            return SIGIL_OK;
-        }
-    }
+    return sigil_switch_title_from_rights_id(decrypted_header + NCA_RIGHTS_ID_OFFSET,
+                                             out_title_id);
+}
 
-    return SIGIL_ERR_NOT_FOUND;
+int sigil_switch_title_from_rights_id(const uint8_t rights_id[16], char out_title_id[17]) {
+    bool nonzero = false;
+    for (int i = 0; i < 16; i++) { if (rights_id[i] != 0) { nonzero = true; break; } }
+    if (!nonzero) return SIGIL_ERR_NOT_FOUND;
+
+    /* The first 8 bytes, big-endian, no reverse. */
+    char candidate[17];
+    sigil_hex_encode_8(rights_id, candidate, false);
+    if (candidate[0] != '0' || candidate[1] != '1') return SIGIL_ERR_NOT_FOUND;
+    memcpy(out_title_id, candidate, 17);
+    return SIGIL_OK;
 }
 
 /* Plaintext-first: decrypted dumps already carry a valid NCA magic, and

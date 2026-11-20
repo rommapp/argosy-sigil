@@ -1,7 +1,7 @@
 # Nintendo Switch
 
 Status: synced
-sigil identifies Switch XCI and NSP dumps with the user's keys and NUP dumps without them, and collects and restores the save folders the yuzu forks (Eden, Citron, Sudachi, yuzu) keep per profile and per device.
+sigil identifies Switch XCI and NSP dumps with the user's keys, NUP dumps and dumps carrying a ticket without them, and collects and restores the save folders the yuzu forks (Eden, Citron, Sudachi, yuzu) keep per profile and per device.
 
 ## Identification
 
@@ -21,7 +21,7 @@ CNMT's extended header names (`0100152000022000` for a Mario Kart 8 Deluxe
 DLC). `raw_serial` keeps the content's own id (`0100152000023001`), and
 `switch_content_type` and `title_version` describe the content itself. A
 dump that holds the game beside its update or DLC reads as the game, its
-version included. Read from a file name, an id ending in `800` is an update
+version included. Read from a file name or a ticket, an id ending in `800` is an update
 of the game ending in `000`, and any other id not ending in `000` is a DLC of
 the game `0x1000` below its block.
 
@@ -40,8 +40,8 @@ ids start `04` (`0400E88025B1A000`); the result's platform is still
 
 ### Switch keys
 
-Switch NCAs are encrypted; extracting the title ID from a retail XCI
-or NSP requires the `header_key` from a `prod.keys` file. Pass it via
+Switch NCAs are encrypted; reading the CNMT of a retail XCI or NSP
+requires the `header_key` from a `prod.keys` file. Pass it via
 the support struct in any of three forms. Sigil resolves them in
 this priority order:
 
@@ -65,15 +65,47 @@ sigil_options opts = { .struct_version = SIGIL_OPTIONS_V1, .support = &sup };
 sigil_extract_from_path("game.xci", SIGIL_PLATFORM_SWITCH, &opts, &r);
 ```
 
-Without a key, sigil reads nothing from an XCI or NSP and returns
-`SIGIL_ERR_NEEDS_KEY`. It never guesses a title id from NCA file names,
-which in a retail dump are content ids. When keys are given but don't
+Without a key, sigil reads only an XCI's or NSP's tickets, and returns
+`SIGIL_ERR_NEEDS_KEY` when they give no id. It never guesses a title id
+from NCA file names, which in a retail dump are content ids; the id it
+reads without keys is the rights ID inside a ticket, which is file
+content (see [Tickets](#tickets)). When keys are given but don't
 open the content, because the key file lacks the key for the dump's key
 generation or its header key is wrong, it returns
-`SIGIL_ERR_KEYS_INCOMPATIBLE`; a newer `prod.keys` fixes that. Either
+`SIGIL_ERR_KEYS_INCOMPATIBLE`; a newer `prod.keys` fixes that. With keys
+the keys decide and the tickets aren't read, so a caller whose keys don't
+fit a dump can call again without them for its tickets' id. Either
 error falls through to the file-name source when the caller sets
 `SIGIL_FLAG_FILENAME_FALLBACK`, and the result then says
 `source = filename`.
+
+### Tickets
+
+A dump of a title that uses a title key carries the title's ticket, a
+`.tik` file beside its NCAs, and the ticket's rights ID starts with the
+content's title id. Most eShop NSPs carry one; a dump converted to
+standard crypto doesn't. A game card carries one only for an update
+bundled with the game, in the XCI's secure partition (nxdumptool
+`dumper.c` at `e33408b`). NSZ and XCZ keep the tickets unchanged (nsz
+`SolidCompressor.py` at `148218f`).
+
+Without keys sigil reads them as Eden does (at `56e628a`:
+`submission_package.cpp` `NSP::SetTicketKeys`, `key_manager.cpp`
+`Ticket::Read` and `KeyManager::ParseTicketTitleKey`), from an NSP's or
+NSZ's file table and an XCI's or XCZ's secure partition: every file whose
+extension is exactly `tik`, skipping a ticket whose signature type Eden
+doesn't read or whose issuer or rights ID is all zero. It reads the
+signature type, the issuer and the rights ID, never the title key block,
+the device ID or the account ID. The id comes from the ticket's content,
+never its file name, so `source` is `binary`.
+
+Every ticket must name the same game, by the rule above for an id read
+from a ticket; `title_id` and `save_id` are that game. `raw_serial` is the
+game's own id when its ticket is there, else the first ticket's, an
+update's or a DLC's, as with keys. Tickets naming two games give no id:
+with keys, the CNMTs decide. `switch_content_type` stays
+`SIGIL_SWITCH_CONTENT_UNKNOWN` and `title_version` 0, since only a CNMT
+names them.
 
 ## Save layouts
 
@@ -143,6 +175,7 @@ the profile's folder.
 
 sigil has no layout for the yuzu forks' newer layout, and reads no NACP.
 
+- Tickets: read from 78 real NSPs, every ticket RSA-2048 with SHA-256 from one issuer; no real NSZ, XCI or XCZ was checked, nor a ticket of another signature type. That a rights ID starts with its content's title id rests on those dumps (the 31 that also hold a plain `.cnmt.xml` name the same ids) and is the rule sigil applies to an NCA header's rights ID.
 - Ryujinx: the index entries restore adds for a game never run follow Ryujinx.LibHac 0.20.0. They are unchecked against a device running the emulators' 0.21 builds, as are a size of 0 in the entry's value, the extra data Ryujinx writes on its next start, and whether Kenji-NX wants its `TITLEID.txt` in the new folder. When `0/` is missing Ryujinx loads `1/`, which sigil doesn't read. Cache storage on the emulated SD card has its own index, which sigil doesn't read. The rows follow LibHac copies vendored in other projects, since the pinned Ryujinx.LibHac builds weren't reachable.
 - Lemon moves to the newer layout (`user/save/account/<uuid>/<TITLEID>/0`) when that folder exists, and lets the user move its NAND folder; the `lemon` row knows the default yuzu tree only.
 - Skyline's source is no longer published; its row follows the last version visible in Strato's history (May 2023).

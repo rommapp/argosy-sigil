@@ -53,8 +53,9 @@ type Result struct {
 For an N64 ROM, `Extract` reads the whole file to fill the two MD5s; the
 standalone N64 emulators name saves from them.
 
-A Switch XCI or NSP needs keys: without them `Extract` returns
-`sigil.ErrNeedsKey`, and with keys that don't open the content (a key
+A Switch XCI or NSP needs keys unless it carries a ticket: without them
+`Extract` gives the game its tickets name, or `sigil.ErrNeedsKey` when they
+name none, and with keys that don't open the content (a key
 file older than the dump, or a wrong header key)
 `sigil.ErrKeysIncompatible`.
 

@@ -73,8 +73,9 @@ extern "C" {
                                                  folder sits under the save root; `problem` names them, one
                                                  per line */
 #define SIGIL_ERR_KEYS_INCOMPATIBLE   -17  /* the keys given don't open this content: the key file lacks the key
-                                                 for its key generation, or its header key is wrong. Switch
-                                                 NSP and XCI need prod.keys (SIGIL_ERR_NEEDS_KEY without) */
+                                                 for its key generation, or its header key is wrong. Without
+                                                 prod.keys a Switch NSP or XCI gives only the game its tickets
+                                                 name (SIGIL_ERR_NEEDS_KEY when they name none) */
 
 /* SIGIL_FLAG_FILENAME_FALLBACK: when the binary parser fails, scan the
  * filename for community naming patterns ([ULUS10064] etc.). On by default
@@ -217,8 +218,8 @@ struct sigil_io {
 };
 
 /* Per-platform external resources. All fields optional; missing context
- * degrades gracefully (encrypted Switch falls back to filename source,
- * etc.) rather than failing. */
+ * degrades gracefully (encrypted Switch reads only its tickets, then the
+ * filename source when the caller asks for it, etc.) rather than failing. */
 typedef struct {
     uint32_t       struct_version;
 
