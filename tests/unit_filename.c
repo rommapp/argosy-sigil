@@ -17,13 +17,18 @@ static int mem_read(void *ctx, uint64_t off, void *buf, size_t len) {
 static int64_t mem_size(void *ctx) { return (int64_t)((mem_ctx *)ctx)->len; }
 
 /* A file of zeros that no reader takes, so the filename decides. */
-static int extract_zeros(const char *filename, sigil_platform hint, sigil_result *r) {
+static int extract_zeros_opts(const char *filename, sigil_platform hint,
+                              const sigil_options *opts, sigil_result *r) {
     static uint8_t buf[2048];
     memset(buf, 0, sizeof(buf));
     mem_ctx ctx = { buf, sizeof(buf) };
     sigil_io io = { mem_read, mem_size, NULL, &ctx };
     memset(r, 0, sizeof(*r));
-    return sigil_extract_from_io(&io, filename, hint, NULL, r);
+    return sigil_extract_from_io(&io, filename, hint, opts, r);
+}
+
+static int extract_zeros(const char *filename, sigil_platform hint, sigil_result *r) {
+    return extract_zeros_opts(filename, hint, NULL, r);
 }
 
 static int expect(const char *filename, sigil_platform hint,
@@ -56,8 +61,8 @@ static int expect(const char *filename, sigil_platform hint,
     return 0;
 }
 
-/* A named platform with no naming pattern of its own: the name carries
- * another console's serial, and the result is no id, not that console's. */
+/* A named platform reads only its own pattern: a name carrying another
+ * console's serial gives no id, not that console's. */
 static int expect_no_id(const char *filename, sigil_platform hint, sigil_platform want_platform,
                         const char *label) {
     sigil_result r;
@@ -75,7 +80,8 @@ static int expect_no_id(const char *filename, sigil_platform hint, sigil_platfor
 /* Nothing names a platform: the path's extension is a bare .bin, so every
  * pattern is tried and the one that matches names the console. */
 static int expect_guess(const char *dir, const char *name, sigil_platform want_platform,
-                        const char *want_title, const char *label) {
+                        const char *want_title, const char *want_save,
+                        sigil_usage want_usage, const char *label) {
     char path[700];
     snprintf(path, sizeof(path), "%s/%s", dir, name);
     FILE *f = test_fopen(path, "wb");
@@ -90,9 +96,10 @@ static int expect_guess(const char *dir, const char *name, sigil_platform want_p
     memset(&r, 0, sizeof(r));
     int rc = sigil_extract_from_path(path, SIGIL_PLATFORM_AUTO, NULL, &r);
     if (rc != SIGIL_OK || r.platform != want_platform || strcmp(r.title_id, want_title) != 0
+        || strcmp(r.save_id, want_save) != 0 || r.usage != want_usage
         || r.source != SIGIL_SOURCE_FILENAME) {
-        fprintf(stderr, "FAIL %s: rc=%d platform=%d title_id='%s' source=%d\n",
-                label, rc, (int)r.platform, r.title_id, (int)r.source);
+        fprintf(stderr, "FAIL %s: rc=%d platform=%d title_id='%s' save_id='%s' usage=%d source=%d\n",
+                label, rc, (int)r.platform, r.title_id, r.save_id, (int)r.usage, (int)r.source);
         return 1;
     }
     printf("ok %s -> %s\n", label, r.title_id);
@@ -135,10 +142,26 @@ int main(void) {
                        "524D4345", "524d4345", SIGIL_USAGE_FOLDER_EXACT, "wii");
     failures += expect("Wind Waker [GZLE].iso", SIGIL_PLATFORM_GAMECUBE,
                        "475A4C45", "GZLE", SIGIL_USAGE_FILE_PREFIX, "gamecube");
+    /* A PS3 title id has the PSP id's shape, and its saves are the folders
+     * starting with it, as ps3.c reports for the same game. */
+    failures += expect("Game [BLUS31426].pkg", SIGIL_PLATFORM_PS3,
+                       "BLUS31426", "BLUS31426", SIGIL_USAGE_FOLDER_PREFIX, "ps3");
+    failures += expect_no_id("Game (SLUS-20675).iso", SIGIL_PLATFORM_PS3, SIGIL_PLATFORM_PS3, "ps3 named, a ps2 serial");
+    {
+        /* With the fallback off, the PS3 reader's own failure stands. */
+        sigil_options off = { .struct_version = SIGIL_OPTIONS_V1 };
+        sigil_result r;
+        int rc = extract_zeros_opts("Game [BLUS31426].pkg", SIGIL_PLATFORM_PS3, &off, &r);
+        if (rc == SIGIL_OK || r.title_id[0] != '\0') {
+            fprintf(stderr, "FAIL ps3, fallback off: rc=%d title_id='%s'\n", rc, r.title_id);
+            failures++;
+        } else {
+            printf("ok ps3, fallback off: no id (%s)\n", sigil_strerror(rc));
+        }
+    }
 
     /* A platform named outright, with no naming pattern of its own, gets no
      * id from a name that carries another console's serial. */
-    failures += expect_no_id("Game [BLUS31426].iso", SIGIL_PLATFORM_PS3, SIGIL_PLATFORM_PS3, "ps3 named, a psp-shaped id");
     failures += expect_no_id("Game (SLUS-20675).gb", SIGIL_PLATFORM_GB, SIGIL_PLATFORM_GB, "gb named, a ps2 serial");
     failures += expect_no_id("Game (SLUS-20675).gbc", SIGIL_PLATFORM_GBC, SIGIL_PLATFORM_GBC, "gbc named, a ps2 serial");
     failures += expect_no_id("Game (SLUS-20675).gba", SIGIL_PLATFORM_GBA, SIGIL_PLATFORM_GBA, "gba named, a ps2 serial");
@@ -156,10 +179,18 @@ int main(void) {
         fprintf(stderr, "FAIL no temp folder\n");
         failures++;
     } else {
-        failures += expect_guess(dir, "Patapon [ULUS10335].bin", SIGIL_PLATFORM_PSP, "ULUS10335", "auto, a psp id");
-        failures += expect_guess(dir, "Ico (SLES-50760).bin", SIGIL_PLATFORM_PS2, "SLES-50760", "auto, a ps2 serial");
-        failures += expect_guess(dir, "Game [0100ABCD12345000].bin", SIGIL_PLATFORM_SWITCH, "0100ABCD12345000", "auto, a switch id");
-        failures += expect_guess(dir, "Game [000500001010EC00].bin", SIGIL_PLATFORM_WIIU, "1010EC00", "auto, a wiiu id");
+        failures += expect_guess(dir, "Patapon [ULUS10335].bin", SIGIL_PLATFORM_PSP, "ULUS10335",
+                                 "ULUS10335", SIGIL_USAGE_FOLDER_PREFIX, "auto, a psp id");
+        /* An id starting with PCS is a retail Vita game, the one PSP-shaped
+         * id the guesser reads as Vita. */
+        failures += expect_guess(dir, "Gravity Rush [PCSE00123].bin", SIGIL_PLATFORM_PSVITA, "PCSE00123",
+                                 "PCSE00123", SIGIL_USAGE_FOLDER_EXACT, "auto, a vita id");
+        failures += expect_guess(dir, "Ico (SLES-50760).bin", SIGIL_PLATFORM_PS2, "SLES-50760",
+                                 "BESLES-50760", SIGIL_USAGE_FOLDER_PREFIX, "auto, a ps2 serial");
+        failures += expect_guess(dir, "Game [0100ABCD12345000].bin", SIGIL_PLATFORM_SWITCH, "0100ABCD12345000",
+                                 "0100ABCD12345000", SIGIL_USAGE_FOLDER_EXACT, "auto, a switch id");
+        failures += expect_guess(dir, "Game [000500001010EC00].bin", SIGIL_PLATFORM_WIIU, "1010EC00",
+                                 "00050000/1010ec00", SIGIL_USAGE_FOLDER_SPLIT, "auto, a wiiu id");
         test_remove_tree(dir);
     }
 

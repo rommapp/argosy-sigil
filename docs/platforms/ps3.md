@@ -32,6 +32,12 @@ start with the title id and carry a per-artifact suffix
 (`BCUS99086GAMEDATA`), so `usage` is `folder-prefix` and consumers
 enumerate by prefix. PKG and encrypted-EBOOT inputs are not supported.
 
+**From a file name.** When the file can't be read and the caller leaves
+the filename fallback on, sigil reads the id from the name with the PSP
+pattern (`[BLUS31426]`, `(BLUS31426)` or a leading `BLUS31426`): the same
+`title_id`, `save_id` and `usage` a read of the game gives, with `source`
+set to `filename`.
+
 ## Save layouts
 
 | Layout | Files (role, option) | Shared | Verified |

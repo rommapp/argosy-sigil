@@ -77,8 +77,11 @@ extern "C" {
                                                  NSP and XCI need prod.keys (SIGIL_ERR_NEEDS_KEY without) */
 
 /* SIGIL_FLAG_FILENAME_FALLBACK: when the binary parser fails, scan the
- * filename for community naming patterns ([ULUS10064] etc.). On by default
- * when sigil_options is NULL.
+ * filename for community naming patterns ([ULUS10064] etc.). Only the named
+ * platform's pattern is read, whether the caller or the file's extension
+ * named it, and the result keeps that platform; a platform with no pattern
+ * gets no id. Every pattern is tried only when nothing names the platform.
+ * On by default when sigil_options is NULL.
  *
  * SIGIL_FLAG_3DS_ALLOW_HOMEBREW: disable the "0004" retail-only filter for
  * 3DS extractions, accepting CIA / homebrew title IDs. Off by default. */
