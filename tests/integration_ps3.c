@@ -2,7 +2,7 @@
 /* PSN packages recorded in tests/fixtures/saves/ps3/manifest.tsv. Each
  * sample is the first 4096 bytes of a package: its title id comes from the
  * header and the metadata, which end inside them. A row's content_id is the
- * title id the package installs under, read from its header by hand and
+ * title id the package installs under, read from its header by a script and
  * checked against another source, and the result must carry it as title_id
  * and save_id. Each row's check runs when its sample is present, and the
  * test skips when none ran. */
