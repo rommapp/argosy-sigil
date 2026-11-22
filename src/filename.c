@@ -37,6 +37,16 @@ static bool match_psp_id(const char *s, size_t len, size_t i, char out[10]) {
     return true;
 }
 
+/* PSP and Vita ids share the shape match_psp_id reads. Vita3K treats an id
+ * starting with "PCS" as a retail Vita game (get_license in
+ * vita3k/packages/src/license.cpp at 54aefe5). No PSP id starts with it:
+ * none of the 7362 in libretro-database's two PSP databases at 90601bf
+ * (rdb/Sony - PlayStation Portable.rdb and its PSN one), against 2497 of the
+ * 2499 in its Vita database. */
+static bool is_vita_retail_id(const char *id) {
+    return strncmp(id, "PCS", 3) == 0;
+}
+
 static bool match_dashed_serial(const char *s, size_t len, size_t i, char out[11]) {
     if (i + 10 > len) return false;
     for (int k = 0; k < 4; k++) if (!sigil_is_upper(s[i + k])) return false;
@@ -326,6 +336,10 @@ int sigil_filename_fallback(const char *filename_hint,
         out->platform = SIGIL_PLATFORM_PSP;
         out->usage = SIGIL_USAGE_FOLDER_PREFIX;
         rc = try_psp(stem, len, out);
+        if (rc == SIGIL_OK && is_vita_retail_id(out->title_id)) {
+            out->platform = SIGIL_PLATFORM_PSVITA;
+            out->usage = SIGIL_USAGE_FOLDER_EXACT;
+        }
         break;
     }
 

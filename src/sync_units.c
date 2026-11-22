@@ -388,16 +388,25 @@ static void single_unit(uint8_t *data, size_t len, const char *name, uint8_t **o
     sigil_md5_of(data, len, content);
 }
 
-int sigil_sync_members_hash(const sigil_zip_member *members, size_t n, char out[33]) {
+static int members_hash(const sigil_zip_member *members, size_t n, void (*combine)(sigil_named_md5 *, size_t, char *),
+                        char out[33]) {
     sigil_named_md5 *parts = (sigil_named_md5 *)calloc(n ? n : 1, sizeof(*parts));
     if (!parts) return SIGIL_ERR_OOM;
     for (size_t i = 0; i < n; i++) {
         snprintf(parts[i].name, sizeof(parts[i].name), "%s", members[i].name);
         sigil_md5_of(members[i].data, members[i].len, parts[i].md5);
     }
-    sigil_named_hash(parts, n, out);
+    combine(parts, n, out);
     free(parts);
     return SIGIL_OK;
+}
+
+int sigil_sync_members_hash(const sigil_zip_member *members, size_t n, char out[33]) {
+    return members_hash(members, n, sigil_named_hash, out);
+}
+
+int sigil_sync_members_identity(const sigil_zip_member *members, size_t n, char out[33]) {
+    return members_hash(members, n, sigil_identity_hash, out);
 }
 
 /* A zip of `members` named `<stem>.zip`, its content hash over each member's

@@ -340,6 +340,11 @@ static void check_clock(void) {
         memcmp(rtc, g_clock, 16) != 0) {
         fail("clock cart from standalone mGBA", "not save.sram and clock.rtc");
     }
+    char chip_md5[33];
+    sigil_md5_of(x->bytes, x->len, chip_md5);
+    if (timed && strcmp(timed->identity_hash, chip_md5) != 0) {
+        fail("clock cart from standalone mGBA", "identity isn't the md5 of save.sram, as RomM's");
+    }
     free(ram);
     free(rtc);
 

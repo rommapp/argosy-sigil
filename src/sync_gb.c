@@ -220,15 +220,11 @@ static int read_local(const sigil_sync_request *req, const gb_files *f, gb_save 
     return rc == SIGIL_ERR_NOT_FOUND ? SIGIL_ERR_IO : rc;
 }
 
-/* The save's identity: the RAM's md5, or for a clock cart RomM's zip hash over save.sram alone. */
-static void identity_of(const sigil_sync_request *req, const gb_save *s, char out[33]) {
+/* The save's identity: the RAM's md5, which is RomM's identity of a clock
+ * cart's zip too, as save.sram is its one member besides the clock. */
+static void identity_of(const gb_save *s, char out[33]) {
     out[0] = '\0';
-    if (!s->ram) return;
-    sigil_named_md5 part;
-    snprintf(part.name, sizeof(part.name), "%s", GB_SRAM_NAME);
-    sigil_md5_of(s->ram, s->ram_len, part.md5);
-    if (clock_cart(req)) sigil_named_hash(&part, 1, out);
-    else memcpy(out, part.md5, 33);
+    if (s->ram) sigil_md5_of(s->ram, s->ram_len, out);
 }
 
 int sigil_sync_collect_gb(sigil_sync_ctx *x, sigil_sync_result *r) {
@@ -238,7 +234,7 @@ int sigil_sync_collect_gb(sigil_sync_ctx *x, sigil_sync_result *r) {
     int rc = files_of(x->req, &f);
     if (rc == SIGIL_OK) rc = read_local(x->req, &f, &s);
     if (rc == SIGIL_OK && s.ram) {
-        identity_of(x->req, &s, r->identity_hash);
+        identity_of(&s, r->identity_hash);
         if (!clock_cart(x->req)) {
             r->data = (uint8_t *)malloc(s.ram_len ? s.ram_len : 1);
             if (!r->data) rc = SIGIL_ERR_OOM;
@@ -342,12 +338,12 @@ int sigil_sync_restore_gb(sigil_sync_ctx *x, const uint8_t *unit, size_t len, si
     int rc = read_unit(unit, len, received_len, &in, r);
     if (rc == SIGIL_OK) rc = normalize(x->req, &in);
     if (rc == SIGIL_OK) {
-        identity_of(x->req, &in, r->identity_hash);
+        identity_of(&in, r->identity_hash);
         sigil_sync_cart_artifact(x->req, r->shape == SIGIL_SAVE_SHAPE_MULTI ? ".zip" : ".srm", r);
         rc = files_of(x->req, &f);
     }
     if (rc == SIGIL_OK) rc = read_local(x->req, &f, &local);
-    if (rc == SIGIL_OK) identity_of(x->req, &local, local_identity);
+    if (rc == SIGIL_OK) identity_of(&local, local_identity);
     bool already = false;
     if (rc == SIGIL_OK && sigil_sync_blocks_restore(x, local_identity, r->identity_hash,
                                                     sigil_sync_state_get(&x->state, "synced", x->game), &already)) {

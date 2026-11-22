@@ -189,15 +189,11 @@ static bool clock_cart(const sigil_sync_request *req, const gba_save *a, const g
     return (features_of(req) & SIGIL_FEATURE_RTC) || a->has_clock || (b && b->has_clock);
 }
 
-/* The save's identity: the chip's md5, or for a clock cart RomM's zip hash over save.sram alone. */
-static void identity_of(bool clocked, const gba_save *s, char out[33]) {
+/* The save's identity: the chip's md5, which is RomM's identity of a clock
+ * cart's zip too, as save.sram is its one member besides the clock. */
+static void identity_of(const gba_save *s, char out[33]) {
     out[0] = '\0';
-    if (!s->chip) return;
-    sigil_named_md5 part;
-    snprintf(part.name, sizeof(part.name), "%s", GBA_SRAM_NAME);
-    sigil_md5_of(s->chip, s->chip_len, part.md5);
-    if (clocked) sigil_named_hash(&part, 1, out);
-    else memcpy(out, part.md5, 33);
+    if (s->chip) sigil_md5_of(s->chip, s->chip_len, out);
 }
 
 int sigil_sync_collect_gba(sigil_sync_ctx *x, sigil_sync_result *r) {
@@ -208,7 +204,7 @@ int sigil_sync_collect_gba(sigil_sync_ctx *x, sigil_sync_result *r) {
     if (rc == SIGIL_OK) rc = read_local(x->req, &f, &s);
     if (rc == SIGIL_OK && s.chip) {
         bool clocked = clock_cart(x->req, &s, NULL);
-        identity_of(clocked, &s, r->identity_hash);
+        identity_of(&s, r->identity_hash);
         if (!clocked) {
             r->data = s.chip;
             r->len = s.chip_len;
@@ -332,11 +328,9 @@ int sigil_sync_restore_gba(sigil_sync_ctx *x, const uint8_t *unit, size_t len, s
         rc = sigil_sync_cart_file_of(x->req, &f);
     }
     if (rc == SIGIL_OK) rc = read_local(x->req, &f, &local);
-    /* Both sides take the same rule, so one save gives one identity. */
-    bool clocked = clock_cart(x->req, &in, &local);
     if (rc == SIGIL_OK) {
-        identity_of(clocked, &in, r->identity_hash);
-        identity_of(clocked, &local, local_identity);
+        identity_of(&in, r->identity_hash);
+        identity_of(&local, local_identity);
     }
     bool already = false;
     if (rc == SIGIL_OK && sigil_sync_blocks_restore(x, local_identity, r->identity_hash,

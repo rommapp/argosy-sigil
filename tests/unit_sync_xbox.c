@@ -214,6 +214,28 @@ static sigil_sync_result *collect_halo(unsigned seed, unsigned bits, unsigned co
 
 /* ---- collect ------------------------------------------------------------------ */
 
+/* A unit of one file has RomM's identity for it: that file's md5. */
+static void check_collect_one_file(void) {
+    const char *where = "collect, one file";
+    static const char meta[] = "TitleName=Halo\r\n";
+    xb_guest g;
+    blank_drive(&g);
+    xb_put_text(&g, "UDATA/4d530004/TitleMeta.xbx", meta);
+    mem_root root = {0};
+    put_drive(&root, DRIVE, &g, 16, 2, 3);
+    game game;
+    make_game(&game, &root, "xemu", HALO);
+    sigil_sync_result *r = NULL;
+    char want[33];
+    sigil_md5_of(meta, strlen(meta), want);
+    CHECK(sigil_collect(&game.req, &r) == SIGIL_OK && r && r->data, where, "collect found no saves");
+    CHECK(r && strcmp(r->identity_hash, want) == 0, where, "identity isn't the md5 of the one file");
+    CHECK(r && strcmp(r->content_hash, want) != 0, where, "content hash isn't RomM's zip hash");
+    sigil_sync_result_free(r);
+    root_free(&root);
+    xb_free(&g);
+}
+
 static void check_collect(void) {
     const char *where = "collect";
     sigil_sync_result *r = collect_halo(1, 16, 2, where);
@@ -1624,6 +1646,7 @@ static void check_large_tree(void) {
 int main(void) {
     for (g_parts = 0; g_parts < 2; g_parts++) {
         check_collect();
+        check_collect_one_file();
         check_collect_edges();
         check_restore(16, 2, 3, "restore, 64 KiB clusters, half compressed");
         check_restore(16, 1, 3, "restore, every cluster compressed");
