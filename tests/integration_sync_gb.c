@@ -154,11 +154,9 @@ static void check_clock_cart(void) {
         fail("clock cart", "save.sram is the RAM, clock.rtc the mGBA clock");
     }
     free(got);
-    sigil_named_md5 part = { "save.sram", "" };
     char identity[33];
-    sigil_md5_of(ram, ram_len, part.md5);
-    sigil_named_hash(&part, 1, identity);
-    if (unit && strcmp(unit->identity_hash, identity) != 0) fail("clock cart", "identity isn't RomM's zip hash over save.sram");
+    sigil_md5_of(ram, ram_len, identity);
+    if (unit && strcmp(unit->identity_hash, identity) != 0) fail("clock cart", "identity isn't the md5 of save.sram, as RomM's");
 
     /* mGBA pairs the time with its latched registers: those are the clock. */
     uint8_t latched_rtc[48];

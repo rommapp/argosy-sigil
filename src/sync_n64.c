@@ -119,8 +119,10 @@ static int read_local(const sigil_sync_request *req, const n64_files *f, n64_sav
     return rc;
 }
 
-/* The neutral unit's members and RomM's hash over them; `members` borrow `s`. */
-static size_t neutral_members(n64_save *s, sigil_zip_member members[N64_REGION_COUNT], char identity[33]) {
+/* The neutral unit's members and RomM's identity and, when `content` is set,
+ * content hash over them; `members` borrow `s`. */
+static size_t neutral_members(n64_save *s, sigil_zip_member members[N64_REGION_COUNT], char identity[33],
+                              char *content) {
     sigil_named_md5 parts[N64_REGION_COUNT];
     size_t n = 0;
     for (int r = 0; r < N64_REGION_COUNT; r++) {
@@ -132,7 +134,8 @@ static size_t neutral_members(n64_save *s, sigil_zip_member members[N64_REGION_C
         n++;
     }
     identity[0] = '\0';
-    if (n) sigil_named_hash(parts, n, identity);
+    if (n) sigil_identity_hash(parts, n, identity);
+    if (n && content) sigil_named_hash(parts, n, content);
     return n;
 }
 
@@ -143,10 +146,9 @@ int sigil_sync_collect_n64(sigil_sync_ctx *x, sigil_sync_result *r) {
     if (rc == SIGIL_OK && !s) rc = SIGIL_ERR_OOM;
     if (rc == SIGIL_OK) rc = read_local(x->req, &f, s);
     sigil_zip_member members[N64_REGION_COUNT];
-    size_t n = rc == SIGIL_OK ? neutral_members(s, members, r->identity_hash) : 0;
+    size_t n = rc == SIGIL_OK ? neutral_members(s, members, r->identity_hash, r->content_hash) : 0;
     if (n) {
         rc = sigil_zip_store(members, n, &r->data, &r->len);
-        memcpy(r->content_hash, r->identity_hash, sizeof(r->content_hash));
         r->shape = SIGIL_SAVE_SHAPE_MULTI;
         sigil_sync_cart_artifact(x->req, ".zip", r);
     }
@@ -335,14 +337,14 @@ int sigil_sync_restore_n64(sigil_sync_ctx *x, const uint8_t *unit, size_t len, s
     n64_writes w = { 0 };
     int rc = in && local ? read_unit(unit, len, received_len, in, r) : SIGIL_ERR_OOM;
     sigil_zip_member members[N64_REGION_COUNT];
-    if (rc == SIGIL_OK && !neutral_members(in, members, r->identity_hash)) rc = SIGIL_ERR_NOT_FOUND;
+    if (rc == SIGIL_OK && !neutral_members(in, members, r->identity_hash, NULL)) rc = SIGIL_ERR_NOT_FOUND;
     if (rc == SIGIL_OK) {
         r->shape = len >= 4 && sigil_read_le32(unit) == 0x04034b50u ? SIGIL_SAVE_SHAPE_MULTI : SIGIL_SAVE_SHAPE_SINGLE;
         sigil_sync_cart_artifact(x->req, ".zip", r);
         rc = files_of(x->req, &f, r->problem);
     }
     if (rc == SIGIL_OK) rc = read_local(x->req, &f, local);
-    if (rc == SIGIL_OK) neutral_members(local, members, local_identity);
+    if (rc == SIGIL_OK) neutral_members(local, members, local_identity, NULL);
     bool already = false;
     if (rc == SIGIL_OK &&
         sigil_sync_blocks_restore(x, local_identity, r->identity_hash,

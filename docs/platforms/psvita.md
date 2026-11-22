@@ -22,17 +22,21 @@ by the largest-member rule the generic archive branch uses.
 
 Finding that member is also what identifies the dump as Vita at all. A
 `.zip` names no platform, and the bracketed-serial convention in these
-filenames is shared with PSP, so a name-based guess resolves the wrong
-platform. Detection is by content and needs no hint.
+filenames is shared with PSP. With no platform named, the filename scanner
+reads an id starting with `PCS` as Vita, the prefix Vita3K treats as a
+retail Vita game and no PSP id carries, and any other id of that shape as
+PSP. Detection is by content and needs no hint.
 
 Two ordering details matter. A dump can carry a second `param.sfo` under
 `savedata/`, which describes a save rather than the title and has no
 `TITLE_ID`; sigil prefers the shallowest match, in a zip and in an
 extracted folder alike, because a title's own metadata always sits above
 anything subordinate to it. Two equally deep go to the smaller path. And the filename
-scanner still runs, but only when no `param.sfo` can be reached, so it is
-a fallback rather than the primary path; `source` tells you which one
-answered.
+scanner still runs, but only when no `param.sfo` with a `TITLE_ID` can be
+reached and the caller leaves the filename fallback on, so it is a
+fallback rather than the primary path; `source` tells you which one
+answered. With the fallback off, such a dump is `SIGIL_ERR_NOT_FOUND`
+when `psvita` is named, and `SIGIL_ERR_UNKNOWN_PLATFORM` when nothing is.
 
 Saves are one exact directory per title, hence `folder-exact`. The
 directory is `ux0:user/00/savedata/<save_id>`. `save_id` is `TITLE_ID`

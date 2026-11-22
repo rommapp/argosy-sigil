@@ -386,7 +386,7 @@ typedef struct {
     size_t             unkeyed_count;
     char               artifact[SIGIL_SAVE_ENTRY_MAX]; /* file name the unit travels under */
     char               content_hash[33];    /* RomM content_hash of the artifact; empty when not hashed */
-    char               identity_hash[33];   /* content_hash over the non-rtc members */
+    char               identity_hash[33];   /* content_hash over the non-rtc members; the md5 of the one left, when one is */
     sigil_save_alternate *alternates;       /* files other option values would take; see sigil_save_alternate */
     size_t             alternate_count;
 } sigil_save_unit;

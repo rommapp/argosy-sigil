@@ -134,6 +134,9 @@ static void check_regions(void) {
             memcpy(sram, blob + 0x20800, N64_SRAM_SIZE);
             n64_swap32(sram, N64_SRAM_SIZE);
             if (!member_is(r, "sram", sram, N64_SRAM_SIZE)) fail(CASES[i].id, "sram isn't in bus order");
+            char sram_md5[33];
+            sigil_md5_of(sram, N64_SRAM_SIZE, sram_md5);
+            if (r && strcmp(r->identity_hash, sram_md5) != 0) fail(CASES[i].id, "identity isn't the md5 of sram, as RomM's");
             free(sram);
         }
         sigil_sync_result_free(r);

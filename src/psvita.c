@@ -8,13 +8,15 @@
  * the archive member reader reaches directly, so the identifier comes from the
  * binary rather than from a bracket in the file name.
  *
- * The filename scanner stays as a fallback for dumps whose param.sfo cannot be
- * reached, but it is no longer the only path. */
+ * Only `io` is read: when it holds no param.sfo with a TITLE_ID, the result is
+ * SIGIL_ERR_NOT_FOUND, and the caller scans the file name when its options
+ * allow the fallback. */
 
 #define VITA_SFO_MAX_BYTES (256u * 1024u)
 
 int sigil_extract_psvita(const sigil_io *io, const char *filename_hint,
                          const sigil_options *opts, sigil_result *out) {
+    (void)filename_hint;
     (void)opts;
 
     if (io && io->read && io->size) {
@@ -62,5 +64,5 @@ int sigil_extract_psvita(const sigil_io *io, const char *filename_hint,
         }
     }
 
-    return sigil_filename_fallback(filename_hint, SIGIL_PLATFORM_PSVITA, out);
+    return SIGIL_ERR_NOT_FOUND;
 }

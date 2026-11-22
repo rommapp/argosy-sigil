@@ -550,8 +550,6 @@ int sigil_save_hash(sigil_save_unit *unit, sigil_save_open_fn open, void *open_c
 
     entry_list all = { NULL, 0, 0 };
     entry_list state = { NULL, 0, 0 };
-    size_t state_count = 0;
-    const sigil_save_member *state_member = NULL;
     int rc = SIGIL_OK;
     for (size_t i = 0; i < unit->member_count && rc == SIGIL_OK; i++) {
         sigil_io *io = sigil_save_open(open, open_ctx, unit->members[i].path);
@@ -563,14 +561,11 @@ int sigil_save_hash(sigil_save_unit *unit, sigil_save_open_fn open, void *open_c
         rc = entry_list_add(&all, unit->members[i].entry, hex);
         if (rc == SIGIL_OK && unit->members[i].role != SIGIL_SAVE_ROLE_RTC) {
             rc = entry_list_add(&state, unit->members[i].entry, hex);
-            state_count++;
-            state_member = &unit->members[i];
         }
     }
     if (rc == SIGIL_OK) {
         combined_hash(&all, unit->content_hash);
-        if (state_count == 1) rc = hash_single(open, open_ctx, state_member, unit->identity_hash);
-        else combined_hash(&state, unit->identity_hash);
+        sigil_identity_hash(state.entries, state.count, unit->identity_hash);
     }
     free(all.entries);
     free(state.entries);
