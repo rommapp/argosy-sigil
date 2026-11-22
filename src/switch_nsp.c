@@ -104,7 +104,7 @@ int sigil_pfs0_extract_title(const sigil_io *io, uint64_t partition_off,
 
     if (!header_key_or_null) {
         rc = sigil_switch_tickets_title(io, data_start, entries, lay.file_count, 24,
-                                        string_table, lay.string_table_size, out);
+                                        string_table, lay.string_table_size, false, out);
         free(entries);
         free(string_table);
         return rc;

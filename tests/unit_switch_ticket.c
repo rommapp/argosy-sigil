@@ -168,6 +168,29 @@ static void build_xci(const member *m, size_t n) {
 static int failures = 0;
 
 static void expect(const char *label, const char *name, const sigil_options *opts,
+                   int want_rc, const char *want_title, const char *want_raw);
+
+/* The same members in an NSP and in a card's secure partition. */
+static const struct {
+    const char *kind;
+    const char *file;
+    void (*build)(const member *m, size_t n);
+} containers[] = {
+    { "nsp", "game.nsp", build_nsp },
+    { "xci", "game.xci", build_xci },
+};
+
+/* Members that give no id, in either container. */
+static void refused(const char *what, const sigil_options *opts, const member *m, size_t n) {
+    for (size_t c = 0; c < sizeof containers / sizeof containers[0]; c++) {
+        char label[96];
+        snprintf(label, sizeof label, "%s, %s", containers[c].kind, what);
+        containers[c].build(m, n);
+        expect(label, containers[c].file, opts, SIGIL_ERR_NEEDS_KEY, NULL, NULL);
+    }
+}
+
+static void expect(const char *label, const char *name, const sigil_options *opts,
                    int want_rc, const char *want_title, const char *want_raw) {
     sigil_io io = { mem_read, mem_size, NULL, &g_ctx };
     sigil_result r;
@@ -252,51 +275,45 @@ int main(void) {
         expect("name ignored", "game.nsp", &no_key, SIGIL_OK, game, game);
     }
 
-    /* What isn't a ticket Eden loads gives no id. */
+    /* What isn't a ticket Eden loads gives no id, in a package or on a card. */
     {
-        member m[] = { nca("a.nca") };
-        build_nsp(m, 1);
-        expect("no ticket", "game.nsp", &no_key, SIGIL_ERR_NEEDS_KEY, NULL, NULL);
+        member m[] = { nca("a.nca"), nca("b.cnmt.nca") };
+        refused("no ticket", &no_key, m, 2);
+        build_nsp(m, 2);
         memcpy(g_img, "XXXX", 4);
         expect("neither PFS0 nor XCI", "game.nsp", &no_key, SIGIL_ERR_NEEDS_KEY, NULL, NULL);
     }
     {
         member m[] = { nca("a.nca"), tik("0100ac10085ce0000000000000000003.TIK", &t_game) };
-        build_nsp(m, 2);
-        expect("extension not exactly tik", "game.nsp", &no_key, SIGIL_ERR_NEEDS_KEY, NULL, NULL);
+        refused("extension not exactly tik", &no_key, m, 2);
     }
     {
         ticket t = make_ticket(0x10006, 0x14 + 0x28, "0100ac10085ce0000000000000000003");
         member m[] = { nca("a.nca"), tik("0100ac10085ce0000000000000000003.tik", &t) };
-        build_nsp(m, 2);
-        expect("signature type Eden doesn't read", "game.nsp", &no_key, SIGIL_ERR_NEEDS_KEY, NULL, NULL);
+        refused("signature type Eden doesn't read", &no_key, m, 2);
     }
     {
         ticket t = t_game;
         memset(t.bytes + 4 + t.sig, 0, 0x40);
         member m[] = { nca("a.nca"), tik("0100ac10085ce0000000000000000003.tik", &t) };
-        build_nsp(m, 2);
-        expect("all-zero issuer", "game.nsp", &no_key, SIGIL_ERR_NEEDS_KEY, NULL, NULL);
+        refused("all-zero issuer", &no_key, m, 2);
     }
     {
         ticket t = rsa2048("00000000000000000000000000000000");
         member m[] = { nca("a.nca"), tik("00000000000000000000000000000000.tik", &t) };
-        build_nsp(m, 2);
-        expect("all-zero rights id", "game.nsp", &no_key, SIGIL_ERR_NEEDS_KEY, NULL, NULL);
+        refused("all-zero rights id", &no_key, m, 2);
     }
     {
         ticket t = rsa2048("0400e88025b1a0000000000000000014");
         member m[] = { nca("a.nca"), tik("0400e88025b1a0000000000000000014.tik", &t) };
-        build_nsp(m, 2);
-        expect("rights id not 01", "game.nsp", &no_key, SIGIL_ERR_NEEDS_KEY, NULL, NULL);
+        refused("rights id not 01", &no_key, m, 2);
     }
     {
         /* The file after it fills in the rights id's last byte. */
         ticket t = t_game;
         t.len = 4 + t.sig + 0x16F;
         member m[] = { tik("0100ac10085ce0000000000000000003.tik", &t), nca("a.nca") };
-        build_nsp(m, 2);
-        expect("ticket ends before its rights id", "game.nsp", &no_key, SIGIL_ERR_NEEDS_KEY, NULL, NULL);
+        refused("ticket ends before its rights id", &no_key, m, 2);
     }
 
     /* Each signature size puts the ticket data elsewhere. */
@@ -331,6 +348,7 @@ int main(void) {
                "0100EC100A790000", "0100EC100A790000");
     }
     {
+        /* An NSP can hold an update alone, so its content is the update. */
         ticket contra = rsa2048("0100dca00da7e8000000000000000008");
         member m[] = { nca("a.nca"), tik("0100dca00da7e8000000000000000008.tik", &contra) };
         build_nsp(m, 2);
@@ -346,8 +364,12 @@ int main(void) {
     {
         member m[] = { tik("0100ec100a7900000000000000000004.tik", &psy),
                        tik("0100ac10085ce0000000000000000003.tik", &t_game) };
-        build_nsp(m, 2);
-        expect("two games", "game.nsp", &no_key, SIGIL_ERR_NEEDS_KEY, NULL, NULL);
+        refused("two games", &no_key, m, 2);
+    }
+    {
+        member m[] = { tik("0100ec100a7908000000000000000005.tik", &psy_update),
+                       tik("0100ac10085ce0000000000000000003.tik", &t_game) };
+        refused("an update of one game and another game", &no_key, m, 2);
     }
 
     /* NSZ keeps its tickets beside the compressed NCAs. */
@@ -359,26 +381,39 @@ int main(void) {
         expect("nsz", "game.nsz", &no_key, SIGIL_OK, game, game);
     }
 
-    /* A card holds a ticket only for an update bundled with the game. */
+    /* A card holds its game, and a ticket only for an update bundled with
+     * it: the content is the game, whichever ticket names it. */
     {
         member m[] = { nca("a.nca"), nca("b.cnmt.nca"), nca("c.nca"),
                        tik("0100ec100a7908000000000000000005.tik", &psy_update),
                        { "0100ec100a7908000000000000000005.cert", junk_nca, 0x700, 0 } };
         build_xci(m, 5);
         expect("xci with an update's ticket", "game.xci", &no_key, SIGIL_OK,
-               "0100EC100A790000", "0100EC100A790800");
+               "0100EC100A790000", "0100EC100A790000");
+        expect("xci with an update's ticket, default options", "game.xci", NULL, SIGIL_OK,
+               "0100EC100A790000", "0100EC100A790000");
+        expect("xci, keys that don't fit", "game.xci", &with_key, SIGIL_ERR_KEYS_INCOMPATIBLE,
+               NULL, NULL);
     }
     {
-        member m[] = { nca("a.nca"), nca("b.cnmt.nca") };
-        build_xci(m, 2);
-        expect("xci without a ticket", "game.xci", &no_key, SIGIL_ERR_NEEDS_KEY, NULL, NULL);
+        member m[] = { nca("a.nca"), nca("b.cnmt.nca"),
+                       tik("0100ac10085ce0000000000000000003.tik", &t_game) };
+        build_xci(m, 3);
+        expect("xci with the game's ticket", "game.xci", &no_key, SIGIL_OK, game, game);
+    }
+    {
+        member m[] = { nca("a.nca"), tik("0100ec100a7910010000000000000005.tik", &psy_dlc),
+                       tik("0100ec100a7908000000000000000005.tik", &psy_update) };
+        build_xci(m, 3);
+        expect("xci with a DLC's and an update's ticket", "game.xci", &no_key, SIGIL_OK,
+               "0100EC100A790000", "0100EC100A790000");
     }
     {
         member m[] = { nca("a.ncz"), nca("b.cnmt.nca"),
                        tik("0100ec100a7908000000000000000005.tik", &psy_update) };
         build_xci(m, 3);
         expect("xcz with an update's ticket", "game.xcz", &no_key, SIGIL_OK,
-               "0100EC100A790000", "0100EC100A790800");
+               "0100EC100A790000", "0100EC100A790000");
     }
 
     if (failures) return 1;

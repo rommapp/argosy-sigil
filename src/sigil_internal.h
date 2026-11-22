@@ -220,14 +220,15 @@ int sigil_xci_extract_title(const sigil_io *io, const uint8_t *header_key_or_nul
  * `entry_size` is the table's entry size (24 for PFS0, 64 for HFS0); both
  * start an entry with the data offset, the size and the name offset.
  * `application_id` gets the game; `title_id` the game's own id when its
- * ticket is there, else the first ticket's; `content_type` and `version`
- * stay unknown. SIGIL_ERR_NEEDS_KEY when no ticket reads or the tickets name
- * more than one game. Reads each ticket's signature type, issuer and rights
- * id only. */
+ * ticket is there or `game_card` is true (the table is a card's secure
+ * partition, whose content is its game), else the first ticket's;
+ * `content_type` and `version` stay unknown. SIGIL_ERR_NEEDS_KEY when no
+ * ticket reads or the tickets name more than one game. Reads each ticket's
+ * signature type, issuer and rights id only. */
 int sigil_switch_tickets_title(const sigil_io *io, uint64_t data_start,
                                const uint8_t *entries, uint32_t file_count, size_t entry_size,
                                const uint8_t *string_table, uint32_t string_table_size,
-                               sigil_switch_title *out);
+                               bool game_card, sigil_switch_title *out);
 
 void sigil_apply_switch_title(sigil_result *out, const sigil_switch_title *t);
 

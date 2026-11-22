@@ -69,7 +69,10 @@ static int content_type_from_meta(uint8_t meta_type) {
 /* The game a content belongs to. An update's and a DLC's CNMT name it in the
  * extended header's first field (switchbrew, "CNMT": PatchMetaExtendedHeader
  * and AddOnContentMetaExtendedHeader); without one, an update is its game's
- * id with 0x800 set and a DLC's id is its game's plus 0x1000 and an index. */
+ * id with 0x800 set and a DLC's id is its game's plus 0x1000 and an index, as
+ * Eden builds them (at 56e628a: src/core/file_sys/registered_cache.h
+ * GetUpdateTitleID, src/core/file_sys/common_funcs.h GetAOCBaseTitleID and
+ * GetAOCID). */
 static uint64_t application_of(uint64_t id, int content_type, uint64_t extended) {
     if (content_type == SIGIL_SWITCH_CONTENT_PATCH) return extended ? extended : id & ~0xFFFull;
     if (content_type == SIGIL_SWITCH_CONTENT_ADDON) return extended ? extended : (id & ~0xFFFull) - 0x1000;

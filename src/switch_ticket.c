@@ -10,11 +10,13 @@
  * the rights id at 0x160 (also switchbrew "Ticket", oldid 12553). Eden drops
  * a ticket of a signature type it doesn't know, and one whose issuer or
  * rights id is all zero. Eden opens a game card's secure partition as an NSP
- * (card_image.cpp), so a ticket there reads the same way; nxdumptool
- * (dumper.c at e33408b) says a card carries one only for an update bundled
- * with the game. nsz rewrites only the NCAs it compresses and copies every
- * other file unchanged (SolidCompressor.py processContainer at 148218f), so
- * an NSZ or XCZ keeps its tickets.
+ * (card_image.cpp), so a ticket there reads the same way. On a card the game
+ * and its DLC carry no rights id, and only an update bundled with the game
+ * carries a ticket (nxdumptool dumper.c at e33408b, the comments at lines
+ * 1095 and 1115): a card's content is its game, whichever ticket it holds.
+ * nsz rewrites only the NCAs it compresses and copies every other file
+ * unchanged (SolidCompressor.py processContainer at 148218f), so an NSZ or
+ * XCZ keeps its tickets.
  *
  * Only the signature type, the issuer and the rights id are read: never the
  * title key block, the device id or the account id. */
@@ -77,7 +79,7 @@ static int ticket_title_id(const sigil_io *io, uint64_t off, uint64_t size, char
 int sigil_switch_tickets_title(const sigil_io *io, uint64_t data_start,
                                const uint8_t *entries, uint32_t file_count, size_t entry_size,
                                const uint8_t *string_table, uint32_t string_table_size,
-                               sigil_switch_title *out) {
+                               bool game_card, sigil_switch_title *out) {
     bool have = false, own = false;
     char game[17], first[17];
     for (uint32_t i = 0; i < file_count; i++) {
@@ -106,7 +108,7 @@ int sigil_switch_tickets_title(const sigil_io *io, uint64_t data_start,
     if (!have) return SIGIL_ERR_NEEDS_KEY;
 
     memset(out, 0, sizeof(*out));
-    memcpy(out->title_id, own ? game : first, sizeof out->title_id);
+    memcpy(out->title_id, own || game_card ? game : first, sizeof out->title_id);
     memcpy(out->application_id, game, sizeof out->application_id);
     return SIGIL_OK;
 }

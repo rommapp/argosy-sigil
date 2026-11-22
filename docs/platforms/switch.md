@@ -23,7 +23,9 @@ DLC). `raw_serial` keeps the content's own id (`0100152000023001`), and
 dump that holds the game beside its update or DLC reads as the game, its
 version included. Read from a file name or a ticket, an id ending in `800` is an update
 of the game ending in `000`, and any other id not ending in `000` is a DLC of
-the game `0x1000` below its block.
+the game `0x1000` below its block, as Eden builds them (at `56e628a`:
+`registered_cache.h` `GetUpdateTitleID`, `common_funcs.h`
+`GetAOCBaseTitleID` and `GetAOCID`).
 
 `.nsz` and `.xcz` are the NSP and XCI containers with their large NCAs
 compressed and renamed `.ncz`. The Meta NCA stays an uncompressed `.nca`, so
@@ -102,7 +104,9 @@ never its file name, so `source` is `binary`.
 Every ticket must name the same game, by the rule above for an id read
 from a ticket; `title_id` and `save_id` are that game. `raw_serial` is the
 game's own id when its ticket is there, else the first ticket's, an
-update's or a DLC's, as with keys. Tickets naming two games give no id:
+update's or a DLC's, as with keys. On an XCI or XCZ it is always the game's
+id, as with keys: a card holds its game, and the only ticket it carries is a
+bundled update's. Tickets naming two games give no id:
 with keys, the CNMTs decide. `switch_content_type` stays
 `SIGIL_SWITCH_CONTENT_UNKNOWN` and `title_version` 0, since only a CNMT
 names them.
@@ -175,7 +179,7 @@ the profile's folder.
 
 sigil has no layout for the yuzu forks' newer layout, and reads no NACP.
 
-- Tickets: read from 78 real NSPs, every ticket RSA-2048 with SHA-256 from one issuer; no real NSZ, XCI or XCZ was checked, nor a ticket of another signature type. That a rights ID starts with its content's title id rests on those dumps (the 31 that also hold a plain `.cnmt.xml` name the same ids) and is the rule sigil applies to an NCA header's rights ID.
+- Tickets: read from 78 real NSPs, every ticket RSA-2048 with SHA-256 from one issuer; no real NSZ or XCZ was checked, nor a ticket of another signature type, and on a real XCI the game's id as `raw_serial` is unchecked against its CNMT. That a rights ID starts with its content's title id rests on those dumps (the 31 that also hold a plain `.cnmt.xml` name the same ids) and is the rule sigil applies to an NCA header's rights ID.
 - Ryujinx: the index entries restore adds for a game never run follow Ryujinx.LibHac 0.20.0. They are unchecked against a device running the emulators' 0.21 builds, as are a size of 0 in the entry's value, the extra data Ryujinx writes on its next start, and whether Kenji-NX wants its `TITLEID.txt` in the new folder. When `0/` is missing Ryujinx loads `1/`, which sigil doesn't read. Cache storage on the emulated SD card has its own index, which sigil doesn't read. The rows follow LibHac copies vendored in other projects, since the pinned Ryujinx.LibHac builds weren't reachable.
 - Lemon moves to the newer layout (`user/save/account/<uuid>/<TITLEID>/0`) when that folder exists, and lets the user move its NAND folder; the `lemon` row knows the default yuzu tree only.
 - Skyline's source is no longer published; its row follows the last version visible in Strato's history (May 2023).

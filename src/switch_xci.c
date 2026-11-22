@@ -144,7 +144,7 @@ static int hfs0_extract_title_from_partition(const sigil_io *io,
 
     if (!header_key_or_null) {
         rc = sigil_switch_tickets_title(io, data_start, entries, file_count, HFS0_ENTRY_SIZE,
-                                        string_table, string_table_size, out);
+                                        string_table, string_table_size, true, out);
         free(entries);
         free(string_table);
         return rc;
