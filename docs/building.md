@@ -128,8 +128,8 @@ runs the same on Linux.
 cmake --build build && ctest --test-dir build
 
 # Real-ROM integration tests. Point them at a directory with platform
-# subdirs (psp/, psx/, ps2/, ps3/, switch/, 3ds/, wii/, wiiu/, ngc/,
-# psvita/, dc/, xbox/, xbox360/).
+# subdirs (psp/, psx/, ps2/, switch/, 3ds/, wii/, wiiu/, ngc/, psvita/,
+# dc/, xbox/, xbox360/).
 SIGIL_ROM_DIR=/path/to/roms ctest --test-dir build -R integration
 
 # Switch tests additionally need a prod.keys file

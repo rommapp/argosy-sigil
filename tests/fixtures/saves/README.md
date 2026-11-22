@@ -1,6 +1,6 @@
 # Save samples
 
-Real save files that the save tests check sigil against. The files themselves hold game data, so they are not committed. Each platform folder commits only its manifests, which record what every sample is and what the tests expect from it. A test whose sample is missing skips.
+Real save files that the save tests check sigil against, and in `ps3/` the first 4096 bytes of PSN packages, which `integration_ps3` reads title ids from. The files themselves hold game data, so they are not committed. Each platform folder commits only its manifests, which record what every sample is and what the tests expect from it. A test whose sample is missing skips.
 
 ## Layout
 
@@ -32,8 +32,8 @@ Tab-separated, with a header row. One row per file; a folder sample has one row 
 | `path` | file path relative to `files/<id>/` |
 | `size` | size in bytes |
 | `md5` | MD5 of the file, lowercase hex |
-| `emulator` | emulator or libretro core that wrote it, or `unknown` |
-| `emulator_version` | version or commit when known, else `unknown` |
+| `emulator` | emulator or libretro core that wrote it, `unknown`, or `none` for a game file |
+| `emulator_version` | version or commit when known, else `unknown`; `none` when `emulator` is |
 | `game` | game title as the release names it |
 | `content_id` | the game's serial, game code or title id, or `unknown` |
 | `kind` | `sram`, `rtc`, `card`, `volume`, `vmu`, `folder_file`, `gci`, `wrapped` (one save inside a tool's wrapper, such as `.gcs`, `.mcs`, `.psu` or `.BUP`), or `other` |

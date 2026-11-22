@@ -19,7 +19,6 @@ endfunction()
 sigil_add_test(integration_psp)
 sigil_add_test(integration_psx)
 sigil_add_test(integration_ps2)
-sigil_add_test(integration_ps3)
 sigil_add_test(integration_wii)
 sigil_add_test(integration_gamecube)
 sigil_add_test(integration_psvita)
@@ -111,7 +110,8 @@ foreach(t integration_card_ps1 integration_card_ps2 integration_card_gamecube
           integration_clock_gb integration_sync_ps1 integration_sync_ps2
           integration_sync_volumes integration_sync_dreamcast integration_sync_gamecube
           integration_sync_companions integration_sync_profiles integration_sync_n64 integration_sync_gb
-          integration_sync_nds integration_sync_genesis integration_sync_gba integration_sync_xbox)
+          integration_sync_nds integration_sync_genesis integration_sync_gba integration_sync_xbox
+          integration_ps3)
     sigil_add_test(${t})
     target_include_directories(${t} PRIVATE ${CMAKE_SOURCE_DIR}/src)
     target_compile_definitions(${t} PRIVATE
