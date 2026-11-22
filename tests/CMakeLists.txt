@@ -43,6 +43,7 @@ set_tests_properties(unit_ps2 PROPERTIES TIMEOUT 30)
 sigil_add_test(unit_dreamcast)
 sigil_add_test(unit_xbox)
 sigil_add_test(unit_ps3_iso)
+sigil_add_test(unit_ps3_pkg)
 sigil_add_test(unit_psp_save_prefix)
 sigil_add_test(unit_psvita)
 sigil_add_test(unit_dir_scan)
@@ -109,7 +110,8 @@ foreach(t integration_card_ps1 integration_card_ps2 integration_card_gamecube
           integration_clock_gb integration_sync_ps1 integration_sync_ps2
           integration_sync_volumes integration_sync_dreamcast integration_sync_gamecube
           integration_sync_companions integration_sync_profiles integration_sync_n64 integration_sync_gb
-          integration_sync_nds integration_sync_genesis integration_sync_gba integration_sync_xbox)
+          integration_sync_nds integration_sync_genesis integration_sync_gba integration_sync_xbox
+          integration_ps3)
     sigil_add_test(${t})
     target_include_directories(${t} PRIVATE ${CMAKE_SOURCE_DIR}/src)
     target_compile_definitions(${t} PRIVATE
