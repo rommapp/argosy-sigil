@@ -3,6 +3,7 @@
 
 /* No-Intro / Redump community naming patterns:
  *   PSP / PSVita: [ULUS10064] / (ULUS10064) / leading ULUS10064
+ *   PS3:          the PSP pattern
  *   PSX / PS2:    [SLUS-12345] / (SLUS-12345) / bare LLLL-NNNNN
  *   Switch / 3DS: [0100ABCD12345000] / suffix [-_]<16hex>$
  *   Wii U:        [00050000<8 hex>] full id; canonical = last 8
@@ -281,6 +282,12 @@ int sigil_filename_fallback(const char *filename_hint,
         out->usage = SIGIL_USAGE_FOLDER_EXACT;
         rc = try_psp(stem, len, out);
         break;
+    case SIGIL_PLATFORM_PS3:
+        /* A PS3 TITLE_ID has the PSP id's shape (BLUS31426), and its saves
+         * are the folders starting with it, as ps3.c reports. */
+        out->usage = SIGIL_USAGE_FOLDER_PREFIX;
+        rc = try_psp(stem, len, out);
+        break;
     case SIGIL_PLATFORM_PSX:
         out->usage = SIGIL_USAGE_FILE_PREFIX;
         rc = try_dashed_serial(stem, len, out);
@@ -307,15 +314,9 @@ int sigil_filename_fallback(const char *filename_hint,
     case SIGIL_PLATFORM_GAMECUBE:
         rc = try_gameid_bracket(stem, len, platform, out);
         break;
-    case SIGIL_PLATFORM_DREAMCAST:
-        /* Dreamcast filenames carry no bracketed product number, and the
-         * generic guessers below would hand back a PS2/PSP serial under a
-         * Dreamcast platform. No pattern is better than a wrong one. */
-        out->usage = SIGIL_USAGE_FILE_PREFIX;
-        rc = SIGIL_ERR_NOT_FOUND;
-        break;
     case SIGIL_PLATFORM_AUTO:
-    default:
+        /* Nothing named a platform, so each pattern is tried in turn and the
+         * one that matches names the console. */
         out->platform = SIGIL_PLATFORM_SWITCH;
         out->usage = SIGIL_USAGE_FOLDER_EXACT;
         if ((rc = try_hex16(stem, len, out, true)) == SIGIL_OK) {
@@ -340,6 +341,15 @@ int sigil_filename_fallback(const char *filename_hint,
             out->platform = SIGIL_PLATFORM_PSVITA;
             out->usage = SIGIL_USAGE_FOLDER_EXACT;
         }
+        break;
+    default:
+        /* A named platform with no naming pattern of its own: Dreamcast,
+         * whose filenames carry no bracketed product number, Xbox, Xbox 360
+         * and the cartridge consoles. The patterns above would hand back
+         * another console's serial under it (a PS2 or PSP serial for a
+         * Dreamcast disc). No pattern is better than a wrong one, and the
+         * named platform stands. */
+        rc = SIGIL_ERR_NOT_FOUND;
         break;
     }
 
