@@ -365,6 +365,35 @@ static int dispatch(const sigil_io *io, const char *filename_hint,
     }
 }
 
+/* Default save_id to title_id when no platform-specific value was set.
+ * A folder-split platform is excluded: its save location is a nested path
+ * and a flat title id is not one, so backfilling would turn "no save
+ * location was resolved" into a wrong directory name. There save_id stays
+ * empty, which the header documents as unknown. */
+static void default_save_id(sigil_result *out) {
+    if (out->save_id[0] != '\0' || out->usage == SIGIL_USAGE_FOLDER_SPLIT) return;
+    size_t len = strlen(out->title_id);
+    if (len < sizeof(out->save_id)) {
+        memcpy(out->save_id, out->title_id, len + 1);
+    }
+}
+
+/* The id a naming pattern for `p` finds in `name`, when the caller allows the
+ * filename fallback (SIGIL_FLAG_FILENAME_FALLBACK, on for opts == NULL).
+ * Otherwise `failed`, the binary read's own result, and `out` is untouched. */
+static int from_filename(const char *name, sigil_platform p,
+                         const sigil_options *opts, int failed,
+                         sigil_result *out) {
+    bool allowed = !opts || (opts->flags & SIGIL_FLAG_FILENAME_FALLBACK);
+    sigil_result fb;
+    if (!allowed || !name || sigil_filename_fallback(name, p, &fb) != SIGIL_OK) {
+        return failed;
+    }
+    default_save_id(&fb);
+    *out = fb;
+    return SIGIL_OK;
+}
+
 int sigil_extract_from_io(const sigil_io *io,
                           const char *filename_hint,
                           sigil_platform hint,
@@ -379,30 +408,8 @@ int sigil_extract_from_io(const sigil_io *io,
     if (hint == SIGIL_PLATFORM_AUTO) return SIGIL_ERR_UNKNOWN_PLATFORM;
 
     int rc = dispatch(io, filename_hint, hint, named, opts, out);
-
-    /* Filename fallback runs on any non-OK result when the flag is set
-     * (default for opts == NULL). */
-    bool fallback_enabled = !opts || (opts->flags & SIGIL_FLAG_FILENAME_FALLBACK);
-    if (rc != SIGIL_OK && fallback_enabled && filename_hint) {
-        sigil_result fb;
-        if (sigil_filename_fallback(filename_hint, hint, &fb) == SIGIL_OK) {
-            *out = fb;
-            rc = SIGIL_OK;
-        }
-    }
-
-    /* Default save_id to title_id when no platform-specific value was set.
-     * A folder-split platform is excluded: its save location is a nested path
-     * and a flat title id is not one, so backfilling would turn "no save
-     * location was resolved" into a wrong directory name. There save_id stays
-     * empty, which the header documents as unknown. */
-    if (rc == SIGIL_OK && out->save_id[0] == '\0' && out->usage != SIGIL_USAGE_FOLDER_SPLIT) {
-        size_t len = strlen(out->title_id);
-        if (len < sizeof(out->save_id)) {
-            memcpy(out->save_id, out->title_id, len + 1);
-        }
-    }
-
+    if (rc != SIGIL_OK) return from_filename(filename_hint, hint, opts, rc, out);
+    default_save_id(out);
     return rc;
 }
 
@@ -420,9 +427,8 @@ int sigil_extract_from_path(const char *path, sigil_platform hint,
      * That also makes this branch platform-agnostic: a zipped .nsp or .wbfs
      * takes the same route as a zipped Xbox image.
      *
-     * PS Vita is excluded because its id comes from the archive's own file
-     * name and the contents are never opened, so routing it through the
-     * container reader would look inside for something that is not there.
+     * PS Vita is excluded because its id is in one member, addressed by path
+     * below, rather than in the member the container reader picks.
      * Every other failure falls through rather than returning, leaving the
      * filename scanner its chance at an archive sigil cannot read. */
     if (resolved != SIGIL_PLATFORM_PSVITA && path_is_archive(path_basename(path))) {
@@ -449,9 +455,9 @@ int sigil_extract_from_path(const char *path, sigil_platform hint,
      * than by the largest-member rule the generic archive branch uses.
      *
      * The probe also runs without a hint, because a .zip names no platform and
-     * the filename scanner would otherwise claim a Vita serial for PSP: both
-     * use the same bracket pattern. Finding that member is what identifies the
-     * dump, so detection is by content rather than by name. */
+     * a Vita serial has the PSP shape: the filename scanner tells the two
+     * apart only by a retail Vita id's prefix. Finding that member is what
+     * identifies the dump, so detection is by content rather than by name. */
     if (resolved == SIGIL_PLATFORM_PSVITA || resolved == SIGIL_PLATFORM_AUTO) {
         sigil_io *vio = NULL;
         if (path_is_archive(path_basename(path))) {
@@ -467,28 +473,24 @@ int sigil_extract_from_path(const char *path, sigil_platform hint,
             }
         }
 
+        int vrc = SIGIL_ERR_NOT_FOUND;
         if (vio) {
             sigil_result vr;
-            int vrc = sigil_extract_psvita(vio, path_basename(path), opts, &vr);
+            vrc = sigil_extract_psvita(vio, path_basename(path), opts, &vr);
             sigil_io_close(vio);
-            /* Only a binary hit settles it here. A filename-sourced result
-             * would be the very guess this path exists to avoid, and with no
-             * hint it could belong to another platform entirely. */
-            if (vrc == SIGIL_OK && vr.source == SIGIL_SOURCE_BINARY) {
+            if (vrc == SIGIL_OK) {
                 *out = vr;
                 return SIGIL_OK;
             }
         }
         if (resolved == SIGIL_PLATFORM_PSVITA) {
-            return sigil_extract_psvita(NULL, path_basename(path), opts, out);
+            return from_filename(path_basename(path), SIGIL_PLATFORM_PSVITA, opts, vrc, out);
         }
     }
 
     if (resolved == SIGIL_PLATFORM_AUTO) {
-        if (sigil_filename_fallback(path_basename(path), SIGIL_PLATFORM_AUTO, out) == SIGIL_OK) {
-            return SIGIL_OK;
-        }
-        return SIGIL_ERR_UNKNOWN_PLATFORM;
+        return from_filename(path_basename(path), SIGIL_PLATFORM_AUTO, opts,
+                             SIGIL_ERR_UNKNOWN_PLATFORM, out);
     }
 
     char resolved_path[1024];

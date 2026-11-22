@@ -280,40 +280,49 @@ static int test_backward_seek(const uint8_t *img) {
 }
 
 #if SIGIL_TEST_FILENAME_FALLBACK
-/* A PS Vita release is a .zip whose identifier lives in the archive's own file
- * name, and whose members name no console. The container reader must not
- * swallow it and report that nothing inside looks like a game. Only meaningful
- * when the filename scanner is in the build. */
-static int test_vita_zip_still_resolves_by_name(const uint8_t *img) {
-    char dir[400], path[512];
-    snprintf(dir, sizeof(dir), "%s", test_temp_root());
-    snprintf(path, sizeof(path), "%s/Some Game [PCSE12345].zip", dir);
-    if (write_zip_named(path, "app/eboot.bin", img, IMAGE_BYTES, 8) != 0) return 1;
-
+static int vita_zip_case(const char *label, const char *path, sigil_platform hint,
+                         const sigil_options *opts, int want_rc) {
     sigil_result r;
-    int rc = sigil_extract_from_path(path, SIGIL_PLATFORM_PSVITA, NULL, &r);
-    if (rc != SIGIL_OK || r.platform != SIGIL_PLATFORM_PSVITA
-        || strcmp(r.title_id, "PCSE12345") != 0
-        || r.source != SIGIL_SOURCE_FILENAME) {
-        fprintf(stderr, "FAIL vita_zip hinted: rc=%d platform=%d title_id='%s'\n",
-                rc, (int)r.platform, r.title_id);
-        remove(path);
+    memset(&r, 0, sizeof(r));
+    int rc = sigil_extract_from_path(path, hint, opts, &r);
+    if (rc != want_rc) {
+        fprintf(stderr, "FAIL vita_zip %s: rc=%d (want %d) platform=%d title_id='%s'\n",
+                label, rc, want_rc, (int)r.platform, r.title_id);
         return 1;
     }
-
-    /* Without a hint the generic scanner claims the serial for another
-     * platform, which is what it did before archives were readable. What
-     * matters here is only that the id still comes out of the file name
-     * rather than being lost to a failed look inside. */
-    rc = sigil_extract_from_path(path, SIGIL_PLATFORM_AUTO, NULL, &r);
-    remove(path);
-    if (rc != SIGIL_OK || strcmp(r.title_id, "PCSE12345") != 0
+    if (rc != SIGIL_OK) return 0;
+    if (r.platform != SIGIL_PLATFORM_PSVITA || strcmp(r.title_id, "PCSE12345") != 0
+        || strcmp(r.save_id, "PCSE12345") != 0 || r.usage != SIGIL_USAGE_FOLDER_EXACT
         || r.source != SIGIL_SOURCE_FILENAME) {
-        fprintf(stderr, "FAIL vita_zip auto: rc=%d title_id='%s' source=%d\n",
-                rc, r.title_id, (int)r.source);
+        fprintf(stderr, "FAIL vita_zip %s: platform=%d title_id='%s' save_id='%s' "
+                        "usage=%d source=%d\n",
+                label, (int)r.platform, r.title_id, r.save_id, (int)r.usage, (int)r.source);
         return 1;
     }
     return 0;
+}
+
+/* A PS Vita .zip with no sce_sys/param.sfo names its id only in the archive's
+ * own file name, and its members name no console. The container reader must
+ * not swallow it and report that nothing inside looks like a game. With the
+ * filename fallback on, the id comes from the name with the save folder
+ * psvita.md names, as Vita whether or not the platform is named (the id is a
+ * retail Vita id). With it off, the name is never read. */
+static int test_vita_zip_without_param_sfo(const uint8_t *img) {
+    char path[512];
+    snprintf(path, sizeof(path), "%s/Some Game [PCSE12345].zip", test_temp_root());
+    if (write_zip_named(path, "app/eboot.bin", img, IMAGE_BYTES, 8) != 0) return 1;
+
+    const sigil_options off = { SIGIL_OPTIONS_V1, NULL, 0 };
+    int bad = 0;
+    bad |= vita_zip_case("hinted", path, SIGIL_PLATFORM_PSVITA, NULL, SIGIL_OK);
+    bad |= vita_zip_case("auto", path, SIGIL_PLATFORM_AUTO, NULL, SIGIL_OK);
+    bad |= vita_zip_case("hinted, fallback off", path, SIGIL_PLATFORM_PSVITA, &off,
+                         SIGIL_ERR_NOT_FOUND);
+    bad |= vita_zip_case("auto, fallback off", path, SIGIL_PLATFORM_AUTO, &off,
+                         SIGIL_ERR_UNKNOWN_PLATFORM);
+    remove(path);
+    return bad;
 }
 #endif
 
@@ -410,7 +419,7 @@ int main(void) {
     bad |= run_case("UTF-8 name", "\xe3\x82\xbc\xe3\x83\xab\xe3\x83\x80 \xc3\xa9.zip", 8, img);
     bad |= test_backward_seek(img);
 #if SIGIL_TEST_FILENAME_FALLBACK
-    bad |= test_vita_zip_still_resolves_by_name(img);
+    bad |= test_vita_zip_without_param_sfo(img);
 #endif
     bad |= test_member_by_suffix();
     bad |= test_shallowest_match_wins();
