@@ -367,6 +367,13 @@ typedef struct {
 void sigil_named_hash(sigil_named_md5 *items, size_t count, char out[33]);
 
 /**
+ * RomM's identity of a unit from its non-clock parts (`zip_identity_hash` in
+ * backend/handler/filesystem/assets_handler.py, romm at 8a1e628): the one
+ * part's own MD5, else sigil_named_hash over them. Sorts `items` in place.
+ */
+void sigil_identity_hash(sigil_named_md5 *items, size_t count, char out[33]);
+
+/**
  * The shared files the request's layout row applies, expanded, whether or
  * not the listing holds them, with each one's sigil_device in `devices` when
  * given. Files of one device other than SIGIL_DEVICE_NONE are alternatives:

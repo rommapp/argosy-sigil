@@ -147,3 +147,8 @@ void sigil_named_hash(sigil_named_md5 *items, size_t count, char out[33]) {
     sigil_md5_final(&m, digest);
     sigil_md5_hex(digest, out);
 }
+
+void sigil_identity_hash(sigil_named_md5 *items, size_t count, char out[33]) {
+    if (count == 1) memcpy(out, items[0].md5, 33);
+    else sigil_named_hash(items, count, out);
+}

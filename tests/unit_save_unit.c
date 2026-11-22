@@ -843,6 +843,8 @@ static void test_hashes(void) {
         { "Empty.srm", hello, 0 },
         { "Doom.pure.zip", STORED_ZIP, sizeof(STORED_ZIP) },
         { "Quake.pure.zip", DEFLATED_ZIP, sizeof(DEFLATED_ZIP) },
+        { "Zipped.srm", STORED_ZIP, sizeof(STORED_ZIP) },
+        { "Zipped.rtc", bbbb, 4 },
         { "same_cdi/nvram/ULUS10064DATA00/PARAM.SFO", (const uint8_t *)"sfo", 3 },
         { "same_cdi/nvram/ULUS10064DATA00/DATA.BIN", (const uint8_t *)"data", 4 },
     };
@@ -876,6 +878,17 @@ static void test_hashes(void) {
     if (u) {
         expect_str("single identity", u->identity_hash, u->content_hash, "identity");
         expect_str("single identity", u->identity_hash, "098890dde069e9abad63f19a0d9e1f32", "identity");
+        sigil_save_unit_free(u);
+    }
+
+    /* RomM takes the one remaining member's bytes as they are, though they
+     * read as a zip. */
+    const char *zipped[] = { "Zipped.rtc", "Zipped.srm" };
+    u = resolve("zip member identity", "mgba", "gbc", "Zipped.gbc", SIGIL_FEATURE_RTC, NULL, 0, zipped, 2, &root);
+    if (u) {
+        char zip_md5[33];
+        sigil_md5_of(STORED_ZIP, sizeof(STORED_ZIP), zip_md5);
+        expect_str("zip member identity", u->identity_hash, zip_md5, "identity");
         sigil_save_unit_free(u);
     }
 
@@ -1193,6 +1206,10 @@ static void test_members_hash(void) {
     char got[33] = "";
     if (sigil_sync_members_hash(crystal, 2, got) != SIGIL_OK) fail("members hash", "hash failed");
     expect_str("members hash", got, MULTI_CRYSTAL_HASH, "hash");
+    if (sigil_sync_members_identity(crystal, 2, got) != SIGIL_OK) fail("members identity", "hash failed");
+    expect_str("members identity", got, MULTI_CRYSTAL_HASH, "identity");
+    if (sigil_sync_members_identity(crystal, 1, got) != SIGIL_OK) fail("one member's identity", "hash failed");
+    expect_str("one member's identity", got, "098890dde069e9abad63f19a0d9e1f32", "identity");
 
     struct { const char *label; const uint8_t *zip; size_t len; const char *hash; } zips[] = {
         { "members hash, stored zip", STORED_ZIP, sizeof(STORED_ZIP), STORED_ZIP_HASH },
