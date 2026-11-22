@@ -91,7 +91,7 @@ static int files_sort(file_list *l) {
 /* The hash over each file's unit name and bytes: RomM's hash of the unit. "" for no files. */
 static int files_identity(const file_list *l, char out[33]) {
     out[0] = '\0';
-    return l->count ? sigil_sync_members_hash(l->items, l->count, out) : SIGIL_OK;
+    return l->count ? sigil_sync_members_identity(l->items, l->count, out) : SIGIL_OK;
 }
 
 /* FATX counts years from 2000, zip from 1980. */
@@ -261,7 +261,7 @@ int sigil_sync_collect_xbox(sigil_sync_ctx *x, sigil_sync_result *r) {
         rc = sigil_zip_store(files.items, files.count, &r->data, &r->len);
         if (rc == SIGIL_OK) rc = sigil_zip_set_stamps(r->data, r->len, files.stamps, files.count);
         if (rc == SIGIL_OK) rc = files_identity(&files, r->identity_hash);
-        memcpy(r->content_hash, r->identity_hash, sizeof(r->content_hash));
+        if (rc == SIGIL_OK) rc = sigil_sync_members_hash(files.items, files.count, r->content_hash);
         artifact_of(x, r);
     }
     files_free(&files);
