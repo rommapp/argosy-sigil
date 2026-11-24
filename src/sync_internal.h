@@ -237,6 +237,8 @@ int sigil_sync_collect_gb(sigil_sync_ctx *x, sigil_sync_result *r);
  */
 int sigil_sync_restore_gb(sigil_sync_ctx *x, const uint8_t *unit, size_t len, size_t received_len,
                           sigil_sync_result *r, char local_identity[33]);
+/** The identity collect and restore give a GB/GBC unit, for a cart with the SIGIL_FEATURE_* bits `features`. */
+int sigil_sync_identity_gb(uint32_t features, const uint8_t *unit, size_t len, char out[33]);
 
 /* ---- Xbox 360 content headers (sync_xbox360.c) -------------------------------- */
 

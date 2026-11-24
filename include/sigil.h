@@ -144,6 +144,15 @@ typedef enum {
 #define SIGIL_FEATURE_GBA_FLASH   (1u << 3)
 #define SIGIL_FEATURE_GBA_FLASH1M (1u << 4)
 #define SIGIL_FEATURE_GBA_EEPROM  (1u << 5)
+/* A GB cart whose game keeps scratch buffers in its RAM, which the save's
+ * identity leaves out: header destination 0x14A is 0x01 and the title and
+ * manufacturer code at 0x134-0x142 are Pokemon Red, Blue or Yellow (GEN1),
+ * Gold or Silver (GOLD_SILVER), or Crystal (CRYSTAL), as the international
+ * releases have them. At most one is set. See docs/platforms/gb.md,
+ * "Scratch RAM". */
+#define SIGIL_FEATURE_GB_SCRATCH_GEN1        (1u << 6)
+#define SIGIL_FEATURE_GB_SCRATCH_GOLD_SILVER (1u << 7)
+#define SIGIL_FEATURE_GB_SCRATCH_CRYSTAL     (1u << 8)
 
 typedef enum {
     SIGIL_SOURCE_BINARY = 0,
@@ -744,6 +753,12 @@ SIGIL_API int  sigil_collect(const sigil_sync_request *req, sigil_sync_result **
 SIGIL_API int  sigil_restore(const sigil_sync_request *req, const uint8_t *unit, size_t unit_len,
                              sigil_sync_result **out);
 SIGIL_API void sigil_sync_result_free(sigil_sync_result *result);
+/* Writes to `out` the identity_hash that collect and restore give `unit`, a unit as RomM stores it,
+ * for a game on `platform` (a slug) whose ROM has the SIGIL_FEATURE_* bits `features`. Only gb and
+ * gbc: another platform returns SIGIL_ERR_UNSUPPORTED_FORMAT. A unit sigil can't read returns its
+ * error, as restore would. */
+SIGIL_API int  sigil_unit_identity(const char *platform, uint32_t features, const uint8_t *unit, size_t unit_len,
+                                   char out[33]);
 
 SIGIL_API const char *sigil_strerror(int code);
 SIGIL_API const char *sigil_version(void);

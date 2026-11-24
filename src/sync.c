@@ -176,6 +176,15 @@ static const char *cart_platform(const sigil_sync_request *req) {
     return NULL;
 }
 
+int sigil_unit_identity(const char *platform, uint32_t features, const uint8_t *unit, size_t unit_len,
+                        char out[33]) {
+    if (!out || (!unit && unit_len)) return SIGIL_ERR_INVALID_ARG;
+    out[0] = '\0';
+    const char *slug = platform ? sigil_layout_platform(platform) : NULL;
+    if (!slug || (strcmp(slug, "gb") != 0 && strcmp(slug, "gbc") != 0)) return SIGIL_ERR_UNSUPPORTED_FORMAT;
+    return sigil_sync_identity_gb(features, unit, unit_len, out);
+}
+
 static bool n64_cart(const sigil_sync_request *req) {
     const char *cart = cart_platform(req);
     return cart && strcmp(cart, "n64") == 0;

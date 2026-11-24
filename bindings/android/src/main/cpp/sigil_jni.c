@@ -286,6 +286,24 @@ Java_com_nendo_sigil_Sigil_nativeContentStem(JNIEnv *env, jclass clazz, jstring 
     return jni_string(env,stem);
 }
 
+JNIEXPORT jstring JNICALL
+Java_com_nendo_sigil_Sigil_nativeUnitIdentity(JNIEnv *env, jclass clazz, jstring jplatform, jint features,
+                                              jbyteArray junit) {
+    (void)clazz;
+    if (!jplatform || !junit) { throw_sigil(env, SIGIL_ERR_INVALID_ARG); return NULL; }
+    jsize len = (*env)->GetArrayLength(env, junit);
+    uint8_t *unit = (uint8_t *)malloc(len ? (size_t)len : 1);
+    if (!unit) { throw_sigil(env, SIGIL_ERR_OOM); return NULL; }
+    (*env)->GetByteArrayRegion(env, junit, 0, len, (jbyte *)unit);
+    const char *platform = jni_utf8(env, jplatform);
+    char out[33];
+    int rc = sigil_unit_identity(platform, (uint32_t)features, unit, (size_t)len, out);
+    jni_free(platform);
+    free(unit);
+    if (rc != SIGIL_OK) { throw_sigil(env, rc); return NULL; }
+    return jni_string(env, out);
+}
+
 JNIEXPORT jbyteArray JNICALL
 Java_com_nendo_sigil_Sigil_nativeLoadHeaderKey(JNIEnv *env, jclass clazz, jstring jpath) {
     (void)clazz;

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "sigil_internal.h"
+#include "scratch_gb.h"
 
 #define GB_HEADER_OFF     0x100
 #define GB_HEADER_LEN     0x50
@@ -50,6 +51,7 @@ int sigil_extract_gb(const sigil_io *io, const char *filename_hint,
 
     if (gb_cart_has_rtc(rom[GB_CART_TYPE])) out->features |= SIGIL_FEATURE_RTC;
     if (rom[GB_CART_TYPE] == GB_MBC2 || rom[GB_CART_TYPE] == GB_MBC2_BATTERY) out->features |= SIGIL_FEATURE_MBC2;
+    out->features |= sigil_gb_scratch_feature(rom);
     out->source = SIGIL_SOURCE_BINARY;
     return SIGIL_OK;
 }

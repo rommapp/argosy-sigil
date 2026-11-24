@@ -70,6 +70,9 @@ data class SigilResult(
         const val FEATURE_GBA_FLASH = 8
         const val FEATURE_GBA_FLASH1M = 16
         const val FEATURE_GBA_EEPROM = 32
+        const val FEATURE_GB_SCRATCH_GEN1 = 64
+        const val FEATURE_GB_SCRATCH_GOLD_SILVER = 128
+        const val FEATURE_GB_SCRATCH_CRYSTAL = 256
 
         /**
          * A result rebuilt from stored columns, or built for a platform that has no title id.
@@ -599,6 +602,7 @@ object Sigil {
     @JvmStatic private external fun nativeContentStem(contentPath: String): String
     @JvmStatic private external fun nativePlatformSlug(slug: String?): String
     @JvmStatic private external fun nativeLoadHeaderKey(prodKeysPath: String): ByteArray
+    @JvmStatic private external fun nativeUnitIdentity(platform: String, features: Int, unit: ByteArray): String
 
     fun version(): String = nativeVersion()
 
@@ -607,6 +611,13 @@ object Sigil {
 
     /** The base name RetroArch names save files after; see docs/save-units.md, "Stem". */
     fun contentStem(contentPath: String): String = nativeContentStem(contentPath)
+
+    /**
+     * The identity hash collect and restore give [unit], a unit as RomM stores it, for a game on
+     * [platform] (`gb` or `gbc`) whose ROM has the `FEATURE_*` bits [features].
+     */
+    fun unitIdentity(platform: String, features: Int, unit: ByteArray): String =
+        nativeUnitIdentity(platform, features, unit)
 
     /** The 32-byte Switch header key read from a prod.keys file. */
     fun loadHeaderKeyFromProdKeys(prodKeysPath: String): ByteArray = nativeLoadHeaderKey(prodKeysPath)

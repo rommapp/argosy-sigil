@@ -62,6 +62,7 @@ _API_SURFACE = {
     "persisted result": ("fun persisted(", "def persisted(", "func PersistedResult("),
     "locate saves": ("fun locateSaves(", "def locate_saves(", "func LocateSaves("),
     "hash saves": ("fun hashSaves(", "def hash_saves(", "func HashSaves("),
+    "unit identity": ("fun unitIdentity(", "def unit_identity(", "func UnitIdentity("),
     "layout subdirs": ("fun layoutSubdirs(", "def layout_subdirs(", "func LayoutSubdirs("),
     "layouts": ("fun layouts(", "def layouts(", "func Layouts("),
     "content stem": ("fun contentStem(", "def content_stem(", "func ContentStem("),

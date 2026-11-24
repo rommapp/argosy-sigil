@@ -59,6 +59,9 @@ static void features_to_str(uint32_t f, char *out, size_t cap) {
         { SIGIL_FEATURE_GBA_FLASH, "gba-flash" },
         { SIGIL_FEATURE_GBA_FLASH1M, "gba-flash1m" },
         { SIGIL_FEATURE_GBA_EEPROM, "gba-eeprom" },
+        { SIGIL_FEATURE_GB_SCRATCH_GEN1, "gb-scratch-gen1" },
+        { SIGIL_FEATURE_GB_SCRATCH_GOLD_SILVER, "gb-scratch-gold-silver" },
+        { SIGIL_FEATURE_GB_SCRATCH_CRYSTAL, "gb-scratch-crystal" },
     };
     size_t n = 0;
     out[0] = '\0';

@@ -170,6 +170,7 @@ set(SIGIL_SOURCES
     src/sync_cart.c
     src/sync_n64.c
     src/sync_gb.c
+    src/scratch_gb.c
     src/sync_nds.c
     src/sync_genesis.c
     src/sync_gba.c

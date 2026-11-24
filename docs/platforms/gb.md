@@ -26,6 +26,21 @@ their `RETRO_MEMORY_RTC` region on the same values.
 `SIGIL_FEATURE_MBC2`: header byte `0x147` is `0x05` (MBC2) or `0x06`
 (MBC2+BATTERY).
 
+`SIGIL_FEATURE_GB_SCRATCH_GEN1`, `_GOLD_SILVER` and `_CRYSTAL`: header
+byte `0x14A` is `0x01` (outside Japan) and the 15 bytes at `0x134` hold
+one of these titles and manufacturer codes, padded with `0x00`, as
+`rgbfix` writes them in the pret builds (the Makefiles of `pokered` at
+`ba9c056`, `pokeyellow` at `b452f2a`, `pokegold` at `2bbfba6` and
+`pokecrystal` at `9ce4c4e`):
+
+| Bit | Title | Code |
+|---|---|---|
+| `GEN1` | `POKEMON RED`, `POKEMON BLUE`, `POKEMON YELLOW` | none |
+| `GOLD_SILVER` | `POKEMON_GLD`, `POKEMON_SLV` | `AAUE`, `AAXE` |
+| `CRYSTAL` | `PM_CRYSTAL` | `BYTE`, or `BYTU` for Australia |
+
+See [Scratch RAM](#scratch-ram).
+
 ## Save layouts
 
 Rows from the [layout table](../save-units.md). The default row applies to any cart core with no row of its own.
@@ -119,12 +134,45 @@ VBA-M stops saving a cart whose file runs past its RAM.
 Restore also reads a `.sav` with the clock appended and a zip of an
 emulator's `.srm` and `.rtc`, as clients uploaded before sigil.
 
+### Scratch RAM
+
+Pokemon Red, Blue, Yellow, Gold, Silver and Crystal keep buffers in cart
+RAM bank 0 that the game overwrites before it reads them back: sprites
+decompress there, and Gold and Silver keep their window stack there. The
+RAM changes on a menu or a battle with no in-game save. On a cart with a
+`SIGIL_FEATURE_GB_SCRATCH_*` bit, the identity reads these ranges as
+zeros, so a write there alone is not a new save. File offsets, bank n at
+n * 0x2000:
+
+| Bit | Scratch | Checksum | Source |
+|---|---|---|---|
+| `GEN1` | `0x0000-0x0497`: `sSpriteBuffer0-2`, 3 x 0x188 bytes | complement of the 8-bit sum of `0x2598-0x3522`, at `0x3523` | pret `pokered` at `ba9c056` `ram/sram.asm`, `engine/menus/save.asm` `CalcCheckSum`; PKHeX at `a5311f9` `SAV1Offsets.cs` |
+| `GOLD_SILVER` | `0x0000-0x05FF`: `sScratch`; `0x1800-0x1FFF`: `sWindowStack` | 16-bit sum of `0x2009-0x2D68`, low byte first, at `0x2D69` | pret `pokegold` at `2bbfba6` `ram/sram.asm`, `layout.link`; PKHeX `SAV2Offsets.cs`, `SAV2.cs` |
+| `CRYSTAL` | `0x0000-0x05FF`: `sScratch` | 16-bit sum of `0x2009-0x2B82`, low byte first, at `0x2D0D` | pret `pokecrystal` at `9ce4c4e` `ram/sram.asm`, `layout.link`, `engine/menus/save.asm` `SaveChecksum`; PKHeX `SAV2Offsets.cs`, `SAV2.cs` |
+
+The ranges apply only to a RAM of exactly 32 KiB whose main-data
+checksum validates; any other RAM hashes whole. A new game before its
+first in-game save fails the checksum, so its scratch writes still read
+as new saves. Gold and Silver's `sStackTop` and `sRTCHaltCheckValue` sit
+just below `0x1800` and stay in the identity. `content_hash` is always
+the md5 of the RAM as it is.
+
+`sigil_unit_identity` gives the same identity for a unit as RomM stores
+it, a raw RAM or a clock cart's zip, so a server compares an upload with
+the save it holds by the rule collect and restore use.
+
+Samples `yellow-gambatte-loaded`, `-sprite` and `-saved` are three copies
+of one cart's RAM: a sprite-buffer write between the first two, an
+in-game save between the last two. `gold-mgba-unsaved` and
+`gold-mgba-saved` are a new game before and after its first save.
+
 ## Open items
 
 - A clock format can't hold all of the neutral clock: gambatte drops halt and carry, Mesen2 the latched registers, TGB Dual the wall time. Restore writes what the format holds and doesn't report what it dropped.
 - A header saying 2 KiB of RAM (`0x149` = `0x01`, unused by licensed carts) gives 8 KiB in mGBA and Gearboy and 2 KiB in SameBoy and VBA-M; sigil doesn't convert between them.
 - A game that writes MBC2's RAM through its mirrors (`0xA200` to `0xBFFF`) lands elsewhere in gambatte's and TGB Dual's 8 KiB file than in the 512-byte emulators; sigil takes the first 512 bytes.
 - HuC3, TAMA5 and TPP1 clocks are left in the RAM file as each emulator wrote them, not converted.
+- Scratch RAM covers the English releases only. The Japanese, Korean and other-language Pokemon releases differ in destination, title or manufacturer code, so their saves hash whole.
 
 - Pizza Boy A/C: closed source, format and RTC handling unknown.
 - When RetroArch's `sort_savefiles_enable` default became `true`.

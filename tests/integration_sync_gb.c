@@ -484,6 +484,93 @@ static void check_hardcore_upload(void) {
     free(marked);
 }
 
+#define YELLOW "Pokemon - Yellow Version - Special Pikachu Edition (USA, Europe) (CGB+SGB Enhanced).srm"
+#define GOLD   "Pokemon - Gold Version (USA, Europe) (SGB Enhanced) (GB Compatible).srm"
+
+static bool same_identity(const char *platform, uint32_t features, const uint8_t *a, size_t a_len, const uint8_t *b,
+                          size_t b_len) {
+    char ia[33], ib[33];
+    return sigil_unit_identity(platform, features, a, a_len, ia) == SIGIL_OK &&
+           sigil_unit_identity(platform, features, b, b_len, ib) == SIGIL_OK && strcmp(ia, ib) == 0;
+}
+
+/* The identity is the RAM's md5 when the layout's checksum fails, and differs from it once it validates. */
+static void check_masked(const char *where, uint32_t features, const uint8_t *ram, size_t len, bool masked) {
+    char identity[33], whole[33];
+    sigil_md5_of(ram, len, whole);
+    if (sigil_unit_identity("gb", features, ram, len, identity) != SIGIL_OK ||
+        (strcmp(identity, whole) != 0) != masked) {
+        fail(where, masked ? "a valid save hashed whole" : "a save whose checksum fails was masked");
+    }
+}
+
+/* A RAM with `offset` flipped keeps its identity when `same`. */
+static void check_flip(const char *where, uint32_t features, const uint8_t *ram, size_t len, size_t offset, bool same) {
+    uint8_t *copy = (uint8_t *)malloc(len);
+    if (!copy) return;
+    memcpy(copy, ram, len);
+    copy[offset] ^= 0x5A;
+    if (same_identity("gbc", features, ram, len, copy, len) != same) {
+        fail(where, same ? "a scratch write changed the identity" : "a change outside scratch kept the identity");
+    }
+    free(copy);
+}
+
+/* Pokemon RAM from real carts: a sprite-buffer write between two loads keeps
+ * the identity, an in-game save changes it, and a save whose checksum fails
+ * hashes whole. */
+static void check_scratch(void) {
+    const uint32_t GEN1 = SIGIL_FEATURE_GB_SCRATCH_GEN1, GS = SIGIL_FEATURE_GB_SCRATCH_GOLD_SILVER,
+                   CRYSTAL_BIT = SIGIL_FEATURE_GB_SCRATCH_CRYSTAL;
+    size_t loaded_len = 0, sprite_len = 0, saved_len = 0;
+    uint8_t *loaded = corpus_sample(&g_gb, "gb", "yellow-gambatte-loaded", YELLOW, &loaded_len);
+    uint8_t *sprite = corpus_sample(&g_gb, "gb", "yellow-gambatte-sprite", YELLOW, &sprite_len);
+    uint8_t *saved = corpus_sample(&g_gb, "gb", "yellow-gambatte-saved", YELLOW, &saved_len);
+    if (loaded && sprite && !same_identity("gb", GEN1, loaded, loaded_len, sprite, sprite_len)) {
+        fail("yellow sprite write", "changed the identity");
+    }
+    if (sprite && saved && same_identity("gb", GEN1, sprite, sprite_len, saved, saved_len)) {
+        fail("yellow in-game save", "kept the identity");
+    }
+    if (loaded) check_masked("yellow loaded", GEN1, loaded, loaded_len, true);
+    free(loaded);
+    free(sprite);
+    free(saved);
+
+    static const char *const BLUE[] = { "pokemon-blue-builtin", "pokemon-blue-gambatte", "pokemon-blue-mgba" };
+    for (size_t i = 0; i < sizeof(BLUE) / sizeof(BLUE[0]); i++) {
+        size_t len = 0;
+        uint8_t *ram = corpus_sample(&g_gb, "gb", BLUE[i], NULL, &len);
+        if (!ram) continue;
+        check_masked(BLUE[i], GEN1, ram, len, true);
+        check_flip(BLUE[i], GEN1, ram, len, 0x0200, true);
+        check_flip(BLUE[i], GEN1, ram, len, 0x0598, false);
+        free(ram);
+    }
+
+    size_t unsaved_len = 0, gold_len = 0;
+    uint8_t *unsaved = corpus_sample(&g_gbc, "gbc", "gold-mgba-unsaved", GOLD, &unsaved_len);
+    uint8_t *gold = corpus_sample(&g_gbc, "gbc", "gold-mgba-saved", GOLD, &gold_len);
+    if (unsaved) check_masked("gold before its first save", GS, unsaved, unsaved_len, false);
+    if (gold) {
+        check_masked("gold saved", GS, gold, gold_len, true);
+        check_flip("gold window stack", GS, gold, gold_len, 0x1F38, true);
+        check_flip("gold scratch", GS, gold, gold_len, 0x0078, true);
+        check_flip("gold backup copy", GS, gold, gold_len, 0x0A0B, false);
+    }
+    free(unsaved);
+    free(gold);
+
+    size_t crystal_len = 0;
+    uint8_t *crystal = corpus_sample(&g_gbc, "gbc", "crystal-mgba", CRYSTAL ".srm", &crystal_len);
+    if (crystal) {
+        check_masked("crystal", CRYSTAL_BIT, crystal, crystal_len, true);
+        check_flip("crystal scratch", CRYSTAL_BIT, crystal, crystal_len, 0x0100, true);
+        check_flip("crystal bank 0 past scratch", CRYSTAL_BIT, crystal, crystal_len, 0x1800, false);
+    }
+    free(crystal);
+}
+
 int main(void) {
     char path[1024];
     if (corpus_platform_path("gb", "manifest.tsv", path, sizeof(path)) != 0 || corpus_load(path, &g_gb) != 0 ||
@@ -503,6 +590,7 @@ int main(void) {
     check_standalone();
     check_conflict();
     check_hardcore_upload();
+    check_scratch();
     corpus_free(&g_gb);
     corpus_free(&g_gbc);
     printf("gb sync: %d failures\n", g_fails);

@@ -633,6 +633,26 @@ def test_content_stem_uses_the_archive_member():
     assert sigil.content_stem("roms/Game (USA).gbc") == "Game (USA)"
 
 
+def _red_ram() -> bytearray:
+    ram = bytearray((i * 31 + i // 97) & 0xFF for i in range(0x8000))
+    ram[0x3523] = ~sum(ram[0x2598:0x3523]) & 0xFF
+    return ram
+
+
+def test_unit_identity_leaves_out_a_known_games_scratch():
+    ram = _red_ram()
+    saved = sigil.unit_identity("gb", sigil.FEATURE_GB_SCRATCH_GEN1, bytes(ram))
+    ram[0x0100] ^= 0x5A
+
+    assert sigil.unit_identity("gb", sigil.FEATURE_GB_SCRATCH_GEN1, bytes(ram)) == saved
+    assert sigil.unit_identity("gb", 0, bytes(ram)) == hashlib.md5(ram).hexdigest()
+
+
+def test_unit_identity_refuses_a_platform_it_has_no_rule_for():
+    with pytest.raises(sigil.SigilUnsupportedFormatError):
+        sigil.unit_identity("nes", 0, b"save")
+
+
 def test_layout_subdirs_names_the_core_folders():
     assert sigil.layout_subdirs("fbneo") == ["fbneo"]
     assert sigil.layout_subdirs("gambatte") == []

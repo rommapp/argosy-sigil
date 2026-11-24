@@ -221,6 +221,14 @@ const (
 	FeatureGBAEEPROM  uint32 = C.SIGIL_FEATURE_GBA_EEPROM
 )
 
+// A Game Boy game that keeps scratch buffers in its RAM, which its save's
+// identity leaves out; at most one is set.
+const (
+	FeatureGBScratchGen1       uint32 = C.SIGIL_FEATURE_GB_SCRATCH_GEN1
+	FeatureGBScratchGoldSilver uint32 = C.SIGIL_FEATURE_GB_SCRATCH_GOLD_SILVER
+	FeatureGBScratchCrystal    uint32 = C.SIGIL_FEATURE_GB_SCRATCH_CRYSTAL
+)
+
 // Slug returns the canonical string slug for this platform.
 func (p Platform) Slug() string {
 	return C.GoString(C.sigil_platform_to_slug(C.sigil_platform(p)))
@@ -672,6 +680,23 @@ func ContentStem(contentPath string) string {
 	defer C.free(unsafe.Pointer(out))
 	C.sigil_content_stem(cname, out, C.SIGIL_SAVE_ENTRY_MAX)
 	return C.GoString(out)
+}
+
+// UnitIdentity returns the identity hash collect and restore give unit, a
+// unit as RomM stores it, for a game on platform (gb or gbc) whose ROM has
+// the Feature* bits features.
+func UnitIdentity(platform string, features uint32, unit []byte) (string, error) {
+	cplatform := C.CString(platform)
+	defer C.free(unsafe.Pointer(cplatform))
+	cunit := C.malloc(C.size_t(len(unit) + 1))
+	defer C.free(cunit)
+	copy(unsafe.Slice((*byte)(cunit), len(unit)), unit)
+	out := (*C.char)(C.calloc(33, 1))
+	defer C.free(unsafe.Pointer(out))
+	if err := errFromCode(C.sigil_unit_identity(cplatform, C.uint32_t(features), (*C.uint8_t)(cunit), C.size_t(len(unit)), out)); err != nil {
+		return "", err
+	}
+	return C.GoString(out), nil
 }
 
 // LayoutSubdirs names the subfolders under the save root a layout writes

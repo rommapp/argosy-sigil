@@ -745,6 +745,33 @@ func rommZipHash(entries map[string][]byte) string {
 	return md5hex([]byte(strings.Join(lines, "\n")))
 }
 
+func TestUnitIdentityLeavesOutAKnownGamesScratch(t *testing.T) {
+	ram := make([]byte, 0x8000)
+	for i := range ram {
+		ram[i] = byte(i*31 + i/97)
+	}
+	var sum byte
+	for _, b := range ram[0x2598:0x3523] {
+		sum += b
+	}
+	ram[0x3523] = ^sum
+	saved, err := UnitIdentity("gb", FeatureGBScratchGen1, ram)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ram[0x0100] ^= 0x5A
+	if got, _ := UnitIdentity("gb", FeatureGBScratchGen1, ram); got != saved {
+		t.Errorf("a scratch write changed the identity: %s != %s", got, saved)
+	}
+	whole := md5.Sum(ram)
+	if got, _ := UnitIdentity("gb", 0, ram); got != hex.EncodeToString(whole[:]) {
+		t.Errorf("without the bit, identity = %s", got)
+	}
+	if _, err := UnitIdentity("nes", 0, []byte("save")); !errors.Is(err, ErrUnsupportedFormat) {
+		t.Errorf("nes: err = %v", err)
+	}
+}
+
 func TestContentStemUsesTheArchiveMember(t *testing.T) {
 	if got := ContentStem("roms/Game (USA).zip#Game (USA).gbc"); got != "Game (USA)" {
 		t.Errorf("ContentStem = %q", got)

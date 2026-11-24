@@ -61,6 +61,7 @@ __all__ = [
     "platform_from_slug",
     "platform_to_slug",
     "save_base",
+    "unit_identity",
     "version",
 ]
 
@@ -72,6 +73,10 @@ FEATURE_GBA_SRAM: int = lib.SIGIL_FEATURE_GBA_SRAM
 FEATURE_GBA_FLASH: int = lib.SIGIL_FEATURE_GBA_FLASH
 FEATURE_GBA_FLASH1M: int = lib.SIGIL_FEATURE_GBA_FLASH1M
 FEATURE_GBA_EEPROM: int = lib.SIGIL_FEATURE_GBA_EEPROM
+# A GB game that keeps scratch buffers in its RAM, which its save's identity leaves out.
+FEATURE_GB_SCRATCH_GEN1: int = lib.SIGIL_FEATURE_GB_SCRATCH_GEN1
+FEATURE_GB_SCRATCH_GOLD_SILVER: int = lib.SIGIL_FEATURE_GB_SCRATCH_GOLD_SILVER
+FEATURE_GB_SCRATCH_CRYSTAL: int = lib.SIGIL_FEATURE_GB_SCRATCH_CRYSTAL
 
 
 class SigilError(Exception):
@@ -910,6 +915,15 @@ def hash_saves(saves: SigilSaveUnit, save_root: str | os.PathLike[str]) -> Sigil
     if rc != lib.SIGIL_OK:
         _raise_error(rc)
     return replace(saves, content_hash=_text(unit.content_hash), identity_hash=_text(unit.identity_hash))
+
+
+def unit_identity(platform: str, features: int, unit: bytes) -> str:
+    """The identity_hash collect and restore give `unit` for a game on `platform` (gb or gbc) whose ROM has `features`."""
+    out = ffi.new("char[33]")
+    rc = lib.sigil_unit_identity(platform.encode("utf-8"), features, unit, len(unit), out)
+    if rc != lib.SIGIL_OK:
+        _raise_error(rc)
+    return _text(out)
 
 
 _SYNC_MODES = {"managed": lib.SIGIL_SYNC_MANAGED, "unmanaged": lib.SIGIL_SYNC_UNMANAGED}

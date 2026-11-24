@@ -80,8 +80,11 @@ RetroArch persists it beside the save as `<stem>.rtc`. `SIGIL_FEATURE_MBC2`
 says a Game Boy cart's RAM is MBC2's 512 four-bit cells, which emulators
 store in three different forms. `SIGIL_FEATURE_GBA_SRAM`, `_FLASH`,
 `_FLASH1M` and `_EEPROM` name a GBA cart's save chip, which sizes a save
-an emulator padded. The rules that set them are on the
-[Game Boy](platforms/gb.md), [SNES](platforms/snes.md) and
+an emulator padded. `SIGIL_FEATURE_GB_SCRATCH_GEN1`, `_GOLD_SILVER` and
+`_CRYSTAL` name a Pokemon cart that keeps scratch buffers in its RAM; the
+identity collect and restore give its save reads those ranges as zeros
+([Scratch RAM](platforms/gb.md#scratch-ram)). The rules that set them are
+on the [Game Boy](platforms/gb.md), [SNES](platforms/snes.md) and
 [Game Boy Advance](platforms/gba.md#features) pages.
 
 ## Layout rows

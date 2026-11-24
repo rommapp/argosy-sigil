@@ -19,21 +19,28 @@ static int mem_read(void *ctx, uint64_t off, void *buf, size_t len) {
 }
 static int64_t mem_size(void *ctx) { return (int64_t)((mem_ctx *)ctx)->len; }
 
-static void write_header(uint8_t *rom, uint8_t cart_type) {
+/* The title field 0x134-0x142 as rgbfix writes it: the title, then any
+ * manufacturer code, padded with 0x00. */
+typedef struct { const char *bytes; size_t len; uint8_t destination; } title_field;
+
+static const title_field JAPANESE_CRYSTAL = { "POKEMON CRYSTAL", 15, 0x00 };
+
+static void write_header(uint8_t *rom, uint8_t cart_type, const title_field *title) {
     memset(rom, 0, ROM_LEN);
-    memcpy(rom + 0x134, "POKEMON CRYSTAL", 15);
+    memcpy(rom + 0x134, title->bytes, title->len);
     rom[CART_TYPE] = cart_type;
     rom[0x148] = 0x06;
     rom[0x149] = 0x03;
+    rom[0x14A] = title->destination;
     uint8_t x = 0;
     for (int i = 0x134; i <= 0x14C; i++) x = (uint8_t)(x - rom[i] - 1);
     rom[CHECKSUM] = x;
 }
 
-static int expect(uint8_t cart_type, const char *name, const char *slug,
-                  int want_rc, uint32_t want_features, int want_platform, const char *label) {
+static int expect_titled(uint8_t cart_type, const title_field *title, const char *name, const char *slug,
+                         int want_rc, uint32_t want_features, int want_platform, const char *label) {
     uint8_t rom[ROM_LEN];
-    write_header(rom, cart_type);
+    write_header(rom, cart_type, title);
     mem_ctx ctx = { rom, sizeof(rom) };
     sigil_io io = { mem_read, mem_size, NULL, &ctx };
     sigil_result r;
@@ -55,6 +62,40 @@ static int expect(uint8_t cart_type, const char *name, const char *slug,
     return 0;
 }
 
+static int expect(uint8_t cart_type, const char *name, const char *slug,
+                  int want_rc, uint32_t want_features, int want_platform, const char *label) {
+    return expect_titled(cart_type, &JAPANESE_CRYSTAL, name, slug, want_rc, want_features, want_platform, label);
+}
+
+/* Title fields and cart types from the rgbfix flags in the Makefiles of
+ * pret/pokered at ba9c056, pokeyellow at b452f2a, pokegold at 2bbfba6 and
+ * pokecrystal at 9ce4c4e; -j sets destination 0x01. */
+static int scratch_titles(void) {
+    const uint32_t RTC = SIGIL_FEATURE_RTC, GEN1 = SIGIL_FEATURE_GB_SCRATCH_GEN1,
+                   GS = SIGIL_FEATURE_GB_SCRATCH_GOLD_SILVER, C = SIGIL_FEATURE_GB_SCRATCH_CRYSTAL;
+    const title_field red = { "POKEMON RED", 11, 0x01 }, blue = { "POKEMON BLUE", 12, 0x01 },
+                      yellow = { "POKEMON YELLOW", 14, 0x01 }, gold = { "POKEMON_GLDAAUE", 15, 0x01 },
+                      silver = { "POKEMON_SLVAAXE", 15, 0x01 }, crystal = { "PM_CRYSTAL\0BYTE", 15, 0x01 },
+                      crystal_au = { "PM_CRYSTAL\0BYTU", 15, 0x01 }, red_jp = { "POKEMON RED", 11, 0x00 },
+                      gold_jp = { "POKEMON_GLDAAUJ", 15, 0x00 }, longer = { "POKEMON REDX", 12, 0x01 },
+                      other_code = { "POKEMON_GLDAAUD", 15, 0x01 };
+    int fails = 0;
+    fails += expect_titled(0x13, &red, "Red.gb", NULL, SIGIL_OK, GEN1, SIGIL_PLATFORM_GB, "red");
+    fails += expect_titled(0x13, &blue, "Blue.gb", NULL, SIGIL_OK, GEN1, SIGIL_PLATFORM_GB, "blue");
+    fails += expect_titled(0x1B, &yellow, "Yellow.gbc", NULL, SIGIL_OK, GEN1, SIGIL_PLATFORM_GBC, "yellow");
+    fails += expect_titled(0x10, &gold, "Gold.gbc", NULL, SIGIL_OK, RTC | GS, SIGIL_PLATFORM_GBC, "gold");
+    fails += expect_titled(0x10, &silver, "Silver.gbc", NULL, SIGIL_OK, RTC | GS, SIGIL_PLATFORM_GBC, "silver");
+    fails += expect_titled(0x10, &crystal, "Crystal.gbc", NULL, SIGIL_OK, RTC | C, SIGIL_PLATFORM_GBC, "crystal");
+    fails += expect_titled(0x10, &crystal_au, "Crystal.gbc", NULL, SIGIL_OK, RTC | C, SIGIL_PLATFORM_GBC,
+                           "crystal australia");
+    fails += expect_titled(0x13, &red_jp, "Red.gb", NULL, SIGIL_OK, 0, SIGIL_PLATFORM_GB, "japanese destination");
+    fails += expect_titled(0x10, &gold_jp, "Gold.gbc", NULL, SIGIL_OK, RTC, SIGIL_PLATFORM_GBC, "japanese gold");
+    fails += expect_titled(0x13, &longer, "Hack.gb", NULL, SIGIL_OK, 0, SIGIL_PLATFORM_GB, "title runs longer");
+    fails += expect_titled(0x10, &other_code, "Gold.gbc", NULL, SIGIL_OK, RTC, SIGIL_PLATFORM_GBC,
+                           "other manufacturer code");
+    return fails;
+}
+
 int main(void) {
     int fails = 0;
     const uint32_t RTC = SIGIL_FEATURE_RTC, MBC2 = SIGIL_FEATURE_MBC2;
@@ -68,10 +109,11 @@ int main(void) {
     fails += expect(0x10, "clock.gb", "gbc", SIGIL_OK, RTC, SIGIL_PLATFORM_GBC, "platform hint wins over extension");
     fails += expect(0x06, "Final Fantasy Legend, The (USA).gb", NULL, SIGIL_OK, MBC2, SIGIL_PLATFORM_GB, "mbc2 battery");
     fails += expect(0x05, "mbc2.gb", NULL, SIGIL_OK, MBC2, SIGIL_PLATFORM_GB, "mbc2");
+    fails += scratch_titles();
 
     {
         uint8_t rom[ROM_LEN];
-        write_header(rom, 0x10);
+        write_header(rom, 0x10, &JAPANESE_CRYSTAL);
         rom[CHECKSUM] ^= 0xFF;
         mem_ctx ctx = { rom, sizeof(rom) };
         sigil_io io = { mem_read, mem_size, NULL, &ctx };
