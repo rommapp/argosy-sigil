@@ -289,9 +289,10 @@ sigil.Collect(game *Result, core, contentPath, saveRoot string, opts *SyncOption
 sigil.Restore(unit []byte, game *Result, core, contentPath, saveRoot string, opts *SyncOptions) (*SyncResult, error)
 
 type ProblemError struct {
-    Err         error   // sigil.ErrNoSpace, ErrRegion, ErrNoTarget, ErrAmbiguous, ErrDamaged or ErrExists.
+    Err         error   // sigil.ErrNoSpace, ErrRegion, ErrNoTarget, ErrAmbiguous, ErrDamaged, ErrExists
+                        // or ErrInvalidArg.
     Problem     string  // The save, unit member or file at fault; for ErrAmbiguous the files, or the
-                        // profiles as "id name", one per line.
+                        // profiles as "id name", one per line; for ErrInvalidArg the option's key.
     BlocksShort uint32  // ErrNoSpace: blocks the save lacked; 0 when the free blocks were there but a
                         // directory slot or a Dreamcast game file's starting blocks weren't.
     Profiles    []Profile // Layouts with profiles: every profile the emulator lists.
@@ -358,9 +359,10 @@ out of the game's unit; [sync.md](../sync.md#companions) has the rules.
 ### Refusals
 
 `Restore` writes nothing when it returns one of these. `Collect` returns
-`ErrDamaged`, `ErrAmbiguous` and `ErrIO` the same way. The errors marked
-"ProblemError" come as a `*sigil.ProblemError`, which matches its error
-with `errors.Is` and names what is at fault in `Problem`.
+`ErrDamaged`, `ErrAmbiguous`, `ErrIO` and `ErrInvalidArg` naming an option
+the same way. The errors marked "ProblemError" come as a
+`*sigil.ProblemError`, which matches its error with `errors.Is` and names
+what is at fault in `Problem`.
 [sync.md](../sync.md#refusals) has when each one happens.
 
 | Error | Meaning | ProblemError |
@@ -374,6 +376,7 @@ with `errors.Is` and names what is at fault in `Problem`.
 | `ErrDamaged` | a file the saves are in is damaged; pass `Repair` once the user agrees | yes |
 | `ErrExists` | Dolphin's GCI folder has no free name for a new save | yes |
 | `ErrIO` | a file the listing holds won't open, or a member's path would leave the root | |
+| `ErrInvalidArg` | as a ProblemError, the emulator needs a setting `opts` didn't pass and has no default for (`xemu`'s `hdd_path`); ask the user and pass it in `Options` | when it names one |
 
 ## Memory cards
 

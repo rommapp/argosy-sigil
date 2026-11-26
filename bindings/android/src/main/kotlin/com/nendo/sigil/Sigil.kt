@@ -103,8 +103,10 @@ data class SigilResult(
  * were there but a directory slot or a Dreamcast game file's starting blocks weren't), the
  * companion's save from another region ([REGION]), the damaged file ([DAMAGED]), the unit member
  * with no file to go in ([NO_TARGET]), the files that could each be the emulator's card or the
- * profiles that could each take the saves, one per line ([AMBIGUOUS]), or the save Dolphin's GCI
- * folder has no free name for ([EXISTS]). Each line is escaped as [SigilCardEntry.name] is.
+ * profiles that could each take the saves, one per line ([AMBIGUOUS]), the save Dolphin's GCI
+ * folder has no free name for ([EXISTS]), or the key of an option the emulator has no default for
+ * that `options` lacks or gives empty ([INVALID_ARG]; empty for any other bad call). Each line is
+ * escaped as [SigilCardEntry.name] is.
  * [profiles] lists every profile the emulator lists, on a layout with profiles: when you don't
  * know which one the user plays as, ask them from it (or [Sigil.listProfiles]) and pass `profile`.
  */
@@ -735,8 +737,9 @@ object Sigil {
     /**
      * [game]'s saves under [saveRoot] gathered into the unit that travels to RomM. Store the
      * result's state once the unit, its holding unit and each changed companion unit reached
-     * RomM. Raises [SigilException] with [SigilException.DAMAGED] and
-     * [SigilException.AMBIGUOUS] as [restore] does. docs/quickstart-guides/kotlin.md defines every input.
+     * RomM. Raises [SigilException] with [SigilException.DAMAGED], [SigilException.AMBIGUOUS]
+     * and [SigilException.INVALID_ARG] naming an option as [restore] does.
+     * docs/quickstart-guides/kotlin.md defines every input.
      */
     fun collect(
         game: SigilResult,
@@ -772,6 +775,8 @@ object Sigil {
      * companion (repair changes neither of the last two); [SigilException.EXISTS] when Dolphin's
      * GCI folder has no free name for a new save.
      * The last six name the save, member or files in [SigilException.problem].
+     * [SigilException.INVALID_ARG] with a [SigilException.problem] names an option the emulator
+     * has no default for that [options] lacks.
      *
      * Files are written whole through [SigilFileAccess.write]; the overload below that takes
      * writesParts can write a drive image in parts instead.

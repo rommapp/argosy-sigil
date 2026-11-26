@@ -383,6 +383,13 @@ void sigil_identity_hash(sigil_named_md5 *items, size_t count, char out[33]);
 size_t sigil_save_shared_paths(const sigil_save_request *req, char (*out)[SIGIL_SAVE_PATH_MAX], int *devices,
                                size_t cap);
 
+/**
+ * Whether a file the request's layout row applies is named from an option
+ * the request doesn't send (or sends empty) and the emulator has no default
+ * for, as xemu has none for hdd_path. The option's key goes in `key`.
+ */
+bool sigil_save_unset_option(const sigil_save_request *req, char key[64]);
+
 /** The request's value for option `key`, or NULL when it gives none. */
 const char *sigil_save_option_value(const sigil_save_request *req, const char *key);
 

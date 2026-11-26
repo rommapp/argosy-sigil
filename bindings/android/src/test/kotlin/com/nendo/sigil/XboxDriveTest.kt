@@ -170,6 +170,7 @@ class XboxDriveTest {
             fail("a restore that names no drive was taken")
         } catch (e: SigilException) {
             assertEquals(SigilException.INVALID_ARG, e.code)
+            assertEquals("hdd_path", e.problem)
         }
     }
 }

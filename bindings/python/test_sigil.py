@@ -1123,9 +1123,11 @@ def test_an_xbox_restore_without_a_drive_image_names_the_one_it_needs(tmp_path):
         sigil.restore(_stored_zip(_HALO_SAVE), _HALO, "xemu", "Halo (USA).iso", tmp_path, options=_XEMU_DRIVE)
     assert refused.value.problem == "xbox_hdd.qcow2"
     assert list(tmp_path.iterdir()) == []
-    # xemu has no drive until its hdd_path setting names one, so without it sigil names none.
-    with pytest.raises(sigil.SigilInvalidArgError):
+    # xemu has no drive until its hdd_path setting names one, so without it sigil names none and
+    # says which setting it needs.
+    with pytest.raises(sigil.SigilInvalidArgError) as refused:
         sigil.restore(_stored_zip(_HALO_SAVE), _HALO, "xemu", "Halo (USA).iso", tmp_path)
+    assert refused.value.problem == "hdd_path"
     with pytest.raises(sigil.SigilNoTargetError) as refused:
         sigil.restore(_stored_zip(_HALO_SAVE), _HALO, "x1box", "Halo (USA).iso", tmp_path)
     assert refused.value.problem == "hdd.img"
