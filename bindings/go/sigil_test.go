@@ -1418,8 +1418,9 @@ func TestAnXboxRestoreWithoutADriveImageNamesTheOneItNeeds(t *testing.T) {
 	if !errors.Is(err, ErrNoTarget) || !errors.As(err, &problem) || problem.Problem != "xbox_hdd.qcow2" {
 		t.Fatalf("err = %v, want ErrNoTarget naming xbox_hdd.qcow2", err)
 	}
-	if _, err := Restore(xboxUnit(t, haloSave), halo, "xemu", "Halo (USA).iso", root, nil); !errors.Is(err, ErrInvalidArg) {
-		t.Fatalf("err = %v, want ErrInvalidArg for a request that names no drive", err)
+	_, err = Restore(xboxUnit(t, haloSave), halo, "xemu", "Halo (USA).iso", root, nil)
+	if !errors.Is(err, ErrInvalidArg) || !errors.As(err, &problem) || problem.Problem != "hdd_path" {
+		t.Fatalf("err = %v, want ErrInvalidArg naming hdd_path for a request that names no drive", err)
 	}
 }
 

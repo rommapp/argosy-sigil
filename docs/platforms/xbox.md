@@ -60,7 +60,7 @@ A disc image in a `.zip` is read in place; see [Containers](../containers.md).
 
 | Layout | Files (role, option) | Shared | Verified |
 |---|---|---|---|
-| `xemu` | | `{xemu_hdd}`: the hard-disk image `hdd_path` names in `xemu.toml` (`[sys.files]`). The option is required: xemu has no default for it and attaches no drive when it is empty, so without it the row names no drive and collect and restore return `SIGIL_ERR_INVALID_ARG`. The save root is the folder holding the image | emulator source (xemu at `v0.8.136`: `config_spec.yml`, `system/vl.c`); drive images xemu wrote, a save restored into another drive and loaded there |
+| `xemu` | | `{xemu_hdd}`: the hard-disk image `hdd_path` names in `xemu.toml` (`[sys.files]`). The option is required: xemu has no default for it and attaches no drive when it is empty, so without it the row names no drive and collect and restore return `SIGIL_ERR_INVALID_ARG` naming `hdd_path`. The save root is the folder holding the image | emulator source (xemu at `v0.8.136`: `config_spec.yml`, `system/vl.c`); drive images xemu wrote, a save restored into another drive and loaded there |
 | `x1box` | | `{x1box_hdd}`: the image X1 BOX (`com.izzy2lost.x1box`) copies into its files folder as `hdd.img`, qcow2 or raw; `hdd_path` names another file | emulator source (izzy2lost/xemu at `57bc6d6`: `SetupWizardActivity.kt`) |
 
 Both rows match `xbox` only. `hdd_path` may be the setting as the emulator
@@ -140,7 +140,7 @@ it as the game saves.
 
 | Code | When | `problem` |
 |---|---|---|
-| `SIGIL_ERR_INVALID_ARG` | either call on `xemu` with no `hdd_path`: xemu has no default drive, so sigil names none | |
+| `SIGIL_ERR_INVALID_ARG` | either call on `xemu` with no `hdd_path`, or an empty one: xemu has no default drive, so sigil names none | `hdd_path` |
 | `SIGIL_ERR_NO_TARGET` | restore: the save root holds no drive image. sigil doesn't make one, since the console's other partitions are the user's; a server restoring for a client takes the client's image | the image's file name |
 | `SIGIL_ERR_NO_TARGET` | restore: a file's name can't be a FATX name (over 42 characters, or a character FATX refuses) | the unit member |
 | `SIGIL_ERR_UNSUPPORTED_FORMAT` | restore: two members go to one file, or one folder is spelled two ways. Either call: a qcow2 image using a feature sigil doesn't write (below) | |

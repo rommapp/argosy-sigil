@@ -691,7 +691,9 @@ typedef struct {
     char      problem[SIGIL_SAVE_PATH_MAX];    /* with SIGIL_ERR_NO_SPACE or _REGION, the save at fault; with
                                                   SIGIL_ERR_DAMAGED, the damaged file; with
                                                   SIGIL_ERR_NO_TARGET, the unit member with no file; with
-                                                  SIGIL_ERR_AMBIGUOUS, the candidate files, one per line */
+                                                  SIGIL_ERR_AMBIGUOUS, the candidate files, one per line;
+                                                  with SIGIL_ERR_INVALID_ARG, the key of the option the
+                                                  request lacks, or empty for any other bad request */
     uint32_t  blocks_short;                    /* SIGIL_ERR_NO_SPACE: blocks the save lacked, in the card's block
                                                   size; 0 when there were enough free blocks but no
                                                   directory slot, or other saves hold the blocks a
@@ -714,9 +716,10 @@ typedef struct {
                                                   records name none, or name different ones */
 } sigil_sync_result;
 
-/* Gathers the game's saves into one unit. Returns SIGIL_ERR_DAMAGED as restore does, and
- * SIGIL_ERR_AMBIGUOUS when more than one file could be the emulator's card; *out then names
- * the file or files in `problem`. */
+/* Gathers the game's saves into one unit. Returns SIGIL_ERR_DAMAGED as restore does,
+ * SIGIL_ERR_AMBIGUOUS when more than one file could be the emulator's card, and
+ * SIGIL_ERR_INVALID_ARG naming an option the request lacks as restore does; *out then names
+ * the file, files or option in `problem`. */
 SIGIL_API int  sigil_collect(const sigil_sync_request *req, sigil_sync_result **out);
 /* Puts the unit `unit` back into the save root through req->write, then reads it back to verify.
  * Each of these refusals writes nothing:
@@ -750,6 +753,10 @@ SIGIL_API int  sigil_collect(const sigil_sync_request *req, sigil_sync_result **
  *                          file it can't read never counts as no saves.
  *   SIGIL_ERR_EXISTS       Dolphin's GCI folder holds other games' files under every name Dolphin
  *                          would give a new save, so it would write over one; `problem` names the save.
+ *   SIGIL_ERR_INVALID_ARG  a file the layout row names comes from an option the request doesn't
+ *                          send, or sends empty, and the emulator has no default for (xemu's
+ *                          hdd_path); `problem` names the option's key. Collect refuses the same
+ *                          way. Any other bad request returns it with `problem` empty and *out NULL.
  * With these, *out is set as well; free it as usual. */
 SIGIL_API int  sigil_restore(const sigil_sync_request *req, const uint8_t *unit, size_t unit_len,
                              sigil_sync_result **out);

@@ -1410,11 +1410,13 @@ type CompanionResult struct {
 // file's starting blocks weren't), the companion's save from another region
 // (ErrRegion), the damaged file (ErrDamaged), the unit member with no file to
 // go in (ErrNoTarget), the files that could each be the emulator's card or the
-// profiles that could each take the saves, one per line (ErrAmbiguous), or the
-// save Dolphin's GCI folder has no free name for (ErrExists). Profiles lists
-// every profile the emulator lists: when you don't know which one the user
-// plays as, ask them from it (or ListProfiles) and pass SyncOptions.Profile.
-// It matches its error with errors.Is.
+// profiles that could each take the saves, one per line (ErrAmbiguous), the
+// save Dolphin's GCI folder has no free name for (ErrExists), or the key of an
+// option the emulator has no default for that SyncOptions.Options lacks or
+// gives empty (ErrInvalidArg; any other bad call is a bare ErrInvalidArg).
+// Profiles lists every profile the emulator lists: when you don't know which
+// one the user plays as, ask them from it (or ListProfiles) and pass
+// SyncOptions.Profile. It matches its error with errors.Is.
 type ProblemError struct {
 	Err         error
 	Problem     string
@@ -1604,8 +1606,10 @@ func Collect(game *Result, core, contentPath, saveRoot string, opts *SyncOptions
 // writes nothing: ErrConflict when the saves there changed since the last sync
 // and opts.OverwriteLocal is false; ErrUncollected when a shared volume holds
 // saves no collect has passed on yet; and, as a *ProblemError naming what is at
-// fault, ErrNoSpace, ErrRegion, ErrNoTarget, ErrAmbiguous, and ErrDamaged
-// unless opts.Repair rebuilt it (a card sigil can't read stays ErrDamaged).
+// fault, ErrNoSpace, ErrRegion, ErrNoTarget, ErrAmbiguous, ErrDamaged unless
+// opts.Repair rebuilt it (a card sigil can't read stays ErrDamaged), and
+// ErrInvalidArg naming an option the emulator needs that opts lacks, which
+// Collect returns the same way.
 func Restore(unit []byte, game *Result, core, contentPath, saveRoot string, opts *SyncOptions) (*SyncResult, error) {
 	if unit == nil {
 		return nil, ErrInvalidArg

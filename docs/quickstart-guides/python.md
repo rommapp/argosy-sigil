@@ -330,9 +330,10 @@ out of the game's unit; [sync.md](../sync.md#companions) has the rules.
 ### Refusals
 
 `restore` writes nothing when it raises one of these. `collect` raises
-`SigilDamagedError`, `SigilAmbiguousError` and `SigilIOError` the same
-way. Every error carries `problem`, naming the save, member or files at
-fault when there is one. [sync.md](../sync.md#refusals) has when each one
+`SigilDamagedError`, `SigilAmbiguousError`, `SigilIOError` and
+`SigilInvalidArgError` naming an option the same way. Every error carries
+`problem`, naming the save, member, files or option at fault when there
+is one. [sync.md](../sync.md#refusals) has when each one
 happens.
 
 | Error | Meaning |
@@ -346,6 +347,7 @@ happens.
 | `SigilDamagedError` | a file the saves are in is damaged; pass `repair=True` once the user agrees |
 | `SigilExistsError` | Dolphin's GCI folder has no free name for a new save |
 | `SigilIOError` | a file the listing holds won't open, or a member's path would leave the root |
+| `SigilInvalidArgError` | with `problem` set, the emulator needs a setting the call didn't pass and has no default for (`xemu`'s `hdd_path`); ask the user and pass it in `options` |
 
 ## Memory cards
 

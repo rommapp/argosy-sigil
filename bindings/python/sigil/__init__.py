@@ -82,7 +82,8 @@ FEATURE_GB_SCRATCH_CRYSTAL: int = lib.SIGIL_FEATURE_GB_SCRATCH_CRYSTAL
 class SigilError(Exception):
     """Base error for sigil failures. `code` holds the C error code. After collect or restore,
     `problem` names the save, unit member or files at fault when the error has one (no space,
-    region, damaged, no target, ambiguous, exists), decoded as SigilCardEntry.name is."""
+    region, damaged, no target, ambiguous, exists), or the option the call lacks (invalid
+    argument), decoded as SigilCardEntry.name is."""
 
     problem: str = ""
     profiles: tuple[SigilProfile, ...] = ()
@@ -93,7 +94,9 @@ class SigilError(Exception):
 
 
 class SigilInvalidArgError(SigilError):
-    pass
+    """A bad call. After collect or restore, `problem` names an option the emulator's files are
+    named from that the call didn't pass, or passed empty, and the emulator has no default for
+    (xemu's hdd_path); it is empty for any other bad call. Nothing was written."""
 
 
 class SigilIOError(SigilError):
@@ -1123,8 +1126,8 @@ def collect(
     """`game`'s saves under `save_root` gathered into the unit that travels to RomM.
 
     Store the returned `state` once the unit, `holding` and each changed companion unit reached
-    RomM. Raises SigilDamagedError and SigilAmbiguousError as `restore` does. docs/quickstart-guides/python.md
-    defines every input.
+    RomM. Raises SigilDamagedError, SigilAmbiguousError and SigilInvalidArgError naming an option as
+    `restore` does. docs/quickstart-guides/python.md defines every input.
     """
     return _sync(None, game, core, content_path, save_root, listing, options, game_ids, state, mode, False, claimed,
                  companions, repair, profile)
@@ -1165,7 +1168,8 @@ def restore(
     SigilDamagedError when a file the saves go in is damaged and `repair` is False, isn't a card
     sigil can read at all, or holds a corrupt save of the game or a companion (`repair` changes
     neither of the last two); SigilExistsError when Dolphin's GCI folder has no free name for a
-    new save. The last six name the save, member or files in `problem`.
+    new save. The last six name the save, member or files in `problem`. SigilInvalidArgError
+    with `problem` set names an option the emulator has no default for that `options` lacks.
     """
     return _sync(unit, game, core, content_path, save_root, listing, options, game_ids, state, mode, overwrite_local,
                  claimed, companions, repair, profile, writes_parts)

@@ -10,11 +10,12 @@ static sigil_sync_result *new_result(void) {
 }
 
 /* Gives the caller the result on success and with each refusal that reports
- * through it (a conflict, the save or file at fault); frees it otherwise. */
+ * through it (a conflict, the save or file at fault, the option a request
+ * lacks); frees it otherwise. */
 static int hand_back(sigil_sync_result *r, int rc, sigil_sync_result **out) {
     bool reports = rc == SIGIL_OK || rc == SIGIL_ERR_CONFLICT || rc == SIGIL_ERR_NO_SPACE || rc == SIGIL_ERR_REGION ||
                    rc == SIGIL_ERR_DAMAGED || rc == SIGIL_ERR_NO_TARGET || rc == SIGIL_ERR_AMBIGUOUS ||
-                   rc == SIGIL_ERR_EXISTS;
+                   rc == SIGIL_ERR_EXISTS || (rc == SIGIL_ERR_INVALID_ARG && r && r->problem[0]);
     if (reports && r) *out = r;
     else sigil_sync_result_free(r);
     return rc;
@@ -224,6 +225,16 @@ static const sigil_sync_kind *kind_for(const sigil_sync_request *req, const sigi
     return req->companion_count ? NULL : files;
 }
 
+/* SIGIL_ERR_INVALID_ARG, naming the option in `problem`, when a file the
+ * row applies is named from an option the request doesn't send and the
+ * emulator has no default for: sigil can't say which file it is. */
+static int options_given(const sigil_sync_request *req, sigil_sync_result *r) {
+    char key[64];
+    if (!sigil_save_unset_option(&req->save, key)) return SIGIL_OK;
+    snprintf(r->problem, sizeof(r->problem), "%s", key);
+    return SIGIL_ERR_INVALID_ARG;
+}
+
 int sigil_collect(const sigil_sync_request *req, sigil_sync_result **out) {
     if (!out) return SIGIL_ERR_INVALID_ARG;
     *out = NULL;
@@ -236,6 +247,7 @@ int sigil_collect(const sigil_sync_request *req, sigil_sync_result **out) {
     int rc = sigil_sync_ctx_open(&x, req, kind);
     sigil_sync_result *r = rc == SIGIL_OK ? new_result() : NULL;
     if (rc == SIGIL_OK && !r) rc = SIGIL_ERR_OOM;
+    if (rc == SIGIL_OK) rc = options_given(req, r);
     if (rc == SIGIL_OK) rc = sigil_save_alternates(&req->save, &r->alternates, &r->alternate_count);
     if (rc == SIGIL_OK) {
         rc = layout->profiles ? sigil_sync_collect_profiles(&x, layout->profiles, r)
@@ -406,6 +418,7 @@ int sigil_restore(const sigil_sync_request *req, const uint8_t *unit, size_t uni
     int rc = sigil_sync_ctx_open(&x, req, kind);
     sigil_sync_result *r = rc == SIGIL_OK ? new_result() : NULL;
     if (rc == SIGIL_OK && !r) rc = SIGIL_ERR_OOM;
+    if (rc == SIGIL_OK) rc = options_given(req, r);
     if (rc == SIGIL_OK) rc = sigil_save_alternates(&req->save, &r->alternates, &r->alternate_count);
 
     char local_identity[33] = "";

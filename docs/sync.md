@@ -233,9 +233,10 @@ Restore refuses, writing nothing, with:
 | `SIGIL_ERR_UNSUPPORTED_FORMAT` | layouts with profiles: two unit members go to one file | |
 | `SIGIL_ERR_IO` | a unit member's path would leave the save root, or a file the listing holds won't open through `open`. Collect refuses the same way, so a file it can't read never counts as no saves | |
 | `SIGIL_ERR_EXISTS` | Dolphin's GCI folder holds other games' files under the name Dolphin gives a new save and each of its ten `0`-inserted forms, so Dolphin would write over one | the save |
+| `SIGIL_ERR_INVALID_ARG` | a file the layout row names comes from an option the request doesn't send, or sends empty, and the emulator has no default for: `xemu`'s `hdd_path`. Ask the user for the setting and pass it in the options. Any other bad request returns this code with no `problem` | the option's key |
 
-Collect refuses with `SIGIL_ERR_DAMAGED`, `SIGIL_ERR_AMBIGUOUS` and
-`SIGIL_ERR_IO` in the same way. With each of these the call still sets
-`*out`; free it as usual. sigil reports and the
-client decides: re-run with `overwrite_local` or `repair` once the user
-agreed, or leave the saves as they are.
+Collect refuses with `SIGIL_ERR_DAMAGED`, `SIGIL_ERR_AMBIGUOUS`,
+`SIGIL_ERR_IO` and `SIGIL_ERR_INVALID_ARG` naming an option in the same
+way. With each of these the call still sets `*out`; free it as usual.
+sigil reports and the client decides: re-run with `overwrite_local` or
+`repair` once the user agreed, or leave the saves as they are.

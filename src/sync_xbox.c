@@ -208,8 +208,7 @@ static int drive_open_path(const sigil_sync_request *req, const char *path, driv
 }
 
 /* The drive the layout row names; v->fs stays NULL when the save root holds
- * none. SIGIL_ERR_INVALID_ARG when the row can't name one: xemu's, with no
- * hdd_path in the request. */
+ * none. SIGIL_ERR_INVALID_ARG when the row names none. */
 static int drive_open(const sigil_sync_ctx *x, drive *v, sigil_sync_result *r) {
     memset(v, 0, sizeof(*v));
     char shared[SYNC_MAX_SHARED][SIGIL_SAVE_PATH_MAX];

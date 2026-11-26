@@ -796,6 +796,35 @@ size_t sigil_save_shared_paths(const sigil_save_request *req, char (*out)[SIGIL_
     return n;
 }
 
+/* Whether a variable of `template_` reads an option with no value: the
+ * request doesn't send it and the emulator has no default. `key` names it. */
+static bool template_unset_option(const sigil_save_request *req, const char *template_, char key[64]) {
+    for (const char *open = strchr(template_, '{'); open; open = strchr(open + 1, '{')) {
+        const char *close = strchr(open, '}');
+        if (!close) return false;
+        size_t len = (size_t)(close - open - 1);
+        const char *fallback = NULL;
+        if (sigil_save_variable_option(req->layout, open + 1, len, key, &fallback) &&
+            !variable_option_value(req, open + 1, len)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool sigil_save_unset_option(const sigil_save_request *req, char key[64]) {
+    const sigil_layout *layout = sigil_layout_find(req->layout, req->platform);
+    for (size_t i = 0; i < layout->member_count; i++) {
+        const sigil_layout_member *lm = &layout->members[i];
+        if (member_applies(req, lm) && template_unset_option(req, lm->template_, key)) return true;
+    }
+    for (size_t i = 0; i < layout->shared_count; i++) {
+        const sigil_layout_shared *ls = &layout->shared[i];
+        if (shared_applies(req, ls) && template_unset_option(req, ls->template_, key)) return true;
+    }
+    return false;
+}
+
 /* The values of a layout's region option, the first its default, each with
  * the region it forces (0: the disc's). */
 static const struct { const char *value; char region; } REGION_VALUES[] = {

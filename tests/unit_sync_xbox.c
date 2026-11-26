@@ -847,29 +847,39 @@ static void check_write_failures(void) {
 /* ---- the drive's name, and X1 BOX ------------------------------------------------ */
 
 /* xemu attaches no drive until its hdd_path setting names one, so a request
- * without it names none: refused, with a drive of the usual name left alone. */
+ * without it, or with it empty, names none: refused naming the setting, with
+ * a drive of the usual name left alone. */
 static void check_needs_a_named_drive(void) {
     const char *where = "xemu with no hdd_path";
     xb_guest g;
     blank_drive(&g);
     put_halo(&g, 1);
-    mem_root root = {0};
-    put_drive(&root, DRIVE, &g, 16, 2, 3);
-    game game;
-    make_game(&game, &root, "xemu", HALO);
-    game.req.save.options = NULL;
-    game.req.save.option_count = 0;
-    game.req.overwrite_local = 1;
-    sigil_sync_result *r = NULL;
-    CHECK(sigil_collect(&game.req, &r) == SIGIL_ERR_INVALID_ARG && (!r || !r->data), where, "collect read a drive nothing named");
-    sigil_sync_result_free(r);
-    r = NULL;
     sigil_sync_result *unit = collect_halo(2, 16, 2, where);
-    CHECK(unit && sigil_restore(&game.req, unit->data, unit->len, &r) == SIGIL_ERR_INVALID_ARG && root.writes == 0, where,
-          "restore wrote to a drive nothing named");
-    sigil_sync_result_free(r);
+    for (int empty = 0; empty < 2; empty++) {
+        mem_root root = {0};
+        put_drive(&root, DRIVE, &g, 16, 2, 3);
+        game game;
+        make_game(&game, &root, "xemu", HALO);
+        if (empty) {
+            game.option.value = "";
+        } else {
+            game.req.save.options = NULL;
+            game.req.save.option_count = 0;
+        }
+        game.req.overwrite_local = 1;
+        sigil_sync_result *r = NULL;
+        CHECK(sigil_collect(&game.req, &r) == SIGIL_ERR_INVALID_ARG && (!r || !r->data), where,
+              "collect read a drive nothing named");
+        CHECK(r && strcmp(r->problem, "hdd_path") == 0, where, "collect's refusal doesn't name hdd_path");
+        sigil_sync_result_free(r);
+        r = NULL;
+        CHECK(unit && sigil_restore(&game.req, unit->data, unit->len, &r) == SIGIL_ERR_INVALID_ARG && root.writes == 0,
+              where, "restore wrote to a drive nothing named");
+        CHECK(r && strcmp(r->problem, "hdd_path") == 0, where, "restore's refusal doesn't name hdd_path");
+        sigil_sync_result_free(r);
+        root_free(&root);
+    }
     sigil_sync_result_free(unit);
-    root_free(&root);
     xb_free(&g);
 }
 

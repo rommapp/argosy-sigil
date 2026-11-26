@@ -439,8 +439,9 @@ typedef struct {
 Restore refuses, writing nothing, with the codes in
 [sync.md, Refusals](../sync.md#refusals), which also says what `problem`
 names for each. Collect refuses with `SIGIL_ERR_DAMAGED`,
-`SIGIL_ERR_AMBIGUOUS` and `SIGIL_ERR_IO` in the same way. With each of
-these the call still sets `*out`; free it as usual.
+`SIGIL_ERR_AMBIGUOUS`, `SIGIL_ERR_IO` and `SIGIL_ERR_INVALID_ARG` naming an
+option in the same way. With each of these the call still sets `*out`;
+free it as usual.
 
 ## Memory cards
 
