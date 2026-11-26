@@ -138,6 +138,11 @@ int sigil_resolve_header_key(const sigil_support *sup, uint8_t out[32]);
 
 int sigil_nca_extract_title_id(const uint8_t *decrypted_header, char out_title_id[17]);
 
+/* The title id in a rights id's first 8 bytes, big-endian, as an NCA header
+ * and a ticket both carry one. SIGIL_ERR_NOT_FOUND for an all-zero rights id
+ * or an id that doesn't start 01. */
+int sigil_switch_title_from_rights_id(const uint8_t rights_id[16], char out_title_id[17]);
+
 /* Tries the header as plaintext first, then decrypts a copy if a key is
  * present. SIGIL_ERR_NEEDS_KEY when plaintext fails and no key is given. */
 int sigil_nca_title_from_raw_header(const uint8_t *raw_header,
@@ -156,9 +161,9 @@ int sigil_nca_decrypt_header(const uint8_t *raw_header,
 void sigil_aes_ctr_crypt(const uint8_t key[16], uint8_t ctr[16],
                          uint8_t *buf, size_t len);
 
-/* Title facts a Switch container walk resolves. `content_type`, `version`
- * and `application_id` are populated only from CNMT; `from_cnmt` marks the
- * authoritative path. */
+/* Title facts a Switch container walk resolves. `content_type` and `version`
+ * come only from a CNMT or a NUP package record, never from an id;
+ * `from_cnmt` marks the CNMT path. */
 typedef struct {
     char     title_id[17];         /* the content's own id: an update's or a DLC's differs from its game's */
     char     application_id[17];   /* the game it belongs to, whose id the save folder carries */
@@ -168,8 +173,9 @@ typedef struct {
 } sigil_switch_title;
 
 /* The game a Switch content id belongs to, read from the id alone (a file
- * name's): an id ending in 800 is an update of the game ending in 000, one
- * ending in anything else but 000 a DLC of the game 0x1000 below its block. */
+ * name's, a NUP record's or a ticket's): an id ending in 800 is an update of
+ * the game ending in 000, one ending in anything else but 000 a DLC of the
+ * game 0x1000 below its block. */
 void sigil_switch_application_of_id(const char id[17], char out[17]);
 
 /* Keeps `t` in `*best` when nothing is kept yet (`*have` false) or `t` is an
@@ -197,12 +203,32 @@ typedef struct {
 
 int sigil_pfs0_parse_header(const uint8_t hdr[16], sigil_pfs0_layout *out);
 
-/* Walk a PFS0 partition and resolve title facts, preferring CNMT when a key
- * and prod.keys source are present, else falling back to program_id. */
+/* Walk a PFS0 partition and resolve title facts. With a header key: the CNMT
+ * when a prod.keys source is present, else program_id. Without one: the
+ * partition's tickets (sigil_switch_tickets_title). */
 int sigil_pfs0_extract_title(const sigil_io *io, uint64_t partition_off,
                              const uint8_t *header_key_or_null,
                              const sigil_support *sup_or_null,
                              sigil_switch_title *out);
+
+/* As sigil_pfs0_extract_title, for an XCI's (or XCZ's) secure partition.
+ * SIGIL_ERR_NOT_FOUND when the root HFS0 has no secure partition. */
+int sigil_xci_extract_title(const sigil_io *io, const uint8_t *header_key_or_null,
+                            const sigil_support *sup_or_null, sigil_switch_title *out);
+
+/* The game the tickets in a PFS0 or HFS0 file table name, read without keys.
+ * `entry_size` is the table's entry size (24 for PFS0, 64 for HFS0); both
+ * start an entry with the data offset, the size and the name offset.
+ * `application_id` gets the game; `title_id` the game's own id when its
+ * ticket is there or `game_card` is true (the table is a card's secure
+ * partition, whose content is its game), else the first ticket's;
+ * `content_type` and `version` stay unknown. SIGIL_ERR_NEEDS_KEY when no
+ * ticket reads or the tickets name more than one game. Reads each ticket's
+ * signature type, issuer and rights id only. */
+int sigil_switch_tickets_title(const sigil_io *io, uint64_t data_start,
+                               const uint8_t *entries, uint32_t file_count, size_t entry_size,
+                               const uint8_t *string_table, uint32_t string_table_size,
+                               bool game_card, sigil_switch_title *out);
 
 void sigil_apply_switch_title(sigil_result *out, const sigil_switch_title *t);
 

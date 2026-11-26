@@ -6,9 +6,6 @@
 #define MAX_SWITCH_FILE_COUNT  4096
 #define MAX_SWITCH_STRING_TABLE (1024 * 1024)
 
-int sigil_extract_xci(const sigil_io *io, const sigil_options *opts,
-                      sigil_result *out);
-
 int sigil_pfs0_parse_header(const uint8_t hdr[16], sigil_pfs0_layout *out) {
     if (memcmp(hdr, "PFS0", 4) != 0) return SIGIL_ERR_NOT_FOUND;
 
@@ -105,8 +102,16 @@ int sigil_pfs0_extract_title(const sigil_io *io, uint64_t partition_off,
 
     uint64_t data_start = partition_off + lay.data_off;
 
+    if (!header_key_or_null) {
+        rc = sigil_switch_tickets_title(io, data_start, entries, lay.file_count, 24,
+                                        string_table, lay.string_table_size, false, out);
+        free(entries);
+        free(string_table);
+        return rc;
+    }
+
     /* Preferred: authoritative per-content facts from the CNMT. */
-    if (header_key_or_null && sup_or_null) {
+    if (sup_or_null) {
         rc = pfs0_try_cnmt(io, data_start, entries, lay.file_count, string_table, lay.string_table_size,
                            header_key_or_null, sup_or_null, out);
         if (rc == SIGIL_OK || rc == SIGIL_ERR_KEYS_INCOMPATIBLE) {
@@ -185,19 +190,20 @@ int sigil_extract_switch(const sigil_io *io, const char *filename_hint,
         return SIGIL_OK;
     }
 
-    /* prod.keys is required: without it no title id is read, not even from
-     * NCA names, which a retail dump fills with content ids. */
+    /* Without prod.keys only the package's tickets are read, never its NCA
+     * names, which a retail dump fills with content ids. */
     uint8_t hkey[32];
     const sigil_support *sup = (opts && opts->support) ? opts->support : NULL;
-    if (!sup || sigil_resolve_header_key(sup, hkey) != SIGIL_OK) return SIGIL_ERR_NEEDS_KEY;
+    bool keyed = sup && sigil_resolve_header_key(sup, hkey) == SIGIL_OK;
 
+    sigil_switch_title t;
     if (memcmp(magic, "PFS0", 4) == 0) {
-        sigil_switch_title t;
-        rc = sigil_pfs0_extract_title(io, 0, hkey, sup, &t);
-        if (rc != SIGIL_OK) return rc;
-        sigil_apply_switch_title(out, &t);
-        return SIGIL_OK;
+        rc = sigil_pfs0_extract_title(io, 0, keyed ? hkey : NULL, keyed ? sup : NULL, &t);
+    } else {
+        rc = sigil_xci_extract_title(io, keyed ? hkey : NULL, keyed ? sup : NULL, &t);
     }
-
-    return sigil_extract_xci(io, opts, out);
+    if (!keyed && rc != SIGIL_OK && rc != SIGIL_ERR_OOM) rc = SIGIL_ERR_NEEDS_KEY;
+    if (rc != SIGIL_OK) return rc;
+    sigil_apply_switch_title(out, &t);
+    return SIGIL_OK;
 }

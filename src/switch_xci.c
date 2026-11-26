@@ -142,8 +142,16 @@ static int hfs0_extract_title_from_partition(const sigil_io *io,
 
     uint64_t data_start = part_off + 16 + entries_size + string_table_size;
 
+    if (!header_key_or_null) {
+        rc = sigil_switch_tickets_title(io, data_start, entries, file_count, HFS0_ENTRY_SIZE,
+                                        string_table, string_table_size, true, out);
+        free(entries);
+        free(string_table);
+        return rc;
+    }
+
     /* Preferred: authoritative per-content facts from the CNMT. */
-    if (header_key_or_null && sup_or_null) {
+    if (sup_or_null) {
         rc = hfs0_try_cnmt(io, data_start, entries, file_count, string_table, string_table_size,
                            header_key_or_null, sup_or_null, out);
         if (rc == SIGIL_OK || rc == SIGIL_ERR_KEYS_INCOMPATIBLE) {
@@ -187,22 +195,13 @@ static int hfs0_extract_title_from_partition(const sigil_io *io,
     return rc;
 }
 
-int sigil_extract_xci(const sigil_io *io, const sigil_options *opts,
-                      sigil_result *out) {
+int sigil_xci_extract_title(const sigil_io *io, const uint8_t *header_key_or_null,
+                            const sigil_support *sup_or_null, sigil_switch_title *out) {
     uint64_t secure_off, secure_size;
     int rc = hfs0_find_partition(io, HFS0_ROOT_OFFSET, "secure",
                                   &secure_off, &secure_size);
     if (rc != SIGIL_OK) return rc;
     (void)secure_size;
 
-    uint8_t hkey[32];
-    const sigil_support *sup = (opts && opts->support) ? opts->support : NULL;
-    if (!sup || sigil_resolve_header_key(sup, hkey) != SIGIL_OK) return SIGIL_ERR_NEEDS_KEY;
-
-    sigil_switch_title t;
-    rc = hfs0_extract_title_from_partition(io, secure_off, hkey, sup, &t);
-    if (rc != SIGIL_OK) return rc;
-
-    sigil_apply_switch_title(out, &t);
-    return SIGIL_OK;
+    return hfs0_extract_title_from_partition(io, secure_off, header_key_or_null, sup_or_null, out);
 }

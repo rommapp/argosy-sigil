@@ -46,8 +46,9 @@ SigilResult(
 For an N64 ROM, `extract` reads the whole file to fill the two MD5s; the
 standalone N64 emulators name saves from them.
 
-A Switch XCI or NSP needs keys: without them `extract` raises
-`SigilNeedsKeyError`, and with keys that don't open the content (a key
+A Switch XCI or NSP needs keys unless it carries a ticket: without them
+`extract` gives the game its tickets name, or raises `SigilNeedsKeyError`
+when they name none, and with keys that don't open the content (a key
 file older than the dump, or a wrong header key)
 `SigilKeysIncompatibleError`.
 

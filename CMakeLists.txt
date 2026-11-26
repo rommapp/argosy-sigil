@@ -126,6 +126,7 @@ set(SIGIL_SOURCES
     src/switch_xci.c
     src/switch_nca.c
     src/switch_cnmt.c
+    src/switch_ticket.c
     src/io_file.c
     src/io_chd.c
     src/io_cso.c
